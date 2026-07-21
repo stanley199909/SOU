@@ -1,0 +1,311 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="ソース ファイル">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="ヘッダー ファイル">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;h++;hm;inl;inc;ipp;xsd</Extensions>
+    </Filter>
+    <Filter Include="リソース ファイル">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    </Filter>
+    <Filter Include="ソース ファイル\System">
+      <UniqueIdentifier>{4e17ff4f-a004-4e4a-9470-879b9af60429}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\App">
+      <UniqueIdentifier>{2c3db676-bf36-4efc-a80a-29f79c26d16f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\App">
+      <UniqueIdentifier>{375453a1-ead7-471e-9fe9-85ec8b5e9c71}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\DirectX">
+      <UniqueIdentifier>{4e65b264-f84d-4758-867f-457aeb6ce2e2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\DirectX">
+      <UniqueIdentifier>{76d7d9cf-96c4-4ff5-a5f6-7dfd24ef09cb}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\System">
+      <UniqueIdentifier>{23598e8f-8b92-47d1-ac2c-8d127274e433}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\App\Scene">
+      <UniqueIdentifier>{23d36a75-29b1-435f-a0f7-3718e6f8c461}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\App\Scene">
+      <UniqueIdentifier>{2c3ef8df-31ef-4b70-a418-7eb71b4c4215}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\App\Camera">
+      <UniqueIdentifier>{2ff0de7e-8022-4481-85c6-e2030024d484}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\App\Camera">
+      <UniqueIdentifier>{a46f9d83-3199-452a-bf07-e7012f31afed}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="リソース ファイル\PixelShader">
+      <UniqueIdentifier>{a6eed68e-c392-44b1-840a-91adf78add6d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="リソース ファイル\VertexShader">
+      <UniqueIdentifier>{724b790c-338f-43de-9dca-82df364d25ff}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="リソース ファイル\GeometryShader">
+      <UniqueIdentifier>{6c81cf6e-5d9f-4745-9d71-16e02b10c7de}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="リソース ファイル\TessellationShader">
+      <UniqueIdentifier>{016f58a7-5fa2-47cf-85e7-7c941497328d}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="Startup.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="Main.cpp">
+      <Filter>ソース ファイル\App</Filter>
+    </ClCompile>
+    <ClCompile Include="Shader.cpp">
+      <Filter>ソース ファイル\DirectX</Filter>
+    </ClCompile>
+    <ClCompile Include="Texture.cpp">
+      <Filter>ソース ファイル\DirectX</Filter>
+    </ClCompile>
+    <ClCompile Include="MeshBuffer.cpp">
+      <Filter>ソース ファイル\DirectX</Filter>
+    </ClCompile>
+    <ClCompile Include="DirectX.cpp">
+      <Filter>ソース ファイル\DirectX</Filter>
+    </ClCompile>
+    <ClCompile Include="Geometory.cpp">
+      <Filter>ソース ファイル\System</Filter>
+    </ClCompile>
+    <ClCompile Include="CameraBase.cpp">
+      <Filter>ソース ファイル\System</Filter>
+    </ClCompile>
+    <ClCompile Include="Input.cpp">
+      <Filter>ソース ファイル\System</Filter>
+    </ClCompile>
+    <ClCompile Include="SceneBase.cpp">
+      <Filter>ソース ファイル\System</Filter>
+    </ClCompile>
+    <ClCompile Include="Model.cpp">
+      <Filter>ソース ファイル\System</Filter>
+    </ClCompile>
+    <ClCompile Include="Sprite.cpp">
+      <Filter>ソース ファイル\System</Filter>
+    </ClCompile>
+    <ClCompile Include="SceneRoot.cpp">
+      <Filter>ソース ファイル\App</Filter>
+    </ClCompile>
+    <ClCompile Include="LightBase.cpp">
+      <Filter>ソース ファイル\System</Filter>
+    </ClCompile>
+    <ClCompile Include="MoveLight.cpp">
+      <Filter>ソース ファイル\App</Filter>
+    </ClCompile>
+    <ClCompile Include="CameraDCC.cpp">
+      <Filter>ソース ファイル\App\Camera</Filter>
+    </ClCompile>
+    <ClCompile Include="CameraWipe.cpp">
+      <Filter>ソース ファイル\App\Camera</Filter>
+    </ClCompile>
+    <ClCompile Include="CameraWater.cpp">
+      <Filter>ソース ファイル\App\Camera</Filter>
+    </ClCompile>
+    <ClCompile Include="PointLight.cpp">
+      <Filter>ソース ファイル\App</Filter>
+    </ClCompile>
+    <ClCompile Include="SpotLight.cpp">
+      <Filter>ソース ファイル\App</Filter>
+    </ClCompile>
+    <ClCompile Include="Ball.cpp">
+      <Filter>ソース ファイル\System</Filter>
+    </ClCompile>
+    <ClCompile Include="SceneBlank.cpp">
+      <Filter>ソース ファイル\App\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="SceneAnimation.cpp">
+      <Filter>ソース ファイル\App\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="SceneVisual.cpp">
+      <Filter>ソース ファイル\App\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="Box.cpp">
+      <Filter>ソース ファイル\System</Filter>
+    </ClCompile>
+    <ClCompile Include="Player.cpp">
+      <Filter>ソース ファイル\App</Filter>
+    </ClCompile>
+    <ClCompile Include="Enemy.cpp">
+      <Filter>ソース ファイル\App</Filter>
+    </ClCompile>
+    <ClCompile Include="WallScene.cpp">
+      <Filter>ソース ファイル\App\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="PostProcess.cpp">
+      <Filter>ソース ファイル\System</Filter>
+    </ClCompile>
+    <ClCompile Include="SceneFire.cpp">
+      <Filter>ソース ファイル\App\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="SceneForge.cpp">
+      <Filter>ソース ファイル\App\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="DebugUI.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="imgui\imgui.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="imgui\imgui_draw.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="imgui\imgui_tables.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="imgui\imgui_widgets.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="imgui\imgui_demo.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="imgui\imgui_impl_dx11.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="imgui\imgui_impl_win32.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="SceneFireTraining.cpp">
+      <Filter>ソース ファイル\App\Scene</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Defines.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="Texture.h">
+      <Filter>ヘッダー ファイル\DirectX</Filter>
+    </ClInclude>
+    <ClInclude Include="Shader.h">
+      <Filter>ヘッダー ファイル\DirectX</Filter>
+    </ClInclude>
+    <ClInclude Include="MeshBuffer.h">
+      <Filter>ヘッダー ファイル\DirectX</Filter>
+    </ClInclude>
+    <ClInclude Include="Main.h">
+      <Filter>ヘッダー ファイル\App</Filter>
+    </ClInclude>
+    <ClInclude Include="DirectX.h">
+      <Filter>ヘッダー ファイル\DirectX</Filter>
+    </ClInclude>
+    <ClInclude Include="Geometory.h">
+      <Filter>ヘッダー ファイル\System</Filter>
+    </ClInclude>
+    <ClInclude Include="CameraBase.h">
+      <Filter>ヘッダー ファイル\System</Filter>
+    </ClInclude>
+    <ClInclude Include="Input.h">
+      <Filter>ヘッダー ファイル\System</Filter>
+    </ClInclude>
+    <ClInclude Include="SceneBase.hpp">
+      <Filter>ヘッダー ファイル\System</Filter>
+    </ClInclude>
+    <ClInclude Include="Model.h">
+      <Filter>ヘッダー ファイル\System</Filter>
+    </ClInclude>
+    <ClInclude Include="Sprite.h">
+      <Filter>ヘッダー ファイル\System</Filter>
+    </ClInclude>
+    <ClInclude Include="SceneRoot.h">
+      <Filter>ヘッダー ファイル\App</Filter>
+    </ClInclude>
+    <ClInclude Include="LightBase.h">
+      <Filter>ヘッダー ファイル\System</Filter>
+    </ClInclude>
+    <ClInclude Include="MoveLight.h">
+      <Filter>ヘッダー ファイル\App</Filter>
+    </ClInclude>
+    <ClInclude Include="CameraDCC.h">
+      <Filter>ヘッダー ファイル\App\Camera</Filter>
+    </ClInclude>
+    <ClInclude Include="CameraWipe.h">
+      <Filter>ヘッダー ファイル\App\Camera</Filter>
+    </ClInclude>
+    <ClInclude Include="CameraWater.h">
+      <Filter>ヘッダー ファイル\App\Camera</Filter>
+    </ClInclude>
+    <ClInclude Include="PointLight.h">
+      <Filter>ヘッダー ファイル\App</Filter>
+    </ClInclude>
+    <ClInclude Include="SpotLight.h">
+      <Filter>ヘッダー ファイル\App</Filter>
+    </ClInclude>
+    <ClInclude Include="DebugLog.h">
+      <Filter>ヘッダー ファイル\System</Filter>
+    </ClInclude>
+    <ClInclude Include="Ball.h">
+      <Filter>ヘッダー ファイル\System</Filter>
+    </ClInclude>
+    <ClInclude Include="SceneBlank.h">
+      <Filter>ヘッダー ファイル\App\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="SceneAnimation.h">
+      <Filter>ヘッダー ファイル\App\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="SceneVisual.h">
+      <Filter>ヘッダー ファイル\App\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="Box.h">
+      <Filter>ヘッダー ファイル\System</Filter>
+    </ClInclude>
+    <ClInclude Include="Player.h">
+      <Filter>ヘッダー ファイル\App</Filter>
+    </ClInclude>
+    <ClInclude Include="Enemy.h">
+      <Filter>ヘッダー ファイル\App</Filter>
+    </ClInclude>
+    <ClInclude Include="WallScene.h">
+      <Filter>ヘッダー ファイル\App\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="PostProcess.h">
+      <Filter>ヘッダー ファイル\System</Filter>
+    </ClInclude>
+    <ClInclude Include="SceneFire.h">
+      <Filter>ヘッダー ファイル\App\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="SceneForge.h">
+      <Filter>ヘッダー ファイル\App\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="DebugUI.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="imgui\imgui.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="imgui\imgui_internal.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="imgui\imconfig.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="imgui\imgui_impl_dx11.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="imgui\imgui_impl_win32.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="SceneFireTraining.h">
+      <Filter>ヘッダー ファイル\System</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <FxCompile Include="PS_TexColor.hlsl">
+      <Filter>リソース ファイル\PixelShader</Filter>
+    </FxCompile>
+    <FxCompile Include="PS_TexTint.hlsl">
+      <Filter>リソース ファイル\PixelShader</Filter>
+    </FxCompile>
+    <FxCompile Include="VS_Object.hlsl">
+      <Filter>リソース ファイル\VertexShader</Filter>
+    </FxCompile>
+  </ItemGroup>
+</Project>

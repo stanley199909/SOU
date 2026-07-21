@@ -1,0 +1,32 @@
+# Visual Studio / C++ build artifacts
+.vs/
+[Xx]64/
+[Xx]86/
+[Dd]ebug/
+[Rr]elease/
+*.obj
+*.pdb
+*.ilk
+*.idb
+*.tlog
+*.ipch
+*.iobj
+*.ipdb
+*.log
+*.lastbuildstate
+*.exp
+*.aps
+
+# Intermediate/temp
+*/obj/
+**/obj/
+*.db
+*.opendb
+*.VC.db
+*.suo
+*.user
+
+# Build output binaries
+*.exe
+*.dll
+*.lib
