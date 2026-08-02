@@ -6,8 +6,10 @@
 #include "CameraBase.h"
 #include "Input.h"
 #include "DebugUI.h"
+#include "Defines.h"
 #include <cstdlib>
 #include <cmath>
+#include <cstdio>
 
 using namespace DirectX;
 
@@ -97,19 +99,76 @@ void SceneForge::Strike()
 	}
 }
 
+//====================================================================
+//  ゲーム進行
+//====================================================================
+void SceneForge::StartGame()
+{
+	m_state    = GAME_PLAY;
+	m_progress = 0.0f;
+	m_score    = 0;
+}
+
+void SceneForge::FinishGame()
+{
+	m_state = GAME_RESULT;
+}
+
+//--- タイトル: 雰囲気で自動的に火花を出しつつ、SPACEで開始
+void SceneForge::UpdateTitle(float /*tick*/)
+{
+	if (IsKeyTrigger(VK_SPACE))
+	{
+		StartGame();
+		return;		// 開始したフレームでは叩かない
+	}
+}
+
+//--- 鍛造中: (段階1の仮実装) SPACEで叩くと進度が少し進み、100%でクリア
+void SceneForge::UpdatePlay(float /*tick*/)
+{
+	if (IsKeyTrigger(VK_SPACE))
+	{
+		Strike();
+		m_score    += 100;
+		m_progress += 8.0f;		// 仮: 1叩き=8%。段階3以降で「熱度×蓄力」に置き換える
+		if (m_progress >= 100.0f)
+		{
+			m_progress = 100.0f;
+			FinishGame();
+		}
+	}
+}
+
+//--- 結果: SPACEでタイトルへ戻る
+void SceneForge::UpdateResult(float /*tick*/)
+{
+	if (IsKeyTrigger(VK_SPACE))
+	{
+		m_state = GAME_TITLE;
+	}
+}
+
 void SceneForge::Update(float tick)
 {
 	m_time += tick;
 
-	// スペースキーで叩く／一定間隔で自動的にも叩く(デモ用)
-	if (IsKeyTrigger(VK_SPACE)) Strike();
-	if (m_autoStrike)
+	// タイトル中は雰囲気用に自動で火花を出す
+	if (m_state == GAME_TITLE)
 	{
 		m_autoTimer += tick;
-		if (m_autoTimer >= m_interval) { Strike(); m_autoTimer = 0.0f; }
+		if (m_autoTimer >= TITLE_INTERVAL) { Strike(); m_autoTimer = 0.0f; }
 	}
 
-	// シミュレーション(重力＋地面バウンド)
+	// 状態ごとの処理
+	switch (m_state)
+	{
+	case GAME_TITLE:  UpdateTitle(tick);  break;
+	case GAME_PLAY:   UpdatePlay(tick);   break;
+	case GAME_RESULT: UpdateResult(tick); break;
+	}
+
+	// 火花シミュレーション(重力＋地面バウンド)はどの状態でも動かす
 	for (size_t i = 0; i < m_sparks.size(); )
 	{
 		Spark& s = m_sparks[i];
@@ -135,23 +194,65 @@ void SceneForge::Update(float tick)
 	}
 }
 
+//====================================================================
+//  UI (HUD)
+//====================================================================
+
+// 画面中央にウィンドウ枠なしのメッセージを出す小道具
+static void CenterText(const char* text, float yRatio, float scale = 1.0f,
+                       ImU32 col = IM_COL32(255, 255, 255, 255))
+{
+	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImVec2 sz = ImGui::CalcTextSize(text);
+	sz.x *= scale; sz.y *= scale;
+	float x = (SCREEN_WIDTH  - sz.x) * 0.5f;
+	float y =  SCREEN_HEIGHT * yRatio - sz.y * 0.5f;
+	dl->AddText(ImGui::GetFont(), ImGui::GetFontSize() * scale, ImVec2(x, y), col, text);
+}
+
+void SceneForge::DrawTitleUI()
+{
+	CenterText("- FORGE -",            0.34f, 3.0f, IM_COL32(255, 200, 120, 255));
+	CenterText("Timing Blacksmith",    0.44f, 1.4f, IM_COL32(255, 235, 210, 255));
+	CenterText("PRESS  SPACE  TO  START", 0.62f, 1.6f, IM_COL32(255, 255, 255, 255));
+}
+
+void SceneForge::DrawPlayUI()
+{
+	// 上部に鍛造の進捗バーとスコア
+	ImGui::SetNextWindowPos(ImVec2(40, 30), ImGuiCond_Always);
+	ImGui::SetNextWindowSize(ImVec2(SCREEN_WIDTH - 80, 0), ImGuiCond_Always);
+	ImGui::Begin("HUD", nullptr,
+		ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+		ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+		ImGuiWindowFlags_NoBackground);
+
+	ImGui::Text("SCORE  %d", m_score);
+	ImGui::Text("FORGE PROGRESS");
+	ImGui::ProgressBar(m_progress / 100.0f, ImVec2(-1, 24));
+	ImGui::End();
+
+	// 操作ガイド(段階1の仮)
+	CenterText("PRESS  SPACE  TO  HAMMER", 0.9f, 1.2f, IM_COL32(255, 255, 255, 180));
+}
+
+void SceneForge::DrawResultUI()
+{
+	CenterText("FORGED!",              0.34f, 3.0f, IM_COL32(255, 220, 140, 255));
+	char buf[64];
+	sprintf_s(buf, sizeof(buf), "SCORE  %d", m_score);
+	CenterText(buf,                    0.50f, 2.0f, IM_COL32(255, 255, 255, 255));
+	CenterText("PRESS  SPACE  TO  RETURN", 0.68f, 1.4f, IM_COL32(255, 255, 255, 220));
+}
+
 void SceneForge::DrawUI()
 {
-	ImGui::SetNextWindowPos(ImVec2(12, 480), ImGuiCond_FirstUseEver);
-	ImGui::SetNextWindowSize(ImVec2(300, 0), ImGuiCond_FirstUseEver);
-	ImGui::Begin("Forge Sparks");
-
-	ImGui::Text("Sparks: %d", (int)m_sparks.size());
-	ImGui::Separator();
-
-	if (ImGui::Button("Strike!  (Space)", ImVec2(-1, 32))) Strike();
-
-	ImGui::Checkbox("Auto strike", &m_autoStrike);
-	if (m_autoStrike) ImGui::SliderFloat("Interval", &m_interval, 0.2f, 3.0f, "%.2f s");
-	ImGui::SliderInt("Sparks / hit", &m_burst, 10, 400);
-	ImGui::SliderFloat("Power", &m_power, 0.2f, 2.5f);
-
-	ImGui::End();
+	switch (m_state)
+	{
+	case GAME_TITLE:  DrawTitleUI();  break;
+	case GAME_PLAY:   DrawPlayUI();   break;
+	case GAME_RESULT: DrawResultUI(); break;
+	}
 }
 
 void SceneForge::Draw()
