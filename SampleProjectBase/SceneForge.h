@@ -63,6 +63,10 @@ private:
 	void StartGame();	// タイトル → 鍛造開始
 	void FinishGame();	// 鍛造完了 → 結果へ
 
+	//--- 鍛造(鉄塊)
+	void DrawBillet();		// 2D側面図で光る鉄条を描く
+	void DrawHeatGauge();	// 温度ゲージ(HUD)
+
 private:
 	//--- 火花シミュレーション
 	std::vector<Spark>  m_sparks;
@@ -80,9 +84,23 @@ private:
 	float     m_progress = 0.0f;	// 鍛造進度 0..100 (段階4で本実装)
 	int       m_score    = 0;		// スコア    (段階4で本実装)
 
+	//--- 温度(0=冷たい 〜 1=白熱)
+	float m_heat = 0.0f;
+
+	//--- 鉄条の側面プロファイル(中心線からの半分の厚み, 正規化 1.0=初期の太さ)
+	static const int SEG = 24;		// 長手方向の分割数
+	float m_th[SEG];				// 各セグメントの半厚み(段階3で叩くと減る)
+
 	static const int MAX_SPARKS = 3000;
 	static constexpr float GRAVITY      = 9.8f;
 	static constexpr float TITLE_INTERVAL = 1.0f;	// タイトルで自動的に叩く間隔(秒)
+
+	//--- 温度パラメータ
+	static constexpr float HEAT_RATE = 0.55f;	// 加熱速度(F長押し, /秒)
+	static constexpr float COOL_RATE = 0.12f;	// 自然冷却速度(/秒)
+	static constexpr float IDEAL_MIN = 0.55f;	// 最適温度帯(下限)
+	static constexpr float IDEAL_MAX = 0.85f;	// 最適温度帯(上限)
+	static constexpr float OVERHEAT  = 0.92f;	// これ以上は過熱(鋼を痛める)
 };
 
 #endif // __SCENE_FORGE_H__

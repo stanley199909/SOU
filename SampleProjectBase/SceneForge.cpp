@@ -65,6 +65,9 @@ void SceneForge::Init()
 	desc.topology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 	m_mesh = std::make_shared<MeshBuffer>(desc);
 
+	// 鉄条プロファイルを一様な太さで初期化
+	for (int i = 0; i < SEG; ++i) m_th[i] = 1.0f;
+
 	Strike();	// 開始直後から火花を出す
 }
 
@@ -107,6 +110,8 @@ void SceneForge::StartGame()
 	m_state    = GAME_PLAY;
 	m_progress = 0.0f;
 	m_score    = 0;
+	m_heat     = 0.0f;
+	for (int i = 0; i < SEG; ++i) m_th[i] = 1.0f;	// 鉄条を初期状態に戻す
 }
 
 void SceneForge::FinishGame()
@@ -124,20 +129,17 @@ void SceneForge::UpdateTitle(float /*tick*/)
 	}
 }
 
-//--- 鍛造中: (段階1の仮実装) SPACEで叩くと進度が少し進み、100%でクリア
-void SceneForge::UpdatePlay(float /*tick*/)
+//--- 鍛造中
+void SceneForge::UpdatePlay(float tick)
 {
-	if (IsKeyTrigger(VK_SPACE))
-	{
-		Strike();
-		m_score    += 100;
-		m_progress += 8.0f;		// 仮: 1叩き=8%。段階3以降で「熱度×蓄力」に置き換える
-		if (m_progress >= 100.0f)
-		{
-			m_progress = 100.0f;
-			FinishGame();
-		}
-	}
+	// 加熱: F長押しで風箱を煽る / 常に自然冷却
+	if (IsKeyPress('F')) m_heat += HEAT_RATE * tick;
+	m_heat -= COOL_RATE * tick;
+	if (m_heat < 0.0f) m_heat = 0.0f;
+	if (m_heat > 1.0f) m_heat = 1.0f;
+
+	// (段階2の暫定) Enterで結果画面へ。段階4で「目標形状の達成」に置き換える
+	if (IsKeyTrigger(VK_RETURN)) FinishGame();
 }
 
 //--- 結果: SPACEでタイトルへ戻る
@@ -210,6 +212,99 @@ static void CenterText(const char* text, float yRatio, float scale = 1.0f,
 	dl->AddText(ImGui::GetFont(), ImGui::GetFontSize() * scale, ImVec2(x, y), col, text);
 }
 
+//--- 温度(0..1)を鋼の色に変換する(暗赤→赤→橙→黄→白熱)
+static ImU32 HeatColor(float h, float alpha = 1.0f)
+{
+	static const float stopH[] = { 0.00f, 0.20f, 0.40f, 0.55f, 0.70f, 0.85f, 1.00f };
+	static const float stopR[] = { 0.15f, 0.45f, 0.85f, 1.00f, 1.00f, 1.00f, 1.00f };
+	static const float stopG[] = { 0.05f, 0.06f, 0.15f, 0.45f, 0.65f, 0.88f, 1.00f };
+	static const float stopB[] = { 0.05f, 0.02f, 0.02f, 0.05f, 0.15f, 0.45f, 0.92f };
+	const int N = 7;
+	if (h <= stopH[0])   h = stopH[0];
+	if (h >= stopH[N-1]) h = stopH[N-1];
+	int i = 0;
+	while (i < N - 1 && h > stopH[i + 1]) ++i;
+	float t = (h - stopH[i]) / (stopH[i + 1] - stopH[i]);
+	float r = stopR[i] + (stopR[i + 1] - stopR[i]) * t;
+	float g = stopG[i] + (stopG[i + 1] - stopG[i]) * t;
+	float b = stopB[i] + (stopB[i + 1] - stopB[i]) * t;
+	return IM_COL32((int)(r * 255), (int)(g * 255), (int)(b * 255), (int)(alpha * 255));
+}
+
+//--- 2D側面図で光る鉄条(＋簡単な金床)を描く
+void SceneForge::DrawBillet()
+{
+	ImDrawList* dl = ImGui::GetBackgroundDrawList();
+
+	const float left     = SCREEN_WIDTH * 0.25f;
+	const float right    = SCREEN_WIDTH * 0.75f;
+	const float cy       = SCREEN_HEIGHT * 0.50f;
+	const float baseHalf = 30.0f;	// 初期の半分の太さ(px)
+
+	// --- 金床(鉄条の下の台) ---
+	ImU32 anvilCol = IM_COL32(45, 45, 52, 255);
+	dl->AddRectFilled(ImVec2(left - 40, cy + 34), ImVec2(right + 40, cy + 120), anvilCol, 6.0f);
+	dl->AddRectFilled(ImVec2(left + 60, cy + 110), ImVec2(right - 60, cy + 200),
+		IM_COL32(32, 32, 38, 255), 4.0f);
+
+	// --- 鉄条本体 ---
+	ImU32 col  = HeatColor(m_heat);
+	ImU32 glow = HeatColor(m_heat, 0.35f);	// 外側のにじみ(発光感)
+
+	auto nodeX = [&](int i) { return left + (right - left) * (i / (float)(SEG - 1)); };
+
+	for (int i = 0; i < SEG - 1; ++i)
+	{
+		float x0 = nodeX(i),     x1 = nodeX(i + 1);
+		float h0 = baseHalf * m_th[i], h1 = baseHalf * m_th[i + 1];
+
+		// 発光(少し大きめ・薄く)
+		dl->AddQuadFilled(
+			ImVec2(x0, cy - h0 - 6), ImVec2(x1, cy - h1 - 6),
+			ImVec2(x1, cy + h1 + 6), ImVec2(x0, cy + h0 + 6), glow);
+		// 本体
+		dl->AddQuadFilled(
+			ImVec2(x0, cy - h0), ImVec2(x1, cy - h1),
+			ImVec2(x1, cy + h1), ImVec2(x0, cy + h0), col);
+	}
+}
+
+//--- 温度ゲージ(HUD)
+void SceneForge::DrawHeatGauge()
+{
+	ImDrawList* dl = ImGui::GetForegroundDrawList();
+
+	const float x0 = SCREEN_WIDTH * 0.25f;
+	const float x1 = SCREEN_WIDTH * 0.75f;
+	const float y  = SCREEN_HEIGHT * 0.80f;
+	const float hgt = 20.0f;
+	auto lerpX = [&](float t) { return x0 + (x1 - x0) * t; };
+
+	// トラック
+	dl->AddRectFilled(ImVec2(x0, y), ImVec2(x1, y + hgt), IM_COL32(30, 30, 34, 220), 4.0f);
+	// 最適温度帯(緑の帯)
+	dl->AddRectFilled(ImVec2(lerpX(IDEAL_MIN), y), ImVec2(lerpX(IDEAL_MAX), y + hgt),
+		IM_COL32(60, 160, 70, 150));
+	// 過熱帯(赤の帯)
+	dl->AddRectFilled(ImVec2(lerpX(OVERHEAT), y), ImVec2(x1, y + hgt),
+		IM_COL32(180, 40, 40, 160));
+	// 現在温度の塗り
+	dl->AddRectFilled(ImVec2(x0, y), ImVec2(lerpX(m_heat), y + hgt), HeatColor(m_heat), 4.0f);
+	// マーカー
+	dl->AddLine(ImVec2(lerpX(m_heat), y - 5), ImVec2(lerpX(m_heat), y + hgt + 5),
+		IM_COL32(255, 255, 255, 255), 2.0f);
+	// 枠
+	dl->AddRect(ImVec2(x0, y), ImVec2(x1, y + hgt), IM_COL32(200, 200, 200, 120), 4.0f);
+
+	// ラベルと状態
+	dl->AddText(ImVec2(x0, y - 22), IM_COL32(230, 230, 230, 255), "TEMPERATURE");
+	const char* st; ImU32 stc;
+	if      (m_heat < IDEAL_MIN) { st = "COLD - heat it up! (hold F)"; stc = IM_COL32(120, 170, 255, 255); }
+	else if (m_heat > OVERHEAT)  { st = "OVERHEAT!";                   stc = IM_COL32(255, 120, 120, 255); }
+	else                          { st = "GOOD HEAT";                   stc = IM_COL32(150, 255, 150, 255); }
+	dl->AddText(ImVec2(x1 - 220, y - 22), stc, st);
+}
+
 void SceneForge::DrawTitleUI()
 {
 	CenterText("- FORGE -",            0.34f, 3.0f, IM_COL32(255, 200, 120, 255));
@@ -219,21 +314,15 @@ void SceneForge::DrawTitleUI()
 
 void SceneForge::DrawPlayUI()
 {
-	// 上部に鍛造の進捗バーとスコア
-	ImGui::SetNextWindowPos(ImVec2(40, 30), ImGuiCond_Always);
-	ImGui::SetNextWindowSize(ImVec2(SCREEN_WIDTH - 80, 0), ImGuiCond_Always);
-	ImGui::Begin("HUD", nullptr,
-		ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-		ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
-		ImGuiWindowFlags_NoBackground);
+	// 光る鉄条(背景レイヤー)
+	DrawBillet();
 
-	ImGui::Text("SCORE  %d", m_score);
-	ImGui::Text("FORGE PROGRESS");
-	ImGui::ProgressBar(m_progress / 100.0f, ImVec2(-1, 24));
-	ImGui::End();
+	// 温度ゲージ
+	DrawHeatGauge();
 
-	// 操作ガイド(段階1の仮)
-	CenterText("PRESS  SPACE  TO  HAMMER", 0.9f, 1.2f, IM_COL32(255, 255, 255, 180));
+	// 操作ガイド(段階2: 加熱の確認まで)
+	CenterText("Hold  F : Bellows (heat)      Enter : Finish (temp)", 0.93f, 1.0f,
+		IM_COL32(255, 255, 255, 170));
 }
 
 void SceneForge::DrawResultUI()
