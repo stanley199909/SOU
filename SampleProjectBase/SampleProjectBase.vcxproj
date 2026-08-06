@@ -181,6 +181,7 @@
     <ClCompile Include="PostProcess.cpp" />
     <ClCompile Include="SceneFire.cpp" />
     <ClCompile Include="SceneForge.cpp" />
+    <ClCompile Include="Audio.cpp" />
     <ClCompile Include="DebugUI.cpp" />
     <ClCompile Include="imgui\imgui.cpp" />
     <ClCompile Include="imgui\imgui_draw.cpp" />
@@ -223,6 +224,7 @@
     <ClInclude Include="PostProcess.h" />
     <ClInclude Include="SceneFire.h" />
     <ClInclude Include="SceneForge.h" />
+    <ClInclude Include="Audio.h" />
     <ClInclude Include="DebugUI.h" />
     <ClInclude Include="imgui\imgui.h" />
     <ClInclude Include="imgui\imgui_internal.h" />

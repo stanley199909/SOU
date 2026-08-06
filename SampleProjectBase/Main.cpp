@@ -8,6 +8,7 @@
 #include "SceneRoot.h"
 #include "PostProcess.h"
 #include "DebugUI.h"
+#include "Audio.h"
 
 //--- グローバル変数
 std::shared_ptr<SceneRoot> g_pScene;
@@ -21,6 +22,7 @@ HRESULT Init(HWND hWnd, UINT width, UINT height)
 	Geometory::Init();
 	Sprite::Init();
 	InitInput();
+	Audio::Init();
 
 	// シーン作成
 	g_pScene = std::make_shared<SceneRoot>();
@@ -52,6 +54,7 @@ void Uninit()
 	g_pPost.reset();
 	g_pScene->Uninit();
 	g_pScene.reset();
+	Audio::Uninit();
 	UninitInput();
 	Sprite::Uninit();
 	Geometory::Uninit();

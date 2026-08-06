@@ -7,6 +7,7 @@
 #include "Input.h"
 #include "DebugUI.h"
 #include "Defines.h"
+#include "Audio.h"
 #include <cstdlib>
 #include <cmath>
 #include <cstdio>
@@ -149,7 +150,7 @@ void SceneForge::UpdatePlay(float tick)
 	if (m_heat < 0.0f) m_heat = 0.0f;
 	if (m_heat > 1.0f) m_heat = 1.0f;
 
-	// --- 過熱で放置すると鋼全体が焼けていく(損傷が蓄積) ---
+	// --- 過熱で放置すると鋼全体が焼けていく(損傷が蓄積)＋ジュー音 ---
 	if (m_heat > OVERHEAT)
 	{
 		for (int i = 0; i < SEG; ++i)
@@ -157,11 +158,14 @@ void SceneForge::UpdatePlay(float tick)
 			m_dmg[i] += BURN_RATE * tick;
 			if (m_dmg[i] > 1.0f) m_dmg[i] = 1.0f;
 		}
+		m_sizzleTimer -= tick;
+		if (m_sizzleTimer <= 0.0f) { Audio::Play(Audio::SE_SIZZLE); m_sizzleTimer = 0.22f; }
 	}
+	else m_sizzleTimer = 0.0f;
 
-	// --- リズム(メトロノーム) ---
+	// --- リズム(メトロノーム): 拍をまたいだら金床の音を鳴らす(耳でリズムを取る) ---
 	m_beat += tick / BEAT_PERIOD;
-	while (m_beat >= 1.0f) m_beat -= 1.0f;
+	if (m_beat >= 1.0f) { m_beat -= 1.0f; Audio::Play(Audio::SE_BEAT, 0.6f); }
 
 	// --- 打撃位置の移動(A/D または ←/→) ---
 	if (IsKeyTrigger('A') || IsKeyTrigger(VK_LEFT))  { if (m_strikeSeg > 0)       --m_strikeSeg; }
@@ -227,6 +231,10 @@ void SceneForge::DoStrike()
 	if (m_heat < 0.0f) m_heat = 0.0f;
 	float sparkScale = (0.4f + power * 1.2f) * (over ? 0.7f : 1.0f);
 	if (!cold) Strike(sparkScale);
+
+	// 打撃音: 冷打は鈍い音、それ以外は力量に応じた「カン」
+	if (cold) Audio::Play(Audio::SE_COLD, 0.9f);
+	else      Audio::Play(Audio::SE_HAMMER, 0.35f + power * 0.65f);
 	// 冷打は「ガツン」と大きく揺れる(手応えが悪い=衝撃だけ大きい)
 	m_shake = cold ? (0.6f + power * 0.6f) : (0.3f + power * 0.7f);
 

@@ -107,7 +107,8 @@ private:
 	unsigned int m_popupCol  = 0;
 
 	//--- リズム(メトロノーム)
-	float m_beat = 0.0f;			// 拍の位相 0..1
+	float m_beat        = 0.0f;		// 拍の位相 0..1
+	float m_sizzleTimer = 0.0f;		// 過熱時のジュー音の再生間隔
 
 	//--- 評価用の集計(段階5で使用)
 	float m_qualitySum  = 0.0f;
