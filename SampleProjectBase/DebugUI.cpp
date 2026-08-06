@@ -1,7 +1,7 @@
 ﻿#include "DebugUI.h"
 
-//--- デバッグUIの表示フラグ(F1で切替)
-static bool s_debugVisible = true;
+//--- デバッグUIの表示フラグ(F1で切替)。ゲームとしては既定で非表示
+static bool s_debugVisible = false;
 bool DebugUI::IsVisible() { return s_debugVisible; }
 void DebugUI::Toggle()    { s_debugVisible = !s_debugVisible; }
 

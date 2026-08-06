@@ -95,7 +95,7 @@ void SceneRoot::Init()
 		DirectX::XMFLOAT3(0.0f, 1.0f, 0.0f),
 		0.0f, DirectX::XM_PIDIV4,
 		0.0f, 1.0f,
-		SCENE_FIRE
+		SCENE_FORGE
 	};
 	FILE* fp;
 	fopen_s(&fp, SettingFileName, "rb");

@@ -66,8 +66,8 @@ void SceneForge::Init()
 	desc.topology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 	m_mesh = std::make_shared<MeshBuffer>(desc);
 
-	// 鉄条プロファイルを一様な太さで初期化
-	for (int i = 0; i < SEG; ++i) m_th[i] = 1.0f;
+	// 鉄条プロファイルを一様な太さ・無傷で初期化
+	for (int i = 0; i < SEG; ++i) { m_th[i] = 1.0f; m_dmg[i] = 0.0f; }
 
 	Strike();	// 開始直後から火花を出す
 }
@@ -112,7 +112,7 @@ void SceneForge::StartGame()
 	m_progress = 0.0f;
 	m_score    = 0;
 	m_heat     = 0.0f;
-	for (int i = 0; i < SEG; ++i) m_th[i] = 1.0f;	// 鉄条を初期状態に戻す
+	for (int i = 0; i < SEG; ++i) { m_th[i] = 1.0f; m_dmg[i] = 0.0f; }	// 鉄条を初期状態に戻す
 
 	m_charging    = false;
 	m_charge      = 0.0f;
@@ -148,6 +148,16 @@ void SceneForge::UpdatePlay(float tick)
 	m_heat -= COOL_RATE * tick;
 	if (m_heat < 0.0f) m_heat = 0.0f;
 	if (m_heat > 1.0f) m_heat = 1.0f;
+
+	// --- 過熱で放置すると鋼全体が焼けていく(損傷が蓄積) ---
+	if (m_heat > OVERHEAT)
+	{
+		for (int i = 0; i < SEG; ++i)
+		{
+			m_dmg[i] += BURN_RATE * tick;
+			if (m_dmg[i] > 1.0f) m_dmg[i] = 1.0f;
+		}
+	}
 
 	// --- リズム(メトロノーム) ---
 	m_beat += tick / BEAT_PERIOD;
@@ -192,10 +202,12 @@ void SceneForge::DoStrike()
 	bool over = (m_heat > OVERHEAT);
 
 	// 温度係数(冷たい→ほぼ効かない, 過熱→効くが品質悪, 適温→最大)
-	float heatFactor = cold ? 0.15f : (over ? 0.7f : 1.0f);
+	float heatFactor = cold ? 0.10f : (over ? 0.7f : 1.0f);
 	float deform = DEFORM_MAX * power * heatFactor;
 
-	// 打撃位置を中心に鉄を薄くする(近傍にもなだらかに)
+	// 打撃位置を中心に鉄を薄くする(近傍にもなだらかに)。
+	// 冷打=割れ / 過熱打=焼け として、その場に損傷を刻む
+	float dmgAdd = cold ? 0.35f : (over ? 0.25f : 0.0f);
 	for (int i = 0; i < SEG; ++i)
 	{
 		int d = abs(i - m_strikeSeg);
@@ -203,6 +215,11 @@ void SceneForge::DoStrike()
 		float falloff = 1.0f - d / 4.0f;
 		m_th[i] -= deform * falloff;
 		if (m_th[i] < 0.05f) m_th[i] = 0.05f;
+		if (dmgAdd > 0.0f)
+		{
+			m_dmg[i] += dmgAdd * falloff;
+			if (m_dmg[i] > 1.0f) m_dmg[i] = 1.0f;
+		}
 	}
 
 	// 温度が下がる / 火花 / 振動
@@ -210,12 +227,13 @@ void SceneForge::DoStrike()
 	if (m_heat < 0.0f) m_heat = 0.0f;
 	float sparkScale = (0.4f + power * 1.2f) * (over ? 0.7f : 1.0f);
 	if (!cold) Strike(sparkScale);
-	m_shake = 0.3f + power * 0.7f;
+	// 冷打は「ガツン」と大きく揺れる(手応えが悪い=衝撃だけ大きい)
+	m_shake = cold ? (0.6f + power * 0.6f) : (0.3f + power * 0.7f);
 
 	// 評価ラベル & スコア
 	const char* label; unsigned int col; float quality;
-	if      (cold)          { label = "TOO COLD"; col = IM_COL32(120, 170, 255, 255); quality = 0.1f; }
-	else if (over)          { label = "BURNT!";   col = IM_COL32(255, 120, 120, 255); quality = 0.4f; }
+	if      (cold)          { label = "CRACK!";   col = IM_COL32(120, 170, 255, 255); quality = 0.0f; }
+	else if (over)          { label = "BURNT!";   col = IM_COL32(255, 120, 120, 255); quality = 0.1f; }
 	else if (power > 0.85f) { label = "PERFECT!"; col = IM_COL32(255, 220, 120, 255); quality = 1.0f; }
 	else if (power > 0.50f) { label = "GOOD";     col = IM_COL32(180, 255, 150, 255); quality = 0.7f; }
 	else                    { label = "WEAK";     col = IM_COL32(200, 200, 200, 255); quality = 0.4f; }
@@ -369,6 +387,24 @@ void SceneForge::DrawBillet()
 		dl->AddQuadFilled(
 			ImVec2(x0, cyb - h0), ImVec2(x1, cyb - h1),
 			ImVec2(x1, cyb + h1), ImVec2(x0, cyb + h0), col);
+
+		// 損傷(冷打の割れ / 過熱の焼け)を黒い染みで表現
+		float dmg = (m_dmg[i] > m_dmg[i + 1]) ? m_dmg[i] : m_dmg[i + 1];
+		if (dmg > 0.01f)
+		{
+			ImU32 dc = IM_COL32(15, 8, 5, (int)(dmg * 210));
+			dl->AddQuadFilled(
+				ImVec2(x0, cyb - h0), ImVec2(x1, cyb - h1),
+				ImVec2(x1, cyb + h1), ImVec2(x0, cyb + h0), dc);
+		}
+	}
+
+	// 過熱中は赤い警告枠を点滅させる(鋼が焼けている合図)
+	if (m_heat > OVERHEAT)
+	{
+		float p = 0.5f + 0.5f * sinf(m_time * 12.0f);
+		ImU32 wc = IM_COL32(255, 60, 40, (int)(110 + p * 130));
+		dl->AddRect(ImVec2(left - 50, cyb - 74), ImVec2(right + 50, cyb + 74), wc, 6.0f, 0, 4.0f);
 	}
 }
 
@@ -441,14 +477,7 @@ void SceneForge::DrawHammer()
 		ImU32 cc = (m_charge > 0.85f) ? IM_COL32(255, 220, 120, 255) : IM_COL32(255, 180, 70, 255);
 		dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bw * m_charge, by + 9), cc, 2.0f);
 	}
-
-	// 拍(メトロノーム): 拍ちょうどで明るく大きく光る
-	float beatDist = (m_beat < 0.5f) ? m_beat : (1.0f - m_beat);
-	float glow = 1.0f - beatDist / 0.5f;			// 拍で1, 中間で0
-	float r = 8.0f + glow * 10.0f;
-	ImVec2 bc(SCREEN_WIDTH * 0.5f, SCREEN_HEIGHT * 0.30f);
-	dl->AddCircleFilled(bc, r, IM_COL32(255, 210, 130, (int)(80 + glow * 175)));
-	dl->AddText(ImVec2(bc.x - 26, bc.y + 16), IM_COL32(220, 220, 220, 180), "RHYTHM");
+	// 拍(リズム)は視覚では出さず、音で伝える予定(段階: 音響)
 }
 
 void SceneForge::DrawTitleUI()
@@ -468,6 +497,13 @@ void SceneForge::DrawPlayUI()
 
 	// 温度ゲージ
 	DrawHeatGauge();
+
+	// 過熱の警告(点滅)
+	if (m_heat > OVERHEAT)
+	{
+		float p = 0.5f + 0.5f * sinf(m_time * 12.0f);
+		CenterText("!!  OVERHEAT  !!", 0.20f, 1.6f, IM_COL32(255, 70, 50, (int)(150 + p * 105)));
+	}
 
 	// 打撃フィードバックのポップアップ(鉄条の上でフェード)
 	if (m_popupLife > 0.0f)

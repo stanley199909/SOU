@@ -92,6 +92,7 @@ private:
 	//--- 鉄条の側面プロファイル(中心線からの半分の厚み, 正規化 1.0=初期の太さ)
 	static const int SEG = 24;		// 長手方向の分割数
 	float m_th[SEG];				// 各セグメントの半厚み(叩くと減る)
+	float m_dmg[SEG];				// 各セグメントの損傷(冷打の割れ/過熱の焼け, 0..1)
 
 	//--- 打撃(蓄力ハンマー)
 	bool  m_charging  = false;		// 蓄力中か
@@ -129,6 +130,7 @@ private:
 	static constexpr float DEFORM_MAX  = 0.22f;	// 満蓄力・最適温度での最大変形量
 	static constexpr float COLD_LIMIT  = 0.35f;	// これ未満は冷たすぎ(ほぼ変形せず割れる)
 	static constexpr float BEAT_PERIOD = 0.70f;	// メトロノーム周期(秒)
+	static constexpr float BURN_RATE   = 0.18f;	// 過熱で放置したとき鋼が焼ける速度(/秒)
 };
 
 #endif // __SCENE_FORGE_H__
