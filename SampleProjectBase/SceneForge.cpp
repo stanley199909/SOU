@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 using namespace DirectX;
 
@@ -80,10 +81,10 @@ void SceneForge::Uninit()
 	m_sparks.clear();
 }
 
-void SceneForge::Strike()
+void SceneForge::Strike(float scale)
 {
-	// 1回叩くと火花をまとめて発生(バースト)
-	const int N = m_burst;
+	// 1回叩くと火花をまとめて発生(バースト)。scaleで量と勢いを変える
+	const int N = (int)(m_burst * scale);
 	XMFLOAT3 origin = XMFLOAT3(0.0f, 1.0f, 0.0f);	// 金床の位置(カメラ注視点の高さ)
 	for (int i = 0; i < N; ++i)
 	{
@@ -92,7 +93,7 @@ void SceneForge::Strike()
 		s.pos = origin;
 		float a = frand(0.0f, 6.2832f);		// 水平方向の角度
 		float elev = frand(0.25f, 1.4f);	// 上向きの仰角
-		float speed = frand(2.5f, 7.0f) * m_power;
+		float speed = frand(2.5f, 7.0f) * m_power * scale;
 		float h = cosf(elev) * speed;
 		s.vel = XMFLOAT3(cosf(a) * h, sinf(elev) * speed + frand(1.0f, 3.0f), sinf(a) * h);
 		s.maxLife = frand(0.5f, 1.1f);
@@ -112,6 +113,16 @@ void SceneForge::StartGame()
 	m_score    = 0;
 	m_heat     = 0.0f;
 	for (int i = 0; i < SEG; ++i) m_th[i] = 1.0f;	// 鉄条を初期状態に戻す
+
+	m_charging    = false;
+	m_charge      = 0.0f;
+	m_strikeSeg   = SEG / 2;
+	m_canStrike   = false;		// SPACEを一度離すまで蓄力しない
+	m_shake       = 0.0f;
+	m_popupLife   = 0.0f;
+	m_beat        = 0.0f;
+	m_qualitySum  = 0.0f;
+	m_strikeCount = 0;
 }
 
 void SceneForge::FinishGame()
@@ -132,14 +143,97 @@ void SceneForge::UpdateTitle(float /*tick*/)
 //--- 鍛造中
 void SceneForge::UpdatePlay(float tick)
 {
-	// 加熱: F長押しで風箱を煽る / 常に自然冷却
+	// --- 加熱: F長押しで風箱を煽る / 常に自然冷却 ---
 	if (IsKeyPress('F')) m_heat += HEAT_RATE * tick;
 	m_heat -= COOL_RATE * tick;
 	if (m_heat < 0.0f) m_heat = 0.0f;
 	if (m_heat > 1.0f) m_heat = 1.0f;
 
-	// (段階2の暫定) Enterで結果画面へ。段階4で「目標形状の達成」に置き換える
+	// --- リズム(メトロノーム) ---
+	m_beat += tick / BEAT_PERIOD;
+	while (m_beat >= 1.0f) m_beat -= 1.0f;
+
+	// --- 打撃位置の移動(A/D または ←/→) ---
+	if (IsKeyTrigger('A') || IsKeyTrigger(VK_LEFT))  { if (m_strikeSeg > 0)       --m_strikeSeg; }
+	if (IsKeyTrigger('D') || IsKeyTrigger(VK_RIGHT)) { if (m_strikeSeg < SEG - 1) ++m_strikeSeg; }
+
+	// --- 蓄力ハンマー: SPACE押しっぱなしで蓄力、離すと打撃 ---
+	// 開始直後の誤爆防止(一度SPACEを離すまで蓄力しない)
+	if (!m_canStrike)
+	{
+		if (!IsKeyPress(VK_SPACE)) m_canStrike = true;
+	}
+	else if (IsKeyPress(VK_SPACE))
+	{
+		m_charging = true;
+		m_charge  += CHARGE_RATE * tick;
+		if (m_charge > 1.0f) m_charge = 1.0f;
+	}
+	else if (m_charging)
+	{
+		DoStrike();
+		m_charging = false;
+		m_charge   = 0.0f;
+	}
+
+	// --- フィードバックの減衰 ---
+	if (m_shake > 0.0f)     { m_shake -= tick * 3.0f; if (m_shake < 0.0f) m_shake = 0.0f; }
+	if (m_popupLife > 0.0f) m_popupLife -= tick;
+
+	// (段階3の暫定) Enterで結果画面へ。段階4で「目標形状の達成」に置き換える
 	if (IsKeyTrigger(VK_RETURN)) FinishGame();
+}
+
+//--- 蓄力を解放して1打: 変形＋フィードバック
+void SceneForge::DoStrike()
+{
+	float power = m_charge;			// 0..1
+	bool cold = (m_heat < COLD_LIMIT);
+	bool over = (m_heat > OVERHEAT);
+
+	// 温度係数(冷たい→ほぼ効かない, 過熱→効くが品質悪, 適温→最大)
+	float heatFactor = cold ? 0.15f : (over ? 0.7f : 1.0f);
+	float deform = DEFORM_MAX * power * heatFactor;
+
+	// 打撃位置を中心に鉄を薄くする(近傍にもなだらかに)
+	for (int i = 0; i < SEG; ++i)
+	{
+		int d = abs(i - m_strikeSeg);
+		if (d > 3) continue;
+		float falloff = 1.0f - d / 4.0f;
+		m_th[i] -= deform * falloff;
+		if (m_th[i] < 0.05f) m_th[i] = 0.05f;
+	}
+
+	// 温度が下がる / 火花 / 振動
+	m_heat -= STRIKE_COOL;
+	if (m_heat < 0.0f) m_heat = 0.0f;
+	float sparkScale = (0.4f + power * 1.2f) * (over ? 0.7f : 1.0f);
+	if (!cold) Strike(sparkScale);
+	m_shake = 0.3f + power * 0.7f;
+
+	// 評価ラベル & スコア
+	const char* label; unsigned int col; float quality;
+	if      (cold)          { label = "TOO COLD"; col = IM_COL32(120, 170, 255, 255); quality = 0.1f; }
+	else if (over)          { label = "BURNT!";   col = IM_COL32(255, 120, 120, 255); quality = 0.4f; }
+	else if (power > 0.85f) { label = "PERFECT!"; col = IM_COL32(255, 220, 120, 255); quality = 1.0f; }
+	else if (power > 0.50f) { label = "GOOD";     col = IM_COL32(180, 255, 150, 255); quality = 0.7f; }
+	else                    { label = "WEAK";     col = IM_COL32(200, 200, 200, 255); quality = 0.4f; }
+
+	// リズムボーナス(拍に近いほど良い)
+	float beatDist = (m_beat < 0.5f) ? m_beat : (1.0f - m_beat);	// 0が拍ちょうど
+	bool onBeat = (beatDist < 0.12f) && !cold;
+	if (onBeat) quality += 0.2f;
+
+	m_qualitySum += quality;
+	m_strikeCount++;
+	m_score += (int)(quality * 100);
+
+	// ポップアップ表示(オンビート時は印を付ける)
+	if (onBeat) sprintf_s(m_popupText, sizeof(m_popupText), "%s +BEAT", label);
+	else        strcpy_s(m_popupText, sizeof(m_popupText), label);
+	m_popupLife = 0.8f;
+	m_popupCol  = col;
 }
 
 //--- 結果: SPACEでタイトルへ戻る
@@ -251,7 +345,16 @@ void SceneForge::DrawBillet()
 	ImU32 col  = HeatColor(m_heat);
 	ImU32 glow = HeatColor(m_heat, 0.35f);	// 外側のにじみ(発光感)
 
-	auto nodeX = [&](int i) { return left + (right - left) * (i / (float)(SEG - 1)); };
+	// 打撃時の揺れ(鉄条だけを揺らして衝撃感を出す)
+	float sx = 0.0f, sy = 0.0f;
+	if (m_shake > 0.0f)
+	{
+		sx = frand(-1.0f, 1.0f) * m_shake * 8.0f;
+		sy = frand(-1.0f, 1.0f) * m_shake * 8.0f;
+	}
+	const float cyb = cy + sy;
+
+	auto nodeX = [&](int i) { return left + (right - left) * (i / (float)(SEG - 1)) + sx; };
 
 	for (int i = 0; i < SEG - 1; ++i)
 	{
@@ -260,12 +363,12 @@ void SceneForge::DrawBillet()
 
 		// 発光(少し大きめ・薄く)
 		dl->AddQuadFilled(
-			ImVec2(x0, cy - h0 - 6), ImVec2(x1, cy - h1 - 6),
-			ImVec2(x1, cy + h1 + 6), ImVec2(x0, cy + h0 + 6), glow);
+			ImVec2(x0, cyb - h0 - 6), ImVec2(x1, cyb - h1 - 6),
+			ImVec2(x1, cyb + h1 + 6), ImVec2(x0, cyb + h0 + 6), glow);
 		// 本体
 		dl->AddQuadFilled(
-			ImVec2(x0, cy - h0), ImVec2(x1, cy - h1),
-			ImVec2(x1, cy + h1), ImVec2(x0, cy + h0), col);
+			ImVec2(x0, cyb - h0), ImVec2(x1, cyb - h1),
+			ImVec2(x1, cyb + h1), ImVec2(x0, cyb + h0), col);
 	}
 }
 
@@ -305,6 +408,49 @@ void SceneForge::DrawHeatGauge()
 	dl->AddText(ImVec2(x1 - 220, y - 22), stc, st);
 }
 
+//--- ハンマー・打撃カーソル・蓄力メーター・拍
+void SceneForge::DrawHammer()
+{
+	ImDrawList* dl = ImGui::GetForegroundDrawList();
+
+	const float left     = SCREEN_WIDTH * 0.25f;
+	const float right    = SCREEN_WIDTH * 0.75f;
+	const float cy       = SCREEN_HEIGHT * 0.50f;
+	const float baseHalf = 30.0f;
+
+	float x    = left + (right - left) * (m_strikeSeg / (float)(SEG - 1));
+	float topY = cy - baseHalf * m_th[m_strikeSeg];
+
+	// 打撃位置マーカー(下向き三角)
+	float my = topY - 14;
+	dl->AddTriangleFilled(ImVec2(x - 8, my - 14), ImVec2(x + 8, my - 14), ImVec2(x, my),
+		IM_COL32(255, 240, 180, 230));
+
+	// ハンマー(蓄力するほど高く持ち上がる)
+	float raise = 34.0f + m_charge * 70.0f;
+	float hy    = topY - raise;
+	dl->AddLine(ImVec2(x, hy), ImVec2(x, topY - 8), IM_COL32(120, 90, 60, 255), 4.0f);	// 柄
+	dl->AddRectFilled(ImVec2(x - 24, hy - 16), ImVec2(x + 24, hy + 8),
+		IM_COL32(95, 95, 105, 255), 3.0f);	// ハンマー頭
+
+	// 蓄力メーター
+	if (m_charging)
+	{
+		float bw = 70.0f, bx = x - bw * 0.5f, by = cy - baseHalf - 120.0f;
+		dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bw, by + 9), IM_COL32(40, 40, 40, 220), 2.0f);
+		ImU32 cc = (m_charge > 0.85f) ? IM_COL32(255, 220, 120, 255) : IM_COL32(255, 180, 70, 255);
+		dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bw * m_charge, by + 9), cc, 2.0f);
+	}
+
+	// 拍(メトロノーム): 拍ちょうどで明るく大きく光る
+	float beatDist = (m_beat < 0.5f) ? m_beat : (1.0f - m_beat);
+	float glow = 1.0f - beatDist / 0.5f;			// 拍で1, 中間で0
+	float r = 8.0f + glow * 10.0f;
+	ImVec2 bc(SCREEN_WIDTH * 0.5f, SCREEN_HEIGHT * 0.30f);
+	dl->AddCircleFilled(bc, r, IM_COL32(255, 210, 130, (int)(80 + glow * 175)));
+	dl->AddText(ImVec2(bc.x - 26, bc.y + 16), IM_COL32(220, 220, 220, 180), "RHYTHM");
+}
+
 void SceneForge::DrawTitleUI()
 {
 	CenterText("- FORGE -",            0.34f, 3.0f, IM_COL32(255, 200, 120, 255));
@@ -317,12 +463,29 @@ void SceneForge::DrawPlayUI()
 	// 光る鉄条(背景レイヤー)
 	DrawBillet();
 
+	// ハンマー・カーソル・拍
+	DrawHammer();
+
 	// 温度ゲージ
 	DrawHeatGauge();
 
-	// 操作ガイド(段階2: 加熱の確認まで)
-	CenterText("Hold  F : Bellows (heat)      Enter : Finish (temp)", 0.93f, 1.0f,
-		IM_COL32(255, 255, 255, 170));
+	// 打撃フィードバックのポップアップ(鉄条の上でフェード)
+	if (m_popupLife > 0.0f)
+	{
+		float a = m_popupLife / 0.8f;
+		if (a > 1.0f) a = 1.0f;
+		unsigned int c = (m_popupCol & 0x00FFFFFF) | ((unsigned int)(a * 255) << 24);
+		CenterText(m_popupText, 0.36f, 2.0f, c);
+	}
+
+	// スコア(左上)
+	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	char sb[32]; sprintf_s(sb, sizeof(sb), "SCORE  %d", m_score);
+	dl->AddText(ImVec2(40, 40), IM_COL32(255, 235, 200, 255), sb);
+
+	// 操作ガイド
+	CenterText("A / D : Move    Hold SPACE : Charge & Hammer    Hold F : Heat    Enter : Finish",
+		0.93f, 1.0f, IM_COL32(255, 255, 255, 170));
 }
 
 void SceneForge::DrawResultUI()

@@ -47,7 +47,7 @@ private:
 	};
 
 	//--- 火花
-	void Strike();	// 1回叩く(火花をまとめて発生)
+	void Strike(float scale = 1.0f);	// 1回叩く(火花をまとめて発生, scaleで量と勢いを調整)
 
 	//--- 状態ごとの更新
 	void UpdateTitle(float tick);
@@ -66,6 +66,8 @@ private:
 	//--- 鍛造(鉄塊)
 	void DrawBillet();		// 2D側面図で光る鉄条を描く
 	void DrawHeatGauge();	// 温度ゲージ(HUD)
+	void DrawHammer();		// ハンマーと打撃カーソル
+	void DoStrike();		// 蓄力を解放して1打(変形＋フィードバック)
 
 private:
 	//--- 火花シミュレーション
@@ -89,7 +91,26 @@ private:
 
 	//--- 鉄条の側面プロファイル(中心線からの半分の厚み, 正規化 1.0=初期の太さ)
 	static const int SEG = 24;		// 長手方向の分割数
-	float m_th[SEG];				// 各セグメントの半厚み(段階3で叩くと減る)
+	float m_th[SEG];				// 各セグメントの半厚み(叩くと減る)
+
+	//--- 打撃(蓄力ハンマー)
+	bool  m_charging  = false;		// 蓄力中か
+	float m_charge    = 0.0f;		// 蓄力(0..1)
+	int   m_strikeSeg = SEG / 2;	// 打撃位置(セグメント)
+	bool  m_canStrike = false;		// 開始直後の誤爆防止(SPACEを一度離すまで無効)
+	float m_shake     = 0.0f;		// 打撃時の揺れ
+
+	//--- 打撃フィードバック(ポップアップ文字)
+	char         m_popupText[24] = "";
+	float        m_popupLife = 0.0f;
+	unsigned int m_popupCol  = 0;
+
+	//--- リズム(メトロノーム)
+	float m_beat = 0.0f;			// 拍の位相 0..1
+
+	//--- 評価用の集計(段階5で使用)
+	float m_qualitySum  = 0.0f;
+	int   m_strikeCount = 0;
 
 	static const int MAX_SPARKS = 3000;
 	static constexpr float GRAVITY      = 9.8f;
@@ -101,6 +122,13 @@ private:
 	static constexpr float IDEAL_MIN = 0.55f;	// 最適温度帯(下限)
 	static constexpr float IDEAL_MAX = 0.85f;	// 最適温度帯(上限)
 	static constexpr float OVERHEAT  = 0.92f;	// これ以上は過熱(鋼を痛める)
+
+	//--- 打撃パラメータ
+	static constexpr float CHARGE_RATE = 1.6f;	// 蓄力速度(/秒, 満蓄力まで約0.6秒)
+	static constexpr float STRIKE_COOL = 0.08f;	// 1打ごとに下がる温度
+	static constexpr float DEFORM_MAX  = 0.22f;	// 満蓄力・最適温度での最大変形量
+	static constexpr float COLD_LIMIT  = 0.35f;	// これ未満は冷たすぎ(ほぼ変形せず割れる)
+	static constexpr float BEAT_PERIOD = 0.70f;	// メトロノーム周期(秒)
 };
 
 #endif // __SCENE_FORGE_H__
