@@ -23,6 +23,10 @@ public:
 	static void Render();		// ImGuiフレーム確定＆描画
 
 	static void DrawPerformance();	// FPSなどの共通パネル
+
+	// デバッグUI(Performance/Scene選択など)の表示切り替え。F1で使用
+	static bool IsVisible();
+	static void Toggle();
 };
 
 #endif // __DEBUG_UI_H__

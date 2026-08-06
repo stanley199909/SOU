@@ -1,5 +1,10 @@
 ﻿#include "DebugUI.h"
 
+//--- デバッグUIの表示フラグ(F1で切替)
+static bool s_debugVisible = true;
+bool DebugUI::IsVisible() { return s_debugVisible; }
+void DebugUI::Toggle()    { s_debugVisible = !s_debugVisible; }
+
 void DebugUI::Init(HWND hWnd, ID3D11Device* device, ID3D11DeviceContext* context)
 {
 	IMGUI_CHECKVERSION();

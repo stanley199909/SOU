@@ -248,22 +248,26 @@ void SceneRoot::DrawUI()
 		"Blank", "Visual (Shader)", "Wall (Chase)", "Fire (Particle)", "Forge (Sparks)"
 	};
 
-	ImGui::SetNextWindowPos(ImVec2(12, 170), ImGuiCond_FirstUseEver);
-	ImGui::SetNextWindowSize(ImVec2(300, 0), ImGuiCond_FirstUseEver);
-	ImGui::Begin("Scene");
-
-	int idx = m_index;
-	if (ImGui::Combo("##scene", &idx, names, IM_ARRAYSIZE(names)))
+	// シーン選択パネルはデバッグUI(F1)がONのときだけ表示
+	if (DebugUI::IsVisible())
 	{
-		if (idx != m_index)
+		ImGui::SetNextWindowPos(ImVec2(12, 170), ImGuiCond_FirstUseEver);
+		ImGui::SetNextWindowSize(ImVec2(300, 0), ImGuiCond_FirstUseEver);
+		ImGui::Begin("Scene");
+
+		int idx = m_index;
+		if (ImGui::Combo("##scene", &idx, names, IM_ARRAYSIZE(names)))
 		{
-			m_index = idx;
-			RemoveSubScene();
-			ChangeScene();
+			if (idx != m_index)
+			{
+				m_index = idx;
+				RemoveSubScene();
+				ChangeScene();
+			}
 		}
+		ImGui::TextDisabled("Camera: ALT+Drag / R = Reset");
+		ImGui::End();
 	}
-	ImGui::TextDisabled("Camera: ALT+Drag / R = Reset");
-	ImGui::End();
 
 	// --- 現在のシーン固有のUI ---
 	if (m_pSubScene) m_pSubScene->DrawUI();

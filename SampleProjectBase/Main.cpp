@@ -61,6 +61,7 @@ void Uninit()
 void Update(HWND hWnd, float tick)
 {
 	UpdateInput();
+	if (IsKeyTrigger(VK_F1)) DebugUI::Toggle();	// F1でデバッグUIの表示切替
 	g_pScene->_update(tick);
 	g_pPost->Update(tick);
 
@@ -81,9 +82,12 @@ void Draw()
 
 	// UIは最後に画面へ直接描画(ポストプロセスの影響を受けない)
 	DebugUI::NewFrame();
-	DebugUI::DrawPerformance();
-	g_pScene->DrawUI();
-	g_pPost->DrawUI();
+	if (DebugUI::IsVisible())
+	{
+		DebugUI::DrawPerformance();
+		g_pPost->DrawUI();
+	}
+	g_pScene->DrawUI();		// ゲームHUDは常に表示(内部でデバッグ用パネルのみ切替)
 	DebugUI::Render();
 
 	SwapDirectX();
