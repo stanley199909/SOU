@@ -106,9 +106,10 @@ private:
 	float        m_popupLife = 0.0f;
 	unsigned int m_popupCol  = 0;
 
-	//--- リズム(メトロノーム)
-	float m_beat        = 0.0f;		// 拍の位相 0..1
-	float m_sizzleTimer = 0.0f;		// 過熱時のジュー音の再生間隔
+	//--- リズム(自分の打撃テンポ。速すぎ遅すぎない一定リズムで効率アップ)
+	float m_sinceStrike  = 0.0f;	// 前回打撃からの経過時間
+	int   m_rhythmStreak = 0;		// 良いテンポが続いている回数
+	float m_sizzleTimer  = 0.0f;	// 過熱時のジュー音の再生間隔
 
 	//--- 評価用の集計(段階5で使用)
 	float m_qualitySum  = 0.0f;
@@ -130,7 +131,9 @@ private:
 	static constexpr float STRIKE_COOL = 0.08f;	// 1打ごとに下がる温度
 	static constexpr float DEFORM_MAX  = 0.22f;	// 満蓄力・最適温度での最大変形量
 	static constexpr float COLD_LIMIT  = 0.35f;	// これ未満は冷たすぎ(ほぼ変形せず割れる)
-	static constexpr float BEAT_PERIOD = 0.70f;	// メトロノーム周期(秒)
+	static constexpr float CADENCE_MIN = 0.45f;	// 良い打撃間隔の下限(これより速いと駄目)
+	static constexpr float CADENCE_MAX = 1.00f;	// 良い打撃間隔の上限(これより遅いと駄目)
+	static constexpr int   GROOVE_HITS = 2;		// この回数だけ良いテンポが続くと効率アップ
 	static constexpr float BURN_RATE   = 0.18f;	// 過熱で放置したとき鋼が焼ける速度(/秒)
 };
 

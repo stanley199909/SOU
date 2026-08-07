@@ -119,11 +119,13 @@ void SceneForge::StartGame()
 	m_charge      = 0.0f;
 	m_strikeSeg   = SEG / 2;
 	m_canStrike   = false;		// SPACEを一度離すまで蓄力しない
-	m_shake       = 0.0f;
-	m_popupLife   = 0.0f;
-	m_beat        = 0.0f;
-	m_qualitySum  = 0.0f;
-	m_strikeCount = 0;
+	m_shake        = 0.0f;
+	m_popupLife    = 0.0f;
+	m_sinceStrike  = 999.0f;	// 最初の一打はリズム対象外
+	m_rhythmStreak = 0;
+	m_sizzleTimer  = 0.0f;
+	m_qualitySum   = 0.0f;
+	m_strikeCount  = 0;
 }
 
 void SceneForge::FinishGame()
@@ -163,9 +165,10 @@ void SceneForge::UpdatePlay(float tick)
 	}
 	else m_sizzleTimer = 0.0f;
 
-	// --- リズム(メトロノーム): 拍をまたいだら金床の音を鳴らす(耳でリズムを取る) ---
-	m_beat += tick / BEAT_PERIOD;
-	if (m_beat >= 1.0f) { m_beat -= 1.0f; Audio::Play(Audio::SE_BEAT, 0.6f); }
+	// --- 打撃テンポの計測(前回打撃からの経過時間) ---
+	m_sinceStrike += tick;
+	// 長く止まっていたらリズムはリセット(遅すぎ)
+	if (m_sinceStrike > CADENCE_MAX) m_rhythmStreak = 0;
 
 	// --- 打撃位置の移動(A/D または ←/→) ---
 	if (IsKeyTrigger('A') || IsKeyTrigger(VK_LEFT))  { if (m_strikeSeg > 0)       --m_strikeSeg; }
@@ -205,9 +208,18 @@ void SceneForge::DoStrike()
 	bool cold = (m_heat < COLD_LIMIT);
 	bool over = (m_heat > OVERHEAT);
 
+	// --- リズム判定: 前回打撃からの間隔が「速すぎず遅すぎず」なら良いテンポ ---
+	float interval = m_sinceStrike;
+	m_sinceStrike = 0.0f;
+	bool goodTempo = (interval >= CADENCE_MIN && interval <= CADENCE_MAX) && !cold;
+	if (goodTempo) ++m_rhythmStreak;
+	else           m_rhythmStreak = 0;
+	bool inGroove = (m_rhythmStreak >= GROOVE_HITS);	// テンポが乗ると効率アップ
+	float grooveMult = inGroove ? 1.3f : 1.0f;			// 変形効率の上昇
+
 	// 温度係数(冷たい→ほぼ効かない, 過熱→効くが品質悪, 適温→最大)
 	float heatFactor = cold ? 0.10f : (over ? 0.7f : 1.0f);
-	float deform = DEFORM_MAX * power * heatFactor;
+	float deform = DEFORM_MAX * power * heatFactor * grooveMult;
 
 	// 打撃位置を中心に鉄を薄くする(近傍にもなだらかに)。
 	// 冷打=割れ / 過熱打=焼け として、その場に損傷を刻む
@@ -246,18 +258,20 @@ void SceneForge::DoStrike()
 	else if (power > 0.50f) { label = "GOOD";     col = IM_COL32(180, 255, 150, 255); quality = 0.7f; }
 	else                    { label = "WEAK";     col = IM_COL32(200, 200, 200, 255); quality = 0.4f; }
 
-	// リズムボーナス(拍に近いほど良い)
-	float beatDist = (m_beat < 0.5f) ? m_beat : (1.0f - m_beat);	// 0が拍ちょうど
-	bool onBeat = (beatDist < 0.12f) && !cold;
-	if (onBeat) quality += 0.2f;
+	// 良いテンポが乗っているときは効率・品質アップ＋主人公が口笛を吹く
+	if (inGroove)
+	{
+		quality += 0.2f;
+		Audio::Play(Audio::SE_WHISTLE, 0.5f);
+	}
 
 	m_qualitySum += quality;
 	m_strikeCount++;
 	m_score += (int)(quality * 100);
 
-	// ポップアップ表示(オンビート時は印を付ける)
-	if (onBeat) sprintf_s(m_popupText, sizeof(m_popupText), "%s +BEAT", label);
-	else        strcpy_s(m_popupText, sizeof(m_popupText), label);
+	// ポップアップ表示(ノリに乗っている間は印を付ける)
+	if (inGroove) sprintf_s(m_popupText, sizeof(m_popupText), "%s  (in rhythm)", label);
+	else          strcpy_s(m_popupText, sizeof(m_popupText), label);
 	m_popupLife = 0.8f;
 	m_popupCol  = col;
 }

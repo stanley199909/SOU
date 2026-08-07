@@ -8,7 +8,7 @@ namespace Audio
 {
 	enum SoundId
 	{
-		SE_BEAT,	// 金床の拍(リズムの基準)
+		SE_WHISTLE,	// 良いリズムのときの口笛(効率アップの合図)
 		SE_HAMMER,	// 打撃の「カン」
 		SE_COLD,	// 冷打の鈍い「ドン」
 		SE_SIZZLE,	// 過熱の「ジュー」

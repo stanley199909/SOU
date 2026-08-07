@@ -100,14 +100,18 @@ namespace
 
 		switch (id)
 		{
-		case Audio::SE_BEAT:
+		case Audio::SE_WHISTLE:
 		{
-			int n = sr * 6 / 100;	// 0.06s
+			int n = sr * 32 / 100;	// 0.32s の口笛(少し上がって下がる, ビブラート付き)
 			w.resize(n);
 			for (int i = 0; i < n; ++i)
 			{
 				float t = (float)i / sr;
-				w[i] = sinf(6.2832f * 1400.0f * t) * expf(-t * 45.0f) * 0.45f;
+				float prog = t / 0.32f;
+				float pitch = 900.0f + 220.0f * sinf(prog * 3.1416f);	// 山なりに音程変化
+				float vib   = 1.0f + 0.02f * sinf(6.2832f * 6.0f * t);	// ビブラート
+				float env   = (1.0f - expf(-t * 40.0f)) * expf(-t * 3.5f);
+				w[i] = sinf(6.2832f * pitch * vib * t) * env * 0.30f;
 			}
 			break;
 		}
@@ -180,7 +184,7 @@ namespace Audio
 		if (FAILED(g_xa->CreateMasteringVoice(&g_master))) { g_xa->Release(); g_xa = nullptr; return; }
 
 		static const char* files[SE_MAX] = {
-			"Assets/Sound/beat.wav",
+			"Assets/Sound/whistle.wav",
 			"Assets/Sound/hammer.wav",
 			"Assets/Sound/cold.wav",
 			"Assets/Sound/sizzle.wav",
