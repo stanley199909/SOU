@@ -64,7 +64,9 @@ private:
 	void FinishGame();	// 鍛造完了 → 結果へ
 
 	//--- 鍛造(鉄塊)
-	void DrawBillet();		// 2D側面図で光る鉄条を描く
+	void  BuildTarget();		// 目標形状(剣)を生成
+	float ShapeMatch() const;	// 現在の形状と目標の一致度(0..1)
+	void  DrawBillet();		// 2D側面図で光る鉄条を描く
 	void DrawHeatGauge();	// 温度ゲージ(HUD)
 	void DrawHammer();		// ハンマーと打撃カーソル
 	void DoStrike();		// 蓄力を解放して1打(変形＋フィードバック)
@@ -93,6 +95,8 @@ private:
 	static const int SEG = 24;		// 長手方向の分割数
 	float m_th[SEG];				// 各セグメントの半厚み(叩くと減る)
 	float m_dmg[SEG];				// 各セグメントの損傷(冷打の割れ/過熱の焼け, 0..1)
+	float m_target[SEG];			// 目標形状(剣のシルエット)の半厚み
+	float m_match = 0.0f;			// 目標形状との一致度 0..1
 
 	//--- 打撃(蓄力ハンマー)
 	bool  m_charging  = false;		// 蓄力中か

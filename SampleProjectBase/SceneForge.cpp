@@ -69,6 +69,7 @@ void SceneForge::Init()
 
 	// 鉄条プロファイルを一様な太さ・無傷で初期化
 	for (int i = 0; i < SEG; ++i) { m_th[i] = 1.0f; m_dmg[i] = 0.0f; }
+	BuildTarget();
 
 	Strike();	// 開始直後から火花を出す
 }
@@ -105,6 +106,39 @@ void SceneForge::Strike(float scale)
 }
 
 //====================================================================
+//  目標形状(剣のシルエット)
+//====================================================================
+void SceneForge::BuildTarget()
+{
+	// 左=柄側(タング), 右=切先。鉄条(一様1.0)から削って剣形に近づける
+	for (int i = 0; i < SEG; ++i)
+	{
+		float u = i / (float)(SEG - 1);	// 0..1
+		float th;
+		if (u < 0.20f)
+			th = 0.50f;					// タング(柄)は細め
+		else
+		{
+			float v = (u - 0.20f) / 0.80f;	// 0..1(刃の付け根→切先)
+			th = 0.85f + (0.08f - 0.85f) * v;	// 付け根0.85 → 切先0.08 へテーパー
+		}
+		m_target[i] = th;
+	}
+}
+
+//--- 現在の形状と目標の一致度(0..1)。平均誤差が小さいほど高い
+float SceneForge::ShapeMatch() const
+{
+	float err = 0.0f;
+	for (int i = 0; i < SEG; ++i) err += fabsf(m_th[i] - m_target[i]);
+	err /= SEG;
+	float m = 1.0f - err / 0.40f;	// 平均誤差0.40で0%
+	if (m < 0.0f) m = 0.0f;
+	if (m > 1.0f) m = 1.0f;
+	return m;
+}
+
+//====================================================================
 //  ゲーム進行
 //====================================================================
 void SceneForge::StartGame()
@@ -114,6 +148,8 @@ void SceneForge::StartGame()
 	m_score    = 0;
 	m_heat     = 0.0f;
 	for (int i = 0; i < SEG; ++i) { m_th[i] = 1.0f; m_dmg[i] = 0.0f; }	// 鉄条を初期状態に戻す
+	BuildTarget();
+	m_match = 0.0f;
 
 	m_charging    = false;
 	m_charge      = 0.0f;
@@ -193,12 +229,15 @@ void SceneForge::UpdatePlay(float tick)
 		m_charge   = 0.0f;
 	}
 
+	// --- 目標形状との一致度を更新 ---
+	m_match = ShapeMatch();
+
 	// --- フィードバックの減衰 ---
 	if (m_shake > 0.0f)     { m_shake -= tick * 3.0f; if (m_shake < 0.0f) m_shake = 0.0f; }
 	if (m_popupLife > 0.0f) m_popupLife -= tick;
 
-	// (段階3の暫定) Enterで結果画面へ。段階4で「目標形状の達成」に置き換える
-	if (IsKeyTrigger(VK_RETURN)) FinishGame();
+	// --- 淬火(仕上げ): Qでいつでも完成にできる。一致度と損傷で品質が決まる ---
+	if (IsKeyTrigger('Q')) FinishGame();
 }
 
 //--- 蓄力を解放して1打: 変形＋フィードバック
@@ -421,6 +460,17 @@ void SceneForge::DrawBillet()
 		}
 	}
 
+	// 目標形状(剣)のゴースト輪郭。これに近づくように削る
+	ImU32 tcol = IM_COL32(120, 220, 255, 150);
+	for (int i = 0; i < SEG - 1; ++i)
+	{
+		float tx0 = left + (right - left) * (i / (float)(SEG - 1));
+		float tx1 = left + (right - left) * ((i + 1) / (float)(SEG - 1));
+		float t0 = baseHalf * m_target[i], t1 = baseHalf * m_target[i + 1];
+		dl->AddLine(ImVec2(tx0, cy - t0), ImVec2(tx1, cy - t1), tcol, 2.0f);
+		dl->AddLine(ImVec2(tx0, cy + t0), ImVec2(tx1, cy + t1), tcol, 2.0f);
+	}
+
 	// 過熱中は赤い警告枠を点滅させる(鋼が焼けている合図)
 	if (m_heat > OVERHEAT)
 	{
@@ -536,23 +586,42 @@ void SceneForge::DrawPlayUI()
 		CenterText(m_popupText, 0.36f, 2.0f, c);
 	}
 
-	// スコア(左上)
+	// スコアと形状一致度(左上)
 	ImDrawList* dl = ImGui::GetForegroundDrawList();
-	char sb[32]; sprintf_s(sb, sizeof(sb), "SCORE  %d", m_score);
+	char sb[48];
+	sprintf_s(sb, sizeof(sb), "SCORE  %d", m_score);
 	dl->AddText(ImVec2(40, 40), IM_COL32(255, 235, 200, 255), sb);
+	sprintf_s(sb, sizeof(sb), "SHAPE MATCH  %d%%", (int)(m_match * 100));
+	dl->AddText(ImVec2(40, 60), IM_COL32(150, 220, 255, 255), sb);
+
+	// 一致度バー(上部中央)
+	{
+		float bx0 = SCREEN_WIDTH * 0.30f, bx1 = SCREEN_WIDTH * 0.70f, by = 30.0f, bh = 14.0f;
+		dl->AddRectFilled(ImVec2(bx0, by), ImVec2(bx1, by + bh), IM_COL32(30, 30, 34, 220), 3.0f);
+		dl->AddRectFilled(ImVec2(bx0, by), ImVec2(bx0 + (bx1 - bx0) * m_match, by + bh),
+			IM_COL32(90, 200, 255, 255), 3.0f);
+		dl->AddRect(ImVec2(bx0, by), ImVec2(bx1, by + bh), IM_COL32(200, 200, 200, 120), 3.0f);
+	}
+
+	// 淬火の準備ができたら促す
+	if (m_match >= 0.85f)
+		CenterText("Shape looks good!  Press  Q  to Quench", 0.86f, 1.2f,
+			IM_COL32(150, 255, 180, 230));
 
 	// 操作ガイド
-	CenterText("A / D : Move    Hold SPACE : Charge & Hammer    Hold F : Heat    Enter : Finish",
+	CenterText("A / D : Move    Hold SPACE : Hammer    Hold F : Heat    Q : Quench (finish)",
 		0.93f, 1.0f, IM_COL32(255, 255, 255, 170));
 }
 
 void SceneForge::DrawResultUI()
 {
-	CenterText("FORGED!",              0.34f, 3.0f, IM_COL32(255, 220, 140, 255));
+	CenterText("FORGED!",              0.30f, 3.0f, IM_COL32(255, 220, 140, 255));
 	char buf[64];
+	sprintf_s(buf, sizeof(buf), "SHAPE MATCH  %d%%", (int)(m_match * 100));
+	CenterText(buf,                    0.46f, 2.0f, IM_COL32(150, 220, 255, 255));
 	sprintf_s(buf, sizeof(buf), "SCORE  %d", m_score);
-	CenterText(buf,                    0.50f, 2.0f, IM_COL32(255, 255, 255, 255));
-	CenterText("PRESS  SPACE  TO  RETURN", 0.68f, 1.4f, IM_COL32(255, 255, 255, 220));
+	CenterText(buf,                    0.56f, 2.0f, IM_COL32(255, 255, 255, 255));
+	CenterText("PRESS  SPACE  TO  RETURN", 0.70f, 1.4f, IM_COL32(255, 255, 255, 220));
 }
 
 void SceneForge::DrawUI()
