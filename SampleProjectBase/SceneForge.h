@@ -66,7 +66,11 @@ private:
 	//--- 鍛造(鉄塊)
 	void  BuildTarget();		// 目標形状(剣)を生成
 	float ShapeMatch() const;	// 現在の形状と目標の一致度(0..1)
-	void  DrawBillet();		// 2D側面図で光る鉄条を描く
+	void  ApplyCamera();		// ゲーム用の固定カメラ(KCD風の見下ろし)を毎フレーム適用
+	void  DrawModelsTest();		// 鍛冶素材の3Dモデルを描画
+	int   BuildBarMesh();		// m_th[]から3D鉄条の頂点を生成(戻り値=頂点数)
+	void  Draw3DBillet();		// 3Dの光る鉄条を描画
+	void  DrawBillet();		// 2D側面図で光る鉄条を描く(旧, 参考用)
 	void DrawHeatGauge();	// 温度ゲージ(HUD)
 	void DrawHammer();		// ハンマーと打撃カーソル
 	void DoStrike();		// 蓄力を解放して1打(変形＋フィードバック)
@@ -98,9 +102,36 @@ private:
 	float m_target[SEG];			// 目標形状(剣のシルエット)の半厚み
 	float m_match = 0.0f;			// 目標形状との一致度 0..1
 
+	//--- 3Dモデル配置の調整用(F1デバッグでスライダ操作)
+	bool  m_show3D  = true;
+	float m_mScale  = 0.02f;	// 素材パックは大きいことが多いので小さめから
+	float m_mPos[3] = { 0.0f, 0.0f, 0.0f };
+	float m_mYaw    = 0.0f;
+
+	//--- ゲーム用固定カメラ(KCD風の見下ろし)
+	float m_camPos[3]  = { 0.0f, 3.4f, -1.6f };	// 頭の高さから見下ろす(やや急角度)
+	float m_camLook[3] = { 0.0f, 1.4f,  0.2f };	// 金床の上面(鉄条)を見る
+	float m_camSway    = 0.30f;					// マウスに応じた視点の揺れ幅
+	bool  m_cursorShown = true;					// OSカーソルの表示状態(PLAY中は隠す)
+
+	//--- 調整用パラメータ(F1デバッグでスライダ変更可)
+	float m_strikeCDMax = 1.25f;	// 打撃後クールダウン(秒)
+	float m_coolRate    = 0.03f;	// 自然冷却速度(/秒)
+	float m_aimTop      = 0.12f;	// 鉄条が画面に映る上端(高さ割合)。照準の対応範囲
+	float m_aimBottom   = 0.82f;	// 鉄条が画面に映る下端(高さ割合)
+
+	//--- 3D鉄条メッシュ
+	std::vector<Vertex> m_barVtx;
+	std::shared_ptr<MeshBuffer> m_barMesh;
+	float m_barY     = 2.32f;	// 鉄条の中心の高さ(金床の上面に来るよう調整)
+	float m_barLen   = 1.8f;	// 長さ
+	float m_barThick = 0.18f;	// 初期の半分の厚み
+	float m_barWidth = 0.12f;	// 半分の幅
+
 	//--- 打撃(蓄力ハンマー)
 	bool  m_charging  = false;		// 蓄力中か
 	float m_charge    = 0.0f;		// 蓄力(0..1)
+	float m_strikeCD  = 0.0f;		// 打撃後のクールダウン残り(連打防止)
 	int   m_strikeSeg = SEG / 2;	// 打撃位置(セグメント)
 	bool  m_canStrike = false;		// 開始直後の誤爆防止(SPACEを一度離すまで無効)
 	float m_shake     = 0.0f;		// 打撃時の揺れ
@@ -124,8 +155,8 @@ private:
 	static constexpr float TITLE_INTERVAL = 1.0f;	// タイトルで自動的に叩く間隔(秒)
 
 	//--- 温度パラメータ
-	static constexpr float HEAT_RATE = 0.55f;	// 加熱速度(F長押し, /秒)
-	static constexpr float COOL_RATE = 0.12f;	// 自然冷却速度(/秒)
+	static constexpr float HEAT_RATE = 0.55f;	// 加熱速度(R長押しで炉で加熱, /秒)
+	// 自然冷却速度と打撃CDは調整しやすいようメンバー変数(m_coolRate / m_strikeCDMax)にした
 	static constexpr float IDEAL_MIN = 0.55f;	// 最適温度帯(下限)
 	static constexpr float IDEAL_MAX = 0.85f;	// 最適温度帯(上限)
 	static constexpr float OVERHEAT  = 0.92f;	// これ以上は過熱(鋼を痛める)

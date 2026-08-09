@@ -28,5 +28,14 @@
 
 # Build output binaries
 *.exe
-*.dll
 *.lib
+
+# Blacksmith pack: unused PBR maps (engine only uses BaseColor). Huge (~400MB), exclude.
+*_Normal.png
+*_ORM.png
+*_Mask.png
+
+# Runtime state (changes every run, no need to track)
+Assets/setting.dat
+imgui.ini
+debug.txt

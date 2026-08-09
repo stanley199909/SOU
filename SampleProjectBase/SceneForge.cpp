@@ -4,6 +4,8 @@
 #include "Shader.h"
 #include "Texture.h"
 #include "CameraBase.h"
+#include "LightBase.h"
+#include "Model.h"
 #include "Input.h"
 #include "DebugUI.h"
 #include "Defines.h"
@@ -12,6 +14,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <string>
 
 using namespace DirectX;
 
@@ -30,6 +33,55 @@ float4 main(PIN i):SV_TARGET{ return tex.Sample(samp,i.uv) * i.col; }
 
 static float frand()                 { return (float)rand() / (float)RAND_MAX; }
 static float frand(float a, float b)  { return a + (b - a) * frand(); }
+
+//--- 3D鉄条用シェーダー(頂点色をそのまま出す=発光する熱い金属) ---
+static const char* g_barVS = R"EOT(
+cbuffer Cam : register(b0){ float4x4 view; float4x4 proj; };
+struct VIN  { float3 pos:POSITION0; float2 uv:TEXCOORD0; float4 col:TEXCOORD1; };
+struct VOUT { float4 pos:SV_POSITION; float4 col:TEXCOORD1; };
+VOUT main(VIN v){ VOUT o; o.pos=mul(float4(v.pos,1),view); o.pos=mul(o.pos,proj); o.col=v.col; return o; }
+)EOT";
+static const char* g_barPS = R"EOT(
+struct PIN{ float4 pos:SV_POSITION; float4 col:TEXCOORD1; };
+float4 main(PIN i):SV_TARGET{ return i.col; }
+)EOT";
+
+//--- 温度(0..1)を鋼の色(float4)に変換。冷たいときも暗い金属色で見える
+static DirectX::XMFLOAT4 HeatRGB(float h, float dmg)
+{
+	static const float sH[] = { 0.00f, 0.20f, 0.40f, 0.55f, 0.70f, 0.85f, 1.00f };
+	static const float sR[] = { 0.15f, 0.45f, 0.85f, 1.00f, 1.00f, 1.00f, 1.00f };
+	static const float sG[] = { 0.05f, 0.06f, 0.15f, 0.45f, 0.65f, 0.88f, 1.00f };
+	static const float sB[] = { 0.05f, 0.02f, 0.02f, 0.05f, 0.15f, 0.45f, 0.92f };
+	const int N = 7;
+	if (h < sH[0]) h = sH[0];
+	if (h > sH[N - 1]) h = sH[N - 1];
+	int i = 0; while (i < N - 1 && h > sH[i + 1]) ++i;
+	float t = (h - sH[i]) / (sH[i + 1] - sH[i]);
+	float r = sR[i] + (sR[i + 1] - sR[i]) * t;
+	float g = sG[i] + (sG[i + 1] - sG[i]) * t;
+	float b = sB[i] + (sB[i + 1] - sB[i]) * t;
+	// 冷たくても暗い金属として見えるよう下限を設ける
+	if (r < 0.22f) r = 0.22f;
+	if (g < 0.20f) g = 0.20f;
+	if (b < 0.20f) b = 0.20f;
+	float d = 1.0f - 0.7f * dmg;	// 損傷で暗くなる
+	return DirectX::XMFLOAT4(r * d, g * d, b * d, 1.0f);
+}
+
+//--- マウス位置をクライアント座標(ピクセル)で取得。ImGuiのタイミングに依存しない。
+//    cw/ch はクライアント(=描画)の実サイズ。どのフレーム段階でも同じ値になる。
+static void GetMouseClient(float& mx, float& my, float& cw, float& ch)
+{
+	POINT p; GetCursorPos(&p);
+	HWND hwnd = GetActiveWindow();
+	RECT rc = { 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT };
+	if (hwnd) { ScreenToClient(hwnd, &p); GetClientRect(hwnd, &rc); }
+	mx = (float)p.x; my = (float)p.y;
+	cw = (float)(rc.right - rc.left); ch = (float)(rc.bottom - rc.top);
+	if (cw < 1.0f) cw = (float)SCREEN_WIDTH;
+	if (ch < 1.0f) ch = (float)SCREEN_HEIGHT;
+}
 
 void SceneForge::Init()
 {
@@ -71,6 +123,38 @@ void SceneForge::Init()
 	for (int i = 0; i < SEG; ++i) { m_th[i] = 1.0f; m_dmg[i] = 0.0f; }
 	BuildTarget();
 
+	// --- 【3D化テスト】鍛冶素材モデルの読み込み ---
+	VertexShader* mvs = CreateObj<VertexShader>("VS_ForgeObj");
+	if (FAILED(mvs->Load("Assets/Shader/VS_Object.cso")))
+		MessageBox(nullptr, "VS_Object.cso", "Shader Error", MB_OK);
+	PixelShader* mps = CreateObj<PixelShader>("PS_ForgeObj");
+	if (FAILED(mps->Load("Assets/Shader/PS_TexTint.cso")))
+		MessageBox(nullptr, "PS_TexTint.cso", "Shader Error", MB_OK);
+
+	// --- 3D鉄条メッシュ用シェーダーと動的メッシュ ---
+	VertexShader* bvs = CreateObj<VertexShader>("VS_Bar");
+	bvs->Compile(g_barVS);
+	PixelShader* bps = CreateObj<PixelShader>("PS_Bar");
+	bps->Compile(g_barPS);
+
+	m_barVtx.resize(SEG * 48 + 24);	// 両面描画分の頂点を確保
+	MeshBuffer::Description bdesc = {};
+	bdesc.pVtx     = m_barVtx.data();
+	bdesc.vtxSize  = sizeof(Vertex);
+	bdesc.vtxCount = (UINT)m_barVtx.size();
+	bdesc.isWrite  = true;
+	bdesc.topology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+	m_barMesh = std::make_shared<MeshBuffer>(bdesc);
+
+	Model* anvil = CreateObj<Model>("MdlAnvil");
+	anvil->Load("Assets/MM_Blacksmith_Pack/Anvil/SM_Anvil.fbx", 1.0f, false, true);
+	// FBXがテクスチャを持たないので、BaseColorを手動で割り当てる
+	{
+		auto tex = std::make_shared<Texture>();
+		if (SUCCEEDED(tex->Create("Assets/MM_Blacksmith_Pack/Anvil/Textures/T_Anvil_BaseColor.png")))
+			anvil->SetTexture(tex);
+	}
+
 	Strike();	// 開始直後から火花を出す
 }
 
@@ -78,9 +162,16 @@ void SceneForge::Uninit()
 {
 	DestroyObj("VS_Forge");
 	DestroyObj("PS_Forge");
+	DestroyObj("VS_ForgeObj");
+	DestroyObj("PS_ForgeObj");
+	DestroyObj("VS_Bar");
+	DestroyObj("PS_Bar");
+	DestroyObj("MdlAnvil");
+	m_barMesh.reset();
 	m_mesh.reset();
 	m_glow.reset();
 	m_sparks.clear();
+	if (!m_cursorShown) { ShowCursor(TRUE); m_cursorShown = true; }	// カーソルを戻す
 }
 
 void SceneForge::Strike(float scale)
@@ -153,6 +244,7 @@ void SceneForge::StartGame()
 
 	m_charging    = false;
 	m_charge      = 0.0f;
+	m_strikeCD    = 0.0f;
 	m_strikeSeg   = SEG / 2;
 	m_canStrike   = false;		// SPACEを一度離すまで蓄力しない
 	m_shake        = 0.0f;
@@ -182,9 +274,9 @@ void SceneForge::UpdateTitle(float /*tick*/)
 //--- 鍛造中
 void SceneForge::UpdatePlay(float tick)
 {
-	// --- 加熱: F長押しで風箱を煽る / 常に自然冷却 ---
-	if (IsKeyPress('F')) m_heat += HEAT_RATE * tick;
-	m_heat -= COOL_RATE * tick;
+	// --- 加熱: R長押しで炉で加熱 / 常にゆっくり自然冷却 ---
+	if (IsKeyPress('R')) m_heat += HEAT_RATE * tick;
+	m_heat -= m_coolRate * tick;
 	if (m_heat < 0.0f) m_heat = 0.0f;
 	if (m_heat > 1.0f) m_heat = 1.0f;
 
@@ -206,17 +298,25 @@ void SceneForge::UpdatePlay(float tick)
 	// 長く止まっていたらリズムはリセット(遅すぎ)
 	if (m_sinceStrike > CADENCE_MAX) m_rhythmStreak = 0;
 
-	// --- 打撃位置の移動(A/D または ←/→) ---
-	if (IsKeyTrigger('A') || IsKeyTrigger(VK_LEFT))  { if (m_strikeSeg > 0)       --m_strikeSeg; }
-	if (IsKeyTrigger('D') || IsKeyTrigger(VK_RIGHT)) { if (m_strikeSeg < SEG - 1) ++m_strikeSeg; }
+	// --- 照準(シンプル方式): マウスの画面上の縦位置を鉄条のセグメントに割り当てる ---
+	// 3D投影を使わないので絶対にズレない。鉄条が画面に映る縦範囲(上端/下端の割合)に対応させる。
+	{
+		float mx, my, cw, ch; GetMouseClient(mx, my, cw, ch);
+		float t = (my / ch - m_aimTop) / (m_aimBottom - m_aimTop);	// 鉄条範囲内で0..1
+		if (t < 0.0f) t = 0.0f;
+		if (t > 1.0f) t = 1.0f;
+		m_strikeSeg = (int)((1.0f - t) * (SEG - 1) + 0.5f);	// 画面上=切先(奥), 下=柄(手前)
+	}
 
-	// --- 蓄力ハンマー: SPACE押しっぱなしで蓄力、離すと打撃 ---
-	// 開始直後の誤爆防止(一度SPACEを離すまで蓄力しない)
+	// --- 蓄力ハンマー: 左クリック押しっぱなしで蓄力、離すと打撃。打撃後はクールダウン ---
+	if (m_strikeCD > 0.0f) m_strikeCD -= tick;	// クールダウン消化
+
+	// 開始直後の誤爆防止(一度ボタンを離すまで蓄力しない)
 	if (!m_canStrike)
 	{
-		if (!IsKeyPress(VK_SPACE)) m_canStrike = true;
+		if (!IsKeyPress(VK_LBUTTON)) m_canStrike = true;
 	}
-	else if (IsKeyPress(VK_SPACE))
+	else if (m_strikeCD <= 0.0f && IsKeyPress(VK_LBUTTON))
 	{
 		m_charging = true;
 		m_charge  += CHARGE_RATE * tick;
@@ -227,6 +327,7 @@ void SceneForge::UpdatePlay(float tick)
 		DoStrike();
 		m_charging = false;
 		m_charge   = 0.0f;
+		m_strikeCD = m_strikeCDMax;	// 腕を戻す時間=すぐには次を打てない
 	}
 
 	// --- 目標形状との一致度を更新 ---
@@ -327,6 +428,11 @@ void SceneForge::UpdateResult(float /*tick*/)
 void SceneForge::Update(float tick)
 {
 	m_time += tick;
+	ApplyCamera();	// SceneRootのDCCが動かしたカメラを先に固定(照準の投影と描画で同じカメラを使う)
+
+	// PLAY中はOSカーソルを隠す(照準は光るセグメントで示す)。デバッグUI表示中は出す
+	bool wantCursor = (m_state != GAME_PLAY) || DebugUI::IsVisible();
+	if (wantCursor != m_cursorShown) { ShowCursor(wantCursor); m_cursorShown = wantCursor; }
 
 	// タイトル中は雰囲気用に自動で火花を出す
 	if (m_state == GAME_TITLE)
@@ -378,10 +484,11 @@ static void CenterText(const char* text, float yRatio, float scale = 1.0f,
                        ImU32 col = IM_COL32(255, 255, 255, 255))
 {
 	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImVec2 disp = ImGui::GetIO().DisplaySize;	// 実際の画面サイズ(解像度非依存)
 	ImVec2 sz = ImGui::CalcTextSize(text);
 	sz.x *= scale; sz.y *= scale;
-	float x = (SCREEN_WIDTH  - sz.x) * 0.5f;
-	float y =  SCREEN_HEIGHT * yRatio - sz.y * 0.5f;
+	float x = (disp.x - sz.x) * 0.5f;
+	float y =  disp.y * yRatio - sz.y * 0.5f;
 	dl->AddText(ImGui::GetFont(), ImGui::GetFontSize() * scale, ImVec2(x, y), col, text);
 }
 
@@ -485,9 +592,10 @@ void SceneForge::DrawHeatGauge()
 {
 	ImDrawList* dl = ImGui::GetForegroundDrawList();
 
-	const float x0 = SCREEN_WIDTH * 0.25f;
-	const float x1 = SCREEN_WIDTH * 0.75f;
-	const float y  = SCREEN_HEIGHT * 0.80f;
+	ImVec2 disp = ImGui::GetIO().DisplaySize;
+	const float x0 = disp.x * 0.25f;
+	const float x1 = disp.x * 0.75f;
+	const float y  = disp.y * 0.80f;
 	const float hgt = 20.0f;
 	auto lerpX = [&](float t) { return x0 + (x1 - x0) * t; };
 
@@ -510,7 +618,7 @@ void SceneForge::DrawHeatGauge()
 	// ラベルと状態
 	dl->AddText(ImVec2(x0, y - 22), IM_COL32(230, 230, 230, 255), "TEMPERATURE");
 	const char* st; ImU32 stc;
-	if      (m_heat < IDEAL_MIN) { st = "COLD - heat it up! (hold F)"; stc = IM_COL32(120, 170, 255, 255); }
+	if      (m_heat < IDEAL_MIN) { st = "COLD - heat it up! (hold R)"; stc = IM_COL32(120, 170, 255, 255); }
 	else if (m_heat > OVERHEAT)  { st = "OVERHEAT!";                   stc = IM_COL32(255, 120, 120, 255); }
 	else                          { st = "GOOD HEAT";                   stc = IM_COL32(150, 255, 150, 255); }
 	dl->AddText(ImVec2(x1 - 220, y - 22), stc, st);
@@ -561,14 +669,12 @@ void SceneForge::DrawTitleUI()
 
 void SceneForge::DrawPlayUI()
 {
-	// 光る鉄条(背景レイヤー)
-	DrawBillet();
-
-	// ハンマー・カーソル・拍
-	DrawHammer();
+	// 鉄条とハンマーは3Dで描画するので、2Dの鉄条(DrawBillet/DrawHammer)は使わない
 
 	// 温度ゲージ
 	DrawHeatGauge();
+
+	// 照準は鉄条の光るセグメントで示す(クロスヘアは使わない)
 
 	// 過熱の警告(点滅)
 	if (m_heat > OVERHEAT)
@@ -596,7 +702,8 @@ void SceneForge::DrawPlayUI()
 
 	// 一致度バー(上部中央)
 	{
-		float bx0 = SCREEN_WIDTH * 0.30f, bx1 = SCREEN_WIDTH * 0.70f, by = 30.0f, bh = 14.0f;
+		ImVec2 disp = ImGui::GetIO().DisplaySize;
+		float bx0 = disp.x * 0.30f, bx1 = disp.x * 0.70f, by = 30.0f, bh = 14.0f;
 		dl->AddRectFilled(ImVec2(bx0, by), ImVec2(bx1, by + bh), IM_COL32(30, 30, 34, 220), 3.0f);
 		dl->AddRectFilled(ImVec2(bx0, by), ImVec2(bx0 + (bx1 - bx0) * m_match, by + bh),
 			IM_COL32(90, 200, 255, 255), 3.0f);
@@ -609,7 +716,7 @@ void SceneForge::DrawPlayUI()
 			IM_COL32(150, 255, 180, 230));
 
 	// 操作ガイド
-	CenterText("A / D : Move    Hold SPACE : Hammer    Hold F : Heat    Q : Quench (finish)",
+	CenterText("Mouse : Aim    Hold L-MOUSE : Hammer    Hold R : Heat    Q : Quench",
 		0.93f, 1.0f, IM_COL32(255, 255, 255, 170));
 }
 
@@ -626,6 +733,35 @@ void SceneForge::DrawResultUI()
 
 void SceneForge::DrawUI()
 {
+	// 【3D化テスト】モデル配置調整パネル(F1でデバッグUIを出したとき)
+	if (DebugUI::IsVisible())
+	{
+		ImGui::SetNextWindowPos(ImVec2(12, 360), ImGuiCond_FirstUseEver);
+		ImGui::Begin("3D Model Test");
+		Model* a = GetObj<Model>("MdlAnvil");
+		ImGui::Text("Anvil loaded: %s", a ? "YES" : "NO");
+		ImGui::Checkbox("Show 3D", &m_show3D);
+		ImGui::Text("-- Anvil --");
+		ImGui::DragFloat("Scale", &m_mScale, 0.001f, 0.0001f, 10.0f, "%.4f");
+		ImGui::DragFloat3("Pos", m_mPos, 0.05f);
+		ImGui::SliderFloat("Yaw", &m_mYaw, -3.1416f, 3.1416f);
+		ImGui::Text("-- Bar --");
+		ImGui::DragFloat("Bar Y",     &m_barY,     0.02f, -2.0f, 4.0f, "%.2f");
+		ImGui::DragFloat("Bar Len",   &m_barLen,   0.05f,  0.2f, 6.0f, "%.2f");
+		ImGui::DragFloat("Bar Thick", &m_barThick, 0.01f,  0.02f, 1.0f, "%.3f");
+		ImGui::DragFloat("Bar Width", &m_barWidth, 0.01f,  0.02f, 1.0f, "%.3f");
+		ImGui::Text("-- Camera --");
+		ImGui::DragFloat3("Cam Pos",  m_camPos,  0.05f);
+		ImGui::DragFloat3("Cam Look", m_camLook, 0.05f);
+		ImGui::SliderFloat("Cam Sway", &m_camSway, 0.0f, 1.0f, "%.2f");
+		ImGui::Text("-- Tuning --");
+		ImGui::SliderFloat("Strike CD (s)", &m_strikeCDMax, 0.1f, 3.0f, "%.2f");
+		ImGui::SliderFloat("Cool Rate /s",  &m_coolRate,    0.0f, 0.3f, "%.3f");
+		ImGui::SliderFloat("Aim Top",       &m_aimTop,    0.0f, 1.0f, "%.2f");
+		ImGui::SliderFloat("Aim Bottom",    &m_aimBottom, 0.0f, 1.0f, "%.2f");
+		ImGui::End();
+	}
+
 	switch (m_state)
 	{
 	case GAME_TITLE:  DrawTitleUI();  break;
@@ -634,8 +770,145 @@ void SceneForge::DrawUI()
 	}
 }
 
+//--- ゲーム用の固定カメラを毎フレーム適用(ドラッグで動かされても上書きして固定する)
+void SceneForge::ApplyCamera()
+{
+	CameraBase* cam = GetObj<CameraBase>("Camera");
+	if (!cam) return;
+
+	// マウス位置に応じて注視点をわずかにずらし、視点を軽く揺らす
+	// (一人称の"生きてる"感。カーソルはロックせず自由なまま)
+	float mx, my, cw, ch; GetMouseClient(mx, my, cw, ch);
+	float nx = (mx / cw - 0.5f) * 2.0f;	// -1(左) .. +1(右)
+	float ny = (my / ch - 0.5f) * 2.0f;	// -1(上) .. +1(下)
+	XMFLOAT3 look = {
+		m_camLook[0] + nx * m_camSway,
+		m_camLook[1] - ny * m_camSway * 0.7f,
+		m_camLook[2],
+	};
+	cam->SetPos (XMFLOAT3(m_camPos[0], m_camPos[1], m_camPos[2]));
+	cam->SetLook(look);
+	cam->SetUp  (XMFLOAT3(0.0f, 1.0f, 0.0f));
+}
+
+//--- 鍛冶素材の3Dモデルを描画
+void SceneForge::DrawModelsTest()
+{
+	if (!m_show3D) return;
+	Model*        anvil = GetObj<Model>("MdlAnvil");
+	CameraBase*   cam   = GetObj<CameraBase>("Camera");
+	VertexShader* vs    = GetObj<VertexShader>("VS_ForgeObj");
+	PixelShader*  ps    = GetObj<PixelShader>("PS_ForgeObj");
+	if (!anvil || !cam || !vs || !ps) return;
+
+	XMFLOAT4X4 mat[3];
+	mat[1] = cam->GetView();
+	mat[2] = cam->GetProj();
+
+	XMMATRIX world =
+		XMMatrixScaling(m_mScale, m_mScale, m_mScale) *
+		XMMatrixRotationY(m_mYaw) *
+		XMMatrixTranslation(m_mPos[0], m_mPos[1], m_mPos[2]);
+	world = anvil->GetScaleBaseMatrix() * world;
+	XMStoreFloat4x4(&mat[0], XMMatrixTranspose(world));
+
+	XMFLOAT4 color = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);	// テクスチャそのまま
+	vs->WriteBuffer(0, mat);
+	ps->WriteBuffer(0, &color);
+
+	SetBlendMode(BLEND_ALPHA);
+	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
+	anvil->SetVertexShader(vs);
+	anvil->SetPixelShader(ps);
+	anvil->Draw();
+}
+
+//--- m_th[] から3D鉄条の頂点を生成(両面。戻り値=頂点数)
+int SceneForge::BuildBarMesh()
+{
+	int v = 0;
+	const float half = m_barLen * 0.5f;
+	const float cy   = m_barY;
+
+	auto tri = [&](const XMFLOAT3& a, const XMFLOAT3& b, const XMFLOAT3& c, const XMFLOAT4& col)
+	{
+		m_barVtx[v++] = { a, XMFLOAT2(0,0), col };
+		m_barVtx[v++] = { b, XMFLOAT2(0,0), col };
+		m_barVtx[v++] = { c, XMFLOAT2(0,0), col };
+	};
+	auto quad = [&](const XMFLOAT3& a, const XMFLOAT3& b, const XMFLOAT3& c, const XMFLOAT3& d, const XMFLOAT4& col)
+	{
+		tri(a, b, c, col); tri(a, c, d, col);	// 表
+		tri(a, c, b, col); tri(a, d, c, col);	// 裏(両面)
+	};
+
+	// 鉄条は Z 方向(奥行き)に伸びる。x=幅, y=厚み, z=長さ
+	const float w = m_barWidth;	// 半分の幅(X方向)
+	for (int i = 0; i < SEG - 1; ++i)
+	{
+		float z0 = -half + m_barLen * (i       / (float)(SEG - 1));
+		float z1 = -half + m_barLen * ((i + 1) / (float)(SEG - 1));
+		float y0 = m_barThick * m_th[i], y1 = m_barThick * m_th[i + 1];
+		XMFLOAT4 col = HeatRGB(m_heat, m_dmg[i]);
+
+		// 打撃位置(照準)のセグメントを明るくして見えるようにする
+		if (abs(i - m_strikeSeg) <= 1)
+		{
+			col.x = (col.x + 0.4f > 1.0f) ? 1.0f : col.x + 0.4f;
+			col.y = (col.y + 0.4f > 1.0f) ? 1.0f : col.y + 0.4f;
+			col.z = (col.z + 0.4f > 1.0f) ? 1.0f : col.z + 0.4f;
+		}
+
+		XMFLOAT3 a_tL = { -w, cy + y0, z0 }, a_tR = { w, cy + y0, z0 };
+		XMFLOAT3 a_bL = { -w, cy - y0, z0 }, a_bR = { w, cy - y0, z0 };
+		XMFLOAT3 b_tL = { -w, cy + y1, z1 }, b_tR = { w, cy + y1, z1 };
+		XMFLOAT3 b_bL = { -w, cy - y1, z1 }, b_bR = { w, cy - y1, z1 };
+
+		quad(a_tL, a_tR, b_tR, b_tL, col);	// 上面
+		quad(a_bR, a_bL, b_bL, b_bR, col);	// 下面
+		quad(a_tR, a_bR, b_bR, b_tR, col);	// 右(X+)
+		quad(a_bL, a_tL, b_tL, b_bL, col);	// 左(X-)
+	}
+	// 端の蓋
+	{
+		float y = m_barThick * m_th[0]; float zc = -half; XMFLOAT4 c = HeatRGB(m_heat, m_dmg[0]);
+		quad({ -w,cy + y,zc }, { w,cy + y,zc }, { w,cy - y,zc }, { -w,cy - y,zc }, c);
+	}
+	{
+		float y = m_barThick * m_th[SEG - 1]; float zc = half; XMFLOAT4 c = HeatRGB(m_heat, m_dmg[SEG - 1]);
+		quad({ -w,cy + y,zc }, { w,cy + y,zc }, { w,cy - y,zc }, { -w,cy - y,zc }, c);
+	}
+	return v;
+}
+
+//--- 3Dの光る鉄条を描画
+void SceneForge::Draw3DBillet()
+{
+	CameraBase*   cam = GetObj<CameraBase>("Camera");
+	VertexShader* vs  = GetObj<VertexShader>("VS_Bar");
+	PixelShader*  ps  = GetObj<PixelShader>("PS_Bar");
+	if (!cam || !vs || !ps || !m_barMesh) return;
+
+	XMFLOAT4X4 cb[2] = { cam->GetView(), cam->GetProj() };
+	vs->WriteBuffer(0, cb);
+
+	int n = BuildBarMesh();
+	if (n <= 0) return;
+	m_barMesh->Write(m_barVtx.data());
+
+	SetBlendMode(BLEND_ALPHA);
+	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
+	vs->Bind();
+	ps->Bind();
+	m_barMesh->Draw(n);
+}
+
 void SceneForge::Draw()
 {
+	ApplyCamera();		// 固定カメラを適用(GetViewの前に)
+	DrawModelsTest();	// 先に不透明な3Dモデル(金床)を描く
+	Draw3DBillet();		// 3Dの光る鉄条
+
 	CameraBase* pCamera = GetObj<CameraBase>("Camera");
 	VertexShader* vs = GetObj<VertexShader>("VS_Forge");
 	PixelShader*  ps = GetObj<PixelShader>("PS_Forge");

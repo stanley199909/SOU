@@ -274,6 +274,11 @@ void Model::LoadAnimation(const char* FileName, const char* Name, bool flip)
 	assert(m_Animation[Name]);
 }
 
+void Model::SetTexture(std::shared_ptr<Texture> tex)
+{
+	for (auto& m : m_materials) m.texture = tex;
+}
+
 void Model::Draw(int texSlot)
 {
 	m_pVS->Bind();

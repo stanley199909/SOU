@@ -88,6 +88,7 @@ public:
 	void SetPixelShader(Shader* ps);
 	const Mesh* GetMesh(unsigned int index) const;
 	unsigned int GetMeshNum() const;
+	void SetTexture(std::shared_ptr<Texture> tex);	// 全マテリアルに同じテクスチャを設定
 
 public:
 	bool Load(const char* file, float scaleBase = 1.0f, bool flip = false, bool simple = false);
