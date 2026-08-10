@@ -247,9 +247,10 @@ bool Model::Load(const char* file, float scaleBase, bool flip, bool simpleMode)
 					}
 				}
 			}
-			// 失敗
+			// 失敗: FBXが参照するテクスチャが見つからない場合はダイアログを出さずログのみ
+			// (このプロジェクトではパックのBaseColorをSetTextureで手動割当するため無害)
 			if (FAILED(hr)) {
-				Error(path.C_Str());
+				DebugLog::log(DebugLog::ERROR_LOG, path.C_Str());
 				material.texture = nullptr;
 			}
 		}
@@ -277,6 +278,28 @@ void Model::LoadAnimation(const char* FileName, const char* Name, bool flip)
 void Model::SetTexture(std::shared_ptr<Texture> tex)
 {
 	for (auto& m : m_materials) m.texture = tex;
+}
+
+//--- モデル空間(スケール適用前の生頂点)の境界箱(AABB)を計算する
+void Model::GetLocalAABB(DirectX::XMFLOAT3& outMin, DirectX::XMFLOAT3& outMax)
+{
+	outMin = DirectX::XMFLOAT3( 1e18f,  1e18f,  1e18f);
+	outMax = DirectX::XMFLOAT3(-1e18f, -1e18f, -1e18f);
+	if (!m_pScene) return;
+	for (unsigned int i = 0; i < m_pScene->mNumMeshes; ++i)
+	{
+		const aiMesh* m = m_pScene->mMeshes[i];
+		for (unsigned int j = 0; j < m->mNumVertices; ++j)
+		{
+			const aiVector3D& v = m->mVertices[j];
+			if (v.x < outMin.x) outMin.x = v.x;
+			if (v.y < outMin.y) outMin.y = v.y;
+			if (v.z < outMin.z) outMin.z = v.z;
+			if (v.x > outMax.x) outMax.x = v.x;
+			if (v.y > outMax.y) outMax.y = v.y;
+			if (v.z > outMax.z) outMax.z = v.z;
+		}
+	}
 }
 
 void Model::Draw(int texSlot)

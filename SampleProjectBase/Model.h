@@ -89,6 +89,7 @@ public:
 	const Mesh* GetMesh(unsigned int index) const;
 	unsigned int GetMeshNum() const;
 	void SetTexture(std::shared_ptr<Texture> tex);	// 全マテリアルに同じテクスチャを設定
+	void GetLocalAABB(DirectX::XMFLOAT3& outMin, DirectX::XMFLOAT3& outMax);	// モデル空間の境界箱(スケール前の生頂点)
 
 public:
 	bool Load(const char* file, float scaleBase = 1.0f, bool flip = false, bool simple = false);

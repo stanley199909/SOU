@@ -8,6 +8,7 @@
 
 class MeshBuffer;
 class Texture;
+class Model;
 
 // 鍛造ミニゲーム《Timing Forge》
 //  ・鉄を熱して(加熱)、力を溜めて(蓄力)、叩いて成形する「打鉄」の手触りを楽しむゲーム
@@ -67,7 +68,11 @@ private:
 	void  BuildTarget();		// 目標形状(剣)を生成
 	float ShapeMatch() const;	// 現在の形状と目標の一致度(0..1)
 	void  ApplyCamera();		// ゲーム用の固定カメラ(KCD風の見下ろし)を毎フレーム適用
+	void  UpdateBarAnchor();	// 金床のAABBから砧面(上面中心)を求め、鉄条をその上に自動配置
+	void  DrawDebugBoxes();	// デバッグ: 金床AABBと鉄条の箱を線で可視化
 	void  DrawModelsTest();		// 鍛冶素材の3Dモデルを描画
+	void  DrawModelWorld(Model* m, const DirectX::XMMATRIX& world);	// 共通のモデル描画
+	void  DrawHammer3D();		// 3Dハンマー(蓄力で上がり打撃で振り下ろす)
 	int   BuildBarMesh();		// m_th[]から3D鉄条の頂点を生成(戻り値=頂点数)
 	void  Draw3DBillet();		// 3Dの光る鉄条を描画
 	void  DrawBillet();		// 2D側面図で光る鉄条を描く(旧, 参考用)
@@ -123,10 +128,27 @@ private:
 	//--- 3D鉄条メッシュ
 	std::vector<Vertex> m_barVtx;
 	std::shared_ptr<MeshBuffer> m_barMesh;
-	float m_barY     = 2.32f;	// 鉄条の中心の高さ(金床の上面に来るよう調整)
+	float m_barY     = 2.32f;	// 鉄条の中心の高さ(UpdateBarAnchorが金床の砧面から自動算出)
 	float m_barLen   = 1.8f;	// 長さ
 	float m_barThick = 0.18f;	// 初期の半分の厚み
 	float m_barWidth = 0.12f;	// 半分の幅
+	float m_barLift  = 0.0f;	// 砧面からの微調整オフセット(F1)
+
+	//--- 金床のモデル空間AABB(アンカー計算用。Initで一度求めてキャッシュ)
+	DirectX::XMFLOAT3 m_anvilMin = { 0,0,0 };
+	DirectX::XMFLOAT3 m_anvilMax = { 0,0,0 };
+	//--- 砧面のアンカー(鉄条を乗せる点。UpdateBarAnchorが毎フレーム算出)
+	DirectX::XMFLOAT3 m_barAnchor = { 0, 2.32f, 0 };
+
+	//--- 3Dハンマー(F1で向き調整。蓄力で上がり打撃で振り下ろす)
+	float m_hammerScale  = 0.02f;
+	float m_hammerRot[3] = { 3.14f, -0.20f, -1.58f };	// 向き(ラジアン)。調整済み既定
+	float m_hammerOff[3] = { 0.06f, 0.0f, 0.0f };		// 打撃点からの位置微調整
+	float m_hammerLift   = 0.40f;					// 頭の高さ(アニメで変化)
+	float m_strikeAnim   = 0.0f;					// 振り下ろしアニメ(1→0)
+	static constexpr float HAMMER_REST_LIFT    = 0.40f;
+	static constexpr float HAMMER_CHARGE_RAISE = 0.55f;
+	static constexpr float STRIKE_ANIM_TIME    = 0.16f;
 
 	//--- 打撃(蓄力ハンマー)
 	bool  m_charging  = false;		// 蓄力中か

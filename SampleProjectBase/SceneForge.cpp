@@ -6,6 +6,7 @@
 #include "CameraBase.h"
 #include "LightBase.h"
 #include "Model.h"
+#include "Geometory.h"
 #include "Input.h"
 #include "DebugUI.h"
 #include "Defines.h"
@@ -154,6 +155,17 @@ void SceneForge::Init()
 		if (SUCCEEDED(tex->Create("Assets/MM_Blacksmith_Pack/Anvil/Textures/T_Anvil_BaseColor.png")))
 			anvil->SetTexture(tex);
 	}
+	// 金床の境界箱を一度だけ計算してキャッシュ(砧面の高さ算出に使う)
+	anvil->GetLocalAABB(m_anvilMin, m_anvilMax);
+
+	// 3Dハンマー
+	Model* hammer = CreateObj<Model>("MdlHammer");
+	hammer->Load("Assets/MM_Blacksmith_Pack/Tools/SM_BS_Hammer_1.fbx", 1.0f, false, true);
+	{
+		auto tex = std::make_shared<Texture>();
+		if (SUCCEEDED(tex->Create("Assets/MM_Blacksmith_Pack/Tools/Textures/1024x512/T_BS_Tools_BaseColor.png")))
+			hammer->SetTexture(tex);
+	}
 
 	Strike();	// 開始直後から火花を出す
 }
@@ -167,6 +179,7 @@ void SceneForge::Uninit()
 	DestroyObj("VS_Bar");
 	DestroyObj("PS_Bar");
 	DestroyObj("MdlAnvil");
+	DestroyObj("MdlHammer");
 	m_barMesh.reset();
 	m_mesh.reset();
 	m_glow.reset();
@@ -245,6 +258,8 @@ void SceneForge::StartGame()
 	m_charging    = false;
 	m_charge      = 0.0f;
 	m_strikeCD    = 0.0f;
+	m_strikeAnim  = 0.0f;
+	m_hammerLift  = HAMMER_REST_LIFT;
 	m_strikeSeg   = SEG / 2;
 	m_canStrike   = false;		// SPACEを一度離すまで蓄力しない
 	m_shake        = 0.0f;
@@ -274,11 +289,17 @@ void SceneForge::UpdateTitle(float /*tick*/)
 //--- 鍛造中
 void SceneForge::UpdatePlay(float tick)
 {
+	// F1(デバッグUI)を開いている間はゲーム入力を凍結する。閉じていれば通常通り。
+	bool inputOn = !DebugUI::IsVisible();
+
 	// --- 加熱: R長押しで炉で加熱 / 常にゆっくり自然冷却 ---
-	if (IsKeyPress('R')) m_heat += HEAT_RATE * tick;
-	m_heat -= m_coolRate * tick;
-	if (m_heat < 0.0f) m_heat = 0.0f;
-	if (m_heat > 1.0f) m_heat = 1.0f;
+	if (inputOn)
+	{
+		if (IsKeyPress('R')) m_heat += HEAT_RATE * tick;
+		m_heat -= m_coolRate * tick;
+		if (m_heat < 0.0f) m_heat = 0.0f;
+		if (m_heat > 1.0f) m_heat = 1.0f;
+	}
 
 	// --- 過熱で放置すると鋼全体が焼けていく(損傷が蓄積)＋ジュー音 ---
 	if (m_heat > OVERHEAT)
@@ -300,6 +321,7 @@ void SceneForge::UpdatePlay(float tick)
 
 	// --- 照準(シンプル方式): マウスの画面上の縦位置を鉄条のセグメントに割り当てる ---
 	// 3D投影を使わないので絶対にズレない。鉄条が画面に映る縦範囲(上端/下端の割合)に対応させる。
+	if (inputOn)
 	{
 		float mx, my, cw, ch; GetMouseClient(mx, my, cw, ch);
 		float t = (my / ch - m_aimTop) / (m_aimBottom - m_aimTop);	// 鉄条範囲内で0..1
@@ -311,8 +333,14 @@ void SceneForge::UpdatePlay(float tick)
 	// --- 蓄力ハンマー: 左クリック押しっぱなしで蓄力、離すと打撃。打撃後はクールダウン ---
 	if (m_strikeCD > 0.0f) m_strikeCD -= tick;	// クールダウン消化
 
+	if (!inputOn)
+	{
+		// F1操作中は蓄力をキャンセル(暴発しないように)
+		m_charging = false;
+		m_charge   = 0.0f;
+	}
 	// 開始直後の誤爆防止(一度ボタンを離すまで蓄力しない)
-	if (!m_canStrike)
+	else if (!m_canStrike)
 	{
 		if (!IsKeyPress(VK_LBUTTON)) m_canStrike = true;
 	}
@@ -333,12 +361,29 @@ void SceneForge::UpdatePlay(float tick)
 	// --- 目標形状との一致度を更新 ---
 	m_match = ShapeMatch();
 
+	// --- ハンマーの上下: 蓄力で上がる / 打撃で振り下ろして戻る ---
+	if (m_strikeAnim > 0.0f)
+	{
+		m_strikeAnim -= tick / STRIKE_ANIM_TIME;
+		if (m_strikeAnim < 0.0f) m_strikeAnim = 0.0f;
+		m_hammerLift = HAMMER_REST_LIFT * (1.0f - m_strikeAnim);	// 1(接触=低い)→0(元の高さ)
+	}
+	else if (m_charging)
+	{
+		m_hammerLift = HAMMER_REST_LIFT + m_charge * HAMMER_CHARGE_RAISE;	// 蓄力で持ち上がる
+	}
+	else
+	{
+		float k = tick * 8.0f; if (k > 1.0f) k = 1.0f;
+		m_hammerLift += (HAMMER_REST_LIFT - m_hammerLift) * k;	// 待機高さへ緩やかに戻る
+	}
+
 	// --- フィードバックの減衰 ---
 	if (m_shake > 0.0f)     { m_shake -= tick * 3.0f; if (m_shake < 0.0f) m_shake = 0.0f; }
 	if (m_popupLife > 0.0f) m_popupLife -= tick;
 
 	// --- 淬火(仕上げ): Qでいつでも完成にできる。一致度と損傷で品質が決まる ---
-	if (IsKeyTrigger('Q')) FinishGame();
+	if (inputOn && IsKeyTrigger('Q')) FinishGame();
 }
 
 //--- 蓄力を解放して1打: 変形＋フィードバック
@@ -389,6 +434,7 @@ void SceneForge::DoStrike()
 	else      Audio::Play(Audio::SE_HAMMER, 0.35f + power * 0.65f);
 	// 冷打は「ガツン」と大きく揺れる(手応えが悪い=衝撃だけ大きい)
 	m_shake = cold ? (0.6f + power * 0.6f) : (0.3f + power * 0.7f);
+	m_strikeAnim = 1.0f;	// ハンマーを振り下ろすアニメ開始
 
 	// 評価ラベル & スコア
 	const char* label; unsigned int col; float quality;
@@ -428,7 +474,8 @@ void SceneForge::UpdateResult(float /*tick*/)
 void SceneForge::Update(float tick)
 {
 	m_time += tick;
-	ApplyCamera();	// SceneRootのDCCが動かしたカメラを先に固定(照準の投影と描画で同じカメラを使う)
+	ApplyCamera();		// SceneRootのDCCが動かしたカメラを先に固定
+	UpdateBarAnchor();	// 金床の砧面の高さに鉄条を自動配置
 
 	// PLAY中はOSカーソルを隠す(照準は光るセグメントで示す)。デバッグUI表示中は出す
 	bool wantCursor = (m_state != GAME_PLAY) || DebugUI::IsVisible();
@@ -745,11 +792,16 @@ void SceneForge::DrawUI()
 		ImGui::DragFloat("Scale", &m_mScale, 0.001f, 0.0001f, 10.0f, "%.4f");
 		ImGui::DragFloat3("Pos", m_mPos, 0.05f);
 		ImGui::SliderFloat("Yaw", &m_mYaw, -3.1416f, 3.1416f);
-		ImGui::Text("-- Bar --");
-		ImGui::DragFloat("Bar Y",     &m_barY,     0.02f, -2.0f, 4.0f, "%.2f");
+		ImGui::Text("-- Bar (Y is auto: sits on anvil) --");
+		ImGui::Text("Bar Y (auto) = %.2f", m_barY);
+		ImGui::DragFloat("Surface Off", &m_barLift, 0.01f, -1.0f, 1.0f, "%.2f");
 		ImGui::DragFloat("Bar Len",   &m_barLen,   0.05f,  0.2f, 6.0f, "%.2f");
 		ImGui::DragFloat("Bar Thick", &m_barThick, 0.01f,  0.02f, 1.0f, "%.3f");
 		ImGui::DragFloat("Bar Width", &m_barWidth, 0.01f,  0.02f, 1.0f, "%.3f");
+		ImGui::Text("-- Hammer --");
+		ImGui::DragFloat ("Hmr Scale", &m_hammerScale, 0.001f, 0.0001f, 1.0f, "%.4f");
+		ImGui::DragFloat3("Hmr Rot",   m_hammerRot,    0.02f);
+		ImGui::DragFloat3("Hmr Off",   m_hammerOff,    0.02f);
 		ImGui::Text("-- Camera --");
 		ImGui::DragFloat3("Cam Pos",  m_camPos,  0.05f);
 		ImGui::DragFloat3("Cam Look", m_camLook, 0.05f);
@@ -778,9 +830,13 @@ void SceneForge::ApplyCamera()
 
 	// マウス位置に応じて注視点をわずかにずらし、視点を軽く揺らす
 	// (一人称の"生きてる"感。カーソルはロックせず自由なまま)
-	float mx, my, cw, ch; GetMouseClient(mx, my, cw, ch);
-	float nx = (mx / cw - 0.5f) * 2.0f;	// -1(左) .. +1(右)
-	float ny = (my / ch - 0.5f) * 2.0f;	// -1(上) .. +1(下)
+	float nx = 0.0f, ny = 0.0f;
+	if (!DebugUI::IsVisible())	// F1(デバッグUI)を開いている間は視点を揺らさない
+	{
+		float mx, my, cw, ch; GetMouseClient(mx, my, cw, ch);
+		nx = (mx / cw - 0.5f) * 2.0f;	// -1(左) .. +1(右)
+		ny = (my / ch - 0.5f) * 2.0f;	// -1(上) .. +1(下)
+	}
 	XMFLOAT3 look = {
 		m_camLook[0] + nx * m_camSway,
 		m_camLook[1] - ny * m_camSway * 0.7f,
@@ -791,36 +847,160 @@ void SceneForge::ApplyCamera()
 	cam->SetUp  (XMFLOAT3(0.0f, 1.0f, 0.0f));
 }
 
-//--- 鍛冶素材の3Dモデルを描画
-void SceneForge::DrawModelsTest()
+//--- 金床のAABBを現在のワールド変換で評価し、砧面(上面)の高さに鉄条を乗せる
+//    アンカー方式: 金床のスケール/位置/回転を変えても鉄条が自動で追従する。
+//    別の金床モデルに差し替えてもAABBが変わるだけで再調整不要。
+void SceneForge::UpdateBarAnchor()
 {
-	if (!m_show3D) return;
-	Model*        anvil = GetObj<Model>("MdlAnvil");
-	CameraBase*   cam   = GetObj<CameraBase>("Camera");
-	VertexShader* vs    = GetObj<VertexShader>("VS_ForgeObj");
-	PixelShader*  ps    = GetObj<PixelShader>("PS_ForgeObj");
-	if (!anvil || !cam || !vs || !ps) return;
+	Model* anvil = GetObj<Model>("MdlAnvil");
+	if (!anvil) return;
 
-	XMFLOAT4X4 mat[3];
-	mat[1] = cam->GetView();
-	mat[2] = cam->GetProj();
-
+	// DrawModelsTest と同じワールド行列を作る
 	XMMATRIX world =
 		XMMatrixScaling(m_mScale, m_mScale, m_mScale) *
 		XMMatrixRotationY(m_mYaw) *
 		XMMatrixTranslation(m_mPos[0], m_mPos[1], m_mPos[2]);
 	world = anvil->GetScaleBaseMatrix() * world;
-	XMStoreFloat4x4(&mat[0], XMMatrixTranspose(world));
 
+	// AABBの8隅をワールドへ変換し、一番高いY(砧面)と、X/Zの中心を求める
+	float topY = -1e18f;
+	float minX = 1e18f, maxX = -1e18f, minZ = 1e18f, maxZ = -1e18f;
+	for (int i = 0; i < 8; ++i)
+	{
+		XMFLOAT3 p(
+			(i & 1) ? m_anvilMax.x : m_anvilMin.x,
+			(i & 2) ? m_anvilMax.y : m_anvilMin.y,
+			(i & 4) ? m_anvilMax.z : m_anvilMin.z);
+		XMVECTOR wv = XMVector3TransformCoord(XMLoadFloat3(&p), world);
+		float x = XMVectorGetX(wv), y = XMVectorGetY(wv), z = XMVectorGetZ(wv);
+		if (y > topY) topY = y;
+		if (x < minX) minX = x; if (x > maxX) maxX = x;
+		if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+	}
+	// 砧面中心(X/Z)＋上面の高さ。鉄条の下面がここに接するよう厚み分持ち上げる
+	m_barAnchor.x = (minX + maxX) * 0.5f;
+	m_barAnchor.z = (minZ + maxZ) * 0.5f;
+	m_barAnchor.y = topY + m_barThick + m_barLift;
+	m_barY = m_barAnchor.y;	// F1表示用
+}
+
+//--- デバッグ: 8隅の点から箱の12辺を線で描く
+static void DrawBoxEdges(const XMFLOAT3 c[8])
+{
+	// ビット: 1=x, 2=y, 4=z。1ビットだけ違う隅同士が辺
+	for (int i = 0; i < 8; ++i)
+		for (int b = 1; b <= 4; b <<= 1)
+			if (!(i & b))
+				Geometory::AddLine(c[i], c[i | b]);
+}
+
+//--- デバッグ: 金床AABBと鉄条の箱を線で可視化(F1中のみ)
+void SceneForge::DrawDebugBoxes()
+{
+	CameraBase* cam   = GetObj<CameraBase>("Camera");
+	Model*      anvil = GetObj<Model>("MdlAnvil");
+	if (!cam || !anvil) return;
+
+	XMFLOAT4X4 id; XMStoreFloat4x4(&id, XMMatrixIdentity());
+	Geometory::SetWorld(id);
+	Geometory::SetView(cam->GetView());
+	Geometory::SetProjection(cam->GetProj());
+
+	// 金床のワールドAABB(緑)
+	XMMATRIX world =
+		XMMatrixScaling(m_mScale, m_mScale, m_mScale) *
+		XMMatrixRotationY(m_mYaw) *
+		XMMatrixTranslation(m_mPos[0], m_mPos[1], m_mPos[2]);
+	world = anvil->GetScaleBaseMatrix() * world;
+	XMFLOAT3 ac[8];
+	for (int i = 0; i < 8; ++i)
+	{
+		XMFLOAT3 p(
+			(i & 1) ? m_anvilMax.x : m_anvilMin.x,
+			(i & 2) ? m_anvilMax.y : m_anvilMin.y,
+			(i & 4) ? m_anvilMax.z : m_anvilMin.z);
+		XMStoreFloat3(&ac[i], XMVector3TransformCoord(XMLoadFloat3(&p), world));
+	}
+	Geometory::SetColor(XMFLOAT4(0.2f, 1.0f, 0.3f, 1.0f));
+	DrawBoxEdges(ac);
+
+	// 鉄条の箱(黄) + アンカー点
+	float hl = m_barLen * 0.5f, w = m_barWidth, th = m_barThick;
+	float ax = m_barAnchor.x, ay = m_barAnchor.y, az = m_barAnchor.z;
+	XMFLOAT3 bc[8] = {
+		{ ax - w, ay - th, az - hl }, { ax + w, ay - th, az - hl },
+		{ ax - w, ay + th, az - hl }, { ax + w, ay + th, az - hl },
+		{ ax - w, ay - th, az + hl }, { ax + w, ay - th, az + hl },
+		{ ax - w, ay + th, az + hl }, { ax + w, ay + th, az + hl },
+	};
+	Geometory::SetColor(XMFLOAT4(1.0f, 0.9f, 0.2f, 1.0f));
+	DrawBoxEdges(bc);
+
+	Geometory::DrawLines();
+}
+
+//--- 共通のモデル描画(ワールド行列を渡すだけ)
+void SceneForge::DrawModelWorld(Model* m, const XMMATRIX& world)
+{
+	CameraBase*   cam = GetObj<CameraBase>("Camera");
+	VertexShader* vs  = GetObj<VertexShader>("VS_ForgeObj");
+	PixelShader*  ps  = GetObj<PixelShader>("PS_ForgeObj");
+	if (!m || !cam || !vs || !ps) return;
+
+	XMFLOAT4X4 mat[3];
+	mat[1] = cam->GetView();
+	mat[2] = cam->GetProj();
+	XMStoreFloat4x4(&mat[0], XMMatrixTranspose(world));
 	XMFLOAT4 color = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);	// テクスチャそのまま
 	vs->WriteBuffer(0, mat);
 	ps->WriteBuffer(0, &color);
 
 	SetBlendMode(BLEND_ALPHA);
 	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
-	anvil->SetVertexShader(vs);
-	anvil->SetPixelShader(ps);
-	anvil->Draw();
+	m->SetVertexShader(vs);
+	m->SetPixelShader(ps);
+	m->Draw();
+}
+
+//--- 鍛冶素材の3Dモデルを描画(金床＋ハンマー)
+void SceneForge::DrawModelsTest()
+{
+	if (!m_show3D) return;
+	Model* anvil = GetObj<Model>("MdlAnvil");
+	if (anvil)
+	{
+		XMMATRIX world =
+			XMMatrixScaling(m_mScale, m_mScale, m_mScale) *
+			XMMatrixRotationY(m_mYaw) *
+			XMMatrixTranslation(m_mPos[0], m_mPos[1], m_mPos[2]);
+		world = anvil->GetScaleBaseMatrix() * world;
+		DrawModelWorld(anvil, world);
+	}
+	DrawHammer3D();
+}
+
+//--- 3Dハンマー: 打撃位置の真上に置き、蓄力で上がり打撃で振り下ろす
+void SceneForge::DrawHammer3D()
+{
+	Model* hammer = GetObj<Model>("MdlHammer");
+	if (!hammer) return;
+
+	// 打撃セグメントの世界位置
+	int seg = m_strikeSeg;
+	float zc = m_barAnchor.z - m_barLen * 0.5f + m_barLen * (seg / (float)(SEG - 1));
+	float barTop = m_barAnchor.y + m_barThick * m_th[seg];
+	XMFLOAT3 pos = {
+		m_barAnchor.x + m_hammerOff[0],
+		barTop + m_hammerLift + m_hammerOff[1],
+		zc + m_hammerOff[2],
+	};
+
+	XMMATRIX world =
+		XMMatrixScaling(m_hammerScale, m_hammerScale, m_hammerScale) *
+		XMMatrixRotationRollPitchYaw(m_hammerRot[0], m_hammerRot[1], m_hammerRot[2]) *
+		XMMatrixTranslation(pos.x, pos.y, pos.z);
+	world = hammer->GetScaleBaseMatrix() * world;
+	DrawModelWorld(hammer, world);
 }
 
 //--- m_th[] から3D鉄条の頂点を生成(両面。戻り値=頂点数)
@@ -828,7 +1008,9 @@ int SceneForge::BuildBarMesh()
 {
 	int v = 0;
 	const float half = m_barLen * 0.5f;
-	const float cy   = m_barY;
+	const float ax   = m_barAnchor.x;	// 砧面中心に合わせる
+	const float az   = m_barAnchor.z;
+	const float cy   = m_barAnchor.y;
 
 	auto tri = [&](const XMFLOAT3& a, const XMFLOAT3& b, const XMFLOAT3& c, const XMFLOAT4& col)
 	{
@@ -846,8 +1028,8 @@ int SceneForge::BuildBarMesh()
 	const float w = m_barWidth;	// 半分の幅(X方向)
 	for (int i = 0; i < SEG - 1; ++i)
 	{
-		float z0 = -half + m_barLen * (i       / (float)(SEG - 1));
-		float z1 = -half + m_barLen * ((i + 1) / (float)(SEG - 1));
+		float z0 = az - half + m_barLen * (i       / (float)(SEG - 1));
+		float z1 = az - half + m_barLen * ((i + 1) / (float)(SEG - 1));
 		float y0 = m_barThick * m_th[i], y1 = m_barThick * m_th[i + 1];
 		XMFLOAT4 col = HeatRGB(m_heat, m_dmg[i]);
 
@@ -859,10 +1041,10 @@ int SceneForge::BuildBarMesh()
 			col.z = (col.z + 0.4f > 1.0f) ? 1.0f : col.z + 0.4f;
 		}
 
-		XMFLOAT3 a_tL = { -w, cy + y0, z0 }, a_tR = { w, cy + y0, z0 };
-		XMFLOAT3 a_bL = { -w, cy - y0, z0 }, a_bR = { w, cy - y0, z0 };
-		XMFLOAT3 b_tL = { -w, cy + y1, z1 }, b_tR = { w, cy + y1, z1 };
-		XMFLOAT3 b_bL = { -w, cy - y1, z1 }, b_bR = { w, cy - y1, z1 };
+		XMFLOAT3 a_tL = { ax - w, cy + y0, z0 }, a_tR = { ax + w, cy + y0, z0 };
+		XMFLOAT3 a_bL = { ax - w, cy - y0, z0 }, a_bR = { ax + w, cy - y0, z0 };
+		XMFLOAT3 b_tL = { ax - w, cy + y1, z1 }, b_tR = { ax + w, cy + y1, z1 };
+		XMFLOAT3 b_bL = { ax - w, cy - y1, z1 }, b_bR = { ax + w, cy - y1, z1 };
 
 		quad(a_tL, a_tR, b_tR, b_tL, col);	// 上面
 		quad(a_bR, a_bL, b_bL, b_bR, col);	// 下面
@@ -871,12 +1053,12 @@ int SceneForge::BuildBarMesh()
 	}
 	// 端の蓋
 	{
-		float y = m_barThick * m_th[0]; float zc = -half; XMFLOAT4 c = HeatRGB(m_heat, m_dmg[0]);
-		quad({ -w,cy + y,zc }, { w,cy + y,zc }, { w,cy - y,zc }, { -w,cy - y,zc }, c);
+		float y = m_barThick * m_th[0]; float zc = az - half; XMFLOAT4 c = HeatRGB(m_heat, m_dmg[0]);
+		quad({ ax - w,cy + y,zc }, { ax + w,cy + y,zc }, { ax + w,cy - y,zc }, { ax - w,cy - y,zc }, c);
 	}
 	{
-		float y = m_barThick * m_th[SEG - 1]; float zc = half; XMFLOAT4 c = HeatRGB(m_heat, m_dmg[SEG - 1]);
-		quad({ -w,cy + y,zc }, { w,cy + y,zc }, { w,cy - y,zc }, { -w,cy - y,zc }, c);
+		float y = m_barThick * m_th[SEG - 1]; float zc = az + half; XMFLOAT4 c = HeatRGB(m_heat, m_dmg[SEG - 1]);
+		quad({ ax - w,cy + y,zc }, { ax + w,cy + y,zc }, { ax + w,cy - y,zc }, { ax - w,cy - y,zc }, c);
 	}
 	return v;
 }
@@ -908,6 +1090,7 @@ void SceneForge::Draw()
 	ApplyCamera();		// 固定カメラを適用(GetViewの前に)
 	DrawModelsTest();	// 先に不透明な3Dモデル(金床)を描く
 	Draw3DBillet();		// 3Dの光る鉄条
+	if (DebugUI::IsVisible()) DrawDebugBoxes();	// F1中はAABB/箱を線で表示
 
 	CameraBase* pCamera = GetObj<CameraBase>("Camera");
 	VertexShader* vs = GetObj<VertexShader>("VS_Forge");
