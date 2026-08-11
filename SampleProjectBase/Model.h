@@ -3,6 +3,7 @@
 
 #include <DirectXMath.h>
 #include <vector>
+#include <string>
 #include <memory>
 #include <functional>
 #include <unordered_map>
@@ -39,6 +40,7 @@ public:
 		DirectX::XMFLOAT4 ambient;
 		DirectX::XMFLOAT4 specular;
 		std::shared_ptr<Texture> texture;
+		std::string name;	// FBXのマテリアル名(例 MI_Forge_1_UV1)。貼り分けの手掛かり
 	};
 	using Materials = std::vector<Material>;
 	struct Mesh
@@ -89,6 +91,9 @@ public:
 	const Mesh* GetMesh(unsigned int index) const;
 	unsigned int GetMeshNum() const;
 	void SetTexture(std::shared_ptr<Texture> tex);	// 全マテリアルに同じテクスチャを設定
+	void SetTextureAt(size_t index, std::shared_ptr<Texture> tex);	// マテリアル別にテクスチャを設定
+	size_t GetMaterialCount() const;				// マテリアル数(貼り分けに使う)
+	const char* GetMaterialName(size_t index) const;// マテリアル名(FBXの MI_Forge_1_UVx など)
 	void GetLocalAABB(DirectX::XMFLOAT3& outMin, DirectX::XMFLOAT3& outMax);	// モデル空間の境界箱(スケール前の生頂点)
 
 public:

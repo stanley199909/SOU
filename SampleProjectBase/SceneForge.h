@@ -5,6 +5,7 @@
 #include <DirectXMath.h>
 #include <memory>
 #include <vector>
+#include <string>
 
 class MeshBuffer;
 class Texture;
@@ -24,6 +25,8 @@ public:
 	void DrawUI();
 
 private:
+	struct Prop;	// シーン装飾プロップ(定義は後方)
+
 	//--- ゲーム状態
 	enum GameState
 	{
@@ -71,7 +74,13 @@ private:
 	void  UpdateBarAnchor();	// 金床のAABBから砧面(上面中心)を求め、鉄条をその上に自動配置
 	void  DrawDebugBoxes();	// デバッグ: 金床AABBと鉄条の箱を線で可視化
 	void  DrawModelsTest();		// 鍛冶素材の3Dモデルを描画
-	void  DrawModelWorld(Model* m, const DirectX::XMMATRIX& world);	// 共通のモデル描画
+	void  DrawModelWorld(Model* m, const DirectX::XMMATRIX& world,
+	                     const DirectX::XMFLOAT4& tint = DirectX::XMFLOAT4(1,1,1,1));	// 共通のモデル描画(tintで色掛け)
+	//--- シーン装飾(炉/風箱/作業台/水桶/床)
+	void  LoadProp(const char* key, const char* fbx, const char* tex,
+	               float targetSize, float px, float py, float pz, float yaw, bool groundSnap);
+	DirectX::XMMATRIX PropWorld(Prop& p);	// アンカー方式のワールド行列(地面に自動設置)
+	void  DrawScenery();		// 装飾モデルをまとめて描画
 	void  DrawHammer3D();		// 3Dハンマー(蓄力で上がり打撃で振り下ろす)
 	int   BuildBarMesh();		// m_th[]から3D鉄条の頂点を生成(戻り値=頂点数)
 	void  Draw3DBillet();		// 3Dの光る鉄条を描画
@@ -133,6 +142,39 @@ private:
 	float m_barThick = 0.18f;	// 初期の半分の厚み
 	float m_barWidth = 0.12f;	// 半分の幅
 	float m_barLift  = 0.0f;	// 砧面からの微調整オフセット(F1)
+
+	//--- シーン装飾のプロップ(炉/風箱/作業台/水桶/床)。F1スライダで配置調整→焼込む
+	struct Prop
+	{
+		std::string       key;			// CreateObj/GetObj のキー
+		std::string       label;		// F1パネル表示名
+		float             scale = 0.02f;
+		float             pos[3] = { 0,0,0 };
+		float             yaw   = 0.0f;
+		bool              groundSnap = true;	// AABB下面を床の高さに合わせる
+		DirectX::XMFLOAT3 aabbMin = { 0,0,0 };	// モデル空間AABB(Loadでキャッシュ)
+		DirectX::XMFLOAT3 aabbMax = { 0,0,0 };
+	};
+	std::vector<Prop> m_props;
+	float m_groundY = 0.0f;	// 床の高さ(金床のワールドAABB下面から算出)
+	bool  m_showScenery = true;
+
+	//--- 炉のマテリアル別テクスチャ(4UVタイル: 石/レンガ/火室/金属)。
+	//    F1で各マテリアルにどのテクスチャを当てるか選び、正解の割当を焼き込む。
+	std::vector<std::shared_ptr<Texture>> m_forgeTex;	// 候補テクスチャ
+	std::vector<std::string>              m_forgeTexName;// F1表示名
+	std::vector<int>                      m_forgeMatPick;// マテリアルindex -> m_forgeTex index
+	void ApplyForgeTextures();	// m_forgeMatPickに従って炉のマテリアルへ割当
+
+	//--- 自作の光る炭ベッド(FBXに頼らず、狙った位置に確実に炭火を出す。明滅する)
+	std::shared_ptr<MeshBuffer> m_coalMesh;	// 水平の板(2枚=両面)
+	std::shared_ptr<Texture>    m_coalTex;	// 合成した炭テクスチャ
+	bool  m_coalOn     = true;
+	float m_coalPos[3] = { 3.20f, 0.55f, 1.80f };	// 炉の火床の位置(F1で合わせる)
+	float m_coalYaw    = 0.0f;
+	float m_coalSize[2]= { 0.55f, 0.75f };	// 板の半径(X,Z)
+	float m_coalGlow   = 1.8f;				// 明るさ(Bloomで光る)
+	void  DrawCoalBed();	// 光る炭ベッドを描画
 
 	//--- 金床のモデル空間AABB(アンカー計算用。Initで一度求めてキャッシュ)
 	DirectX::XMFLOAT3 m_anvilMin = { 0,0,0 };

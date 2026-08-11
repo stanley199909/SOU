@@ -198,6 +198,11 @@ bool Model::Load(const char* file, float scaleBase, bool flip, bool simpleMode)
 	{
 		Material material = {};
 
+		// マテリアル名(作者が付けた MI_Forge_1_UVx など。貼り分けの正解が分かる)
+		aiString matName;
+		if (m_pScene->mMaterials[i]->Get(AI_MATKEY_NAME, matName) == AI_SUCCESS)
+			material.name = matName.C_Str();
+
 		// 各種パラメーター
 		float shininess;
 		material.diffuse = m_pScene->mMaterials[i]->Get(AI_MATKEY_COLOR_DIFFUSE, color) == AI_SUCCESS ?
@@ -278,6 +283,21 @@ void Model::LoadAnimation(const char* FileName, const char* Name, bool flip)
 void Model::SetTexture(std::shared_ptr<Texture> tex)
 {
 	for (auto& m : m_materials) m.texture = tex;
+}
+
+void Model::SetTextureAt(size_t index, std::shared_ptr<Texture> tex)
+{
+	if (index < m_materials.size()) m_materials[index].texture = tex;
+}
+
+size_t Model::GetMaterialCount() const
+{
+	return m_materials.size();
+}
+
+const char* Model::GetMaterialName(size_t index) const
+{
+	return (index < m_materials.size()) ? m_materials[index].name.c_str() : "";
 }
 
 //--- モデル空間(スケール適用前の生頂点)の境界箱(AABB)を計算する
