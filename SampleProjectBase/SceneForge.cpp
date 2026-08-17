@@ -580,8 +580,7 @@ void SceneForge::Update(float tick)
 	m_time += tick;
 	// デバッグUI表示中はカメラ固定を外し、DCCの自由カメラ(ALT+ドラッグでオービット)を許可。
 	// 非表示時(=プレイ中)はKCD風の固定カメラに上書きする。
-	if (!DebugUI::IsVisible())
-		ApplyCamera();		// SceneRootのDCCが動かしたカメラを先に固定
+	ApplyCamera();		// KCD風の固定カメラ(編集は STAGESETTING シーンで行う)
 	UpdateBarAnchor();	// 金床の砧面の高さに鉄条を自動配置
 
 	// PLAY中はOSカーソルを隠す(照準は光るセグメントで示す)。デバッグUI表示中は出す
@@ -887,95 +886,8 @@ void SceneForge::DrawResultUI()
 
 void SceneForge::DrawUI()
 {
-	// 【3D化テスト】モデル配置調整パネル(F1でデバッグUIを出したとき)
-	if (DebugUI::IsVisible())
-	{
-		ImGui::SetNextWindowPos(ImVec2(12, 360), ImGuiCond_FirstUseEver);
-		ImGui::Begin("3D Model Test");
-		Model* a = GetObj<Model>("MdlAnvil");
-		ImGui::Text("Anvil loaded: %s", a ? "YES" : "NO");
-		ImGui::Checkbox("Show 3D", &m_show3D);
-		ImGui::Text("-- Anvil --");
-		ImGui::DragFloat("Scale", &m_mScale, 0.001f, 0.0001f, 10.0f, "%.4f");
-		ImGui::DragFloat3("Pos", m_mPos, 0.05f);
-		ImGui::SliderFloat("Yaw", &m_mYaw, -3.1416f, 3.1416f);
-		ImGui::Text("-- Bar (Y is auto: sits on anvil) --");
-		ImGui::Text("Bar Y (auto) = %.2f", m_barY);
-		ImGui::DragFloat("Surface Off", &m_barLift, 0.01f, -1.0f, 1.0f, "%.2f");
-		ImGui::DragFloat("Bar Len",   &m_barLen,   0.05f,  0.2f, 6.0f, "%.2f");
-		ImGui::DragFloat("Bar Thick", &m_barThick, 0.01f,  0.02f, 1.0f, "%.3f");
-		ImGui::DragFloat("Bar Width", &m_barWidth, 0.01f,  0.02f, 1.0f, "%.3f");
-		ImGui::Text("-- Hammer --");
-		ImGui::DragFloat ("Hmr Scale", &m_hammerScale, 0.001f, 0.0001f, 1.0f, "%.4f");
-		ImGui::DragFloat3("Hmr Rot",   m_hammerRot,    0.02f);
-		ImGui::DragFloat3("Hmr Off",   m_hammerOff,    0.02f);
-		ImGui::Text("-- Camera --");
-		ImGui::TextDisabled("Free cam: ALT+LMB=orbit  ALT+MMB=pan  ALT+RMB=zoom  RMB=fly");
-		if (CameraBase* cam = GetObj<CameraBase>("Camera"))
-		{
-			// いま見てる自由カメラの現在値(X/Y/Z)を表示
-			XMFLOAT3 cp = cam->GetPos(), cl = cam->GetLook();
-			ImGui::Text("Now  Pos : X%.2f  Y%.2f  Z%.2f", cp.x, cp.y, cp.z);
-			ImGui::Text("Now  Look: X%.2f  Y%.2f  Z%.2f", cl.x, cl.y, cl.z);
-			// 今の視点を「プレイ時の固定カメラ」に採用する(Unity風: 見た通りを確定)
-			if (ImGui::Button("Set play-camera = current view"))
-			{
-				m_camPos[0]=cp.x; m_camPos[1]=cp.y; m_camPos[2]=cp.z;
-				m_camLook[0]=cl.x; m_camLook[1]=cl.y; m_camLook[2]=cl.z;
-			}
-		}
-		ImGui::Text("Play camera (used when F1 closed):");
-		ImGui::DragFloat3("Pos XYZ",  m_camPos,  0.05f);
-		ImGui::DragFloat3("Look XYZ", m_camLook, 0.05f);
-		ImGui::SliderFloat("Sway", &m_camSway, 0.0f, 1.0f, "%.2f");
-		ImGui::Text("-- Tuning --");
-		ImGui::SliderFloat("Strike CD (s)", &m_strikeCDMax, 0.1f, 3.0f, "%.2f");
-		ImGui::SliderFloat("Cool Rate /s",  &m_coolRate,    0.0f, 0.3f, "%.3f");
-		ImGui::SliderFloat("Aim Top",       &m_aimTop,    0.0f, 1.0f, "%.2f");
-		ImGui::SliderFloat("Aim Bottom",    &m_aimBottom, 0.0f, 1.0f, "%.2f");
-		ImGui::Text("-- Scenery (ground-snapped) --");
-		ImGui::Checkbox("Show Scenery", &m_showScenery);
-		ImGui::Text("Ground Y = %.2f", m_groundY);
-		for (auto& p : m_props)
-		{
-			ImGui::PushID(p.key.c_str());
-			if (ImGui::TreeNode(p.label.c_str()))
-			{
-				ImGui::DragFloat ("Scale", &p.scale, 0.001f, 0.0001f, 20.0f, "%.4f");
-				ImGui::DragFloat3("Pos",   p.pos,    0.05f);
-				ImGui::SliderFloat("Yaw",  &p.yaw,  -3.1416f, 3.1416f);
-				ImGui::Checkbox  ("Ground Snap", &p.groundSnap);
-				ImGui::TreePop();
-			}
-			ImGui::PopID();
-		}
-		// 炉のマテリアル別テクスチャ割当(貼り分けの正解を探して焼き込む)
-		if (!m_forgeMatPick.empty() && !m_forgeTexName.empty())
-		{
-			ImGui::Separator();
-			ImGui::Text("-- Forge materials (%d) --", (int)m_forgeMatPick.size());
-			std::vector<const char*> names;
-			for (auto& n : m_forgeTexName) names.push_back(n.c_str());
-			Model* forge = GetObj<Model>("PropForge");
-			for (int i = 0; i < (int)m_forgeMatPick.size(); ++i)
-			{
-				ImGui::PushID(1000 + i);
-				const char* mn = forge ? forge->GetMaterialName(i) : "";
-				char lbl[64]; sprintf_s(lbl, "Mat %d [%s]", i, mn);
-				ImGui::Combo(lbl, &m_forgeMatPick[i], names.data(), (int)names.size());
-				ImGui::PopID();
-			}
-		}
-		// 自作の光る炭ベッド(位置・大きさ・明るさをここで炉の火床に合わせる)
-		ImGui::Separator();
-		ImGui::Text("-- Coal bed (glowing, self-made) --");
-		ImGui::Checkbox("Coal on", &m_coalOn);
-		ImGui::DragFloat3("Coal Pos",  m_coalPos, 0.02f);
-		ImGui::SliderFloat("Coal Yaw", &m_coalYaw, -3.1416f, 3.1416f);
-		ImGui::DragFloat2("Coal Size", m_coalSize, 0.01f, 0.05f, 3.0f);
-		ImGui::SliderFloat("Coal Glow", &m_coalGlow, 0.5f, 4.0f, "%.2f");
-		ImGui::End();
-	}
+	// 配置/材質/炭火/カメラの編集はすべて SCENE_FORGE_STAGESETTING に移設。
+	// ゲーム側は焼き込み済みの値で表示するだけ(F1はクリーン)。
 
 	switch (m_state)
 	{
@@ -1008,6 +920,41 @@ void SceneForge::ApplyCamera()
 	cam->SetPos (XMFLOAT3(m_camPos[0], m_camPos[1], m_camPos[2]));
 	cam->SetLook(look);
 	cam->SetUp  (XMFLOAT3(0.0f, 1.0f, 0.0f));
+}
+
+//--- Unity風ドラッグ配置: F1中に、選択プロップを地面(XZ)上でLMBドラッグ移動する。
+//    ALT+ドラッグはカメラなので、素のLMBドラッグだけを移動に使う(競合しない)。
+void SceneForge::UpdateEditorDrag()
+{
+	if (!DebugUI::IsVisible()) { m_editDragging = false; return; }
+	if (m_editSel < 0 || m_editSel >= (int)m_props.size()) { m_editDragging = false; return; }
+	// ImGuiのウィンドウ上を操作中は無視(スライダ等と競合しない)
+	if (ImGui::GetIO().WantCaptureMouse) { m_editDragging = false; return; }
+	// ALT(カメラ操作)中や、LMB非押下なら移動しない
+	if (IsKeyPress(VK_MENU) || !IsKeyPress(VK_LBUTTON)) { m_editDragging = false; return; }
+
+	float mx, my, cw, ch; GetMouseClient(mx, my, cw, ch);
+	if (!m_editDragging) { m_editDragging = true; m_editPrevX = mx; m_editPrevY = my; return; }
+	float dx = mx - m_editPrevX, dy = my - m_editPrevY;
+	m_editPrevX = mx; m_editPrevY = my;
+	if (dx == 0.0f && dy == 0.0f) return;
+
+	CameraBase* cam = GetObj<CameraBase>("Camera");
+	if (!cam) return;
+	XMFLOAT3 cp = cam->GetPos(), cl = cam->GetLook();
+	XMVECTOR vp = XMLoadFloat3(&cp), vl = XMLoadFloat3(&cl);
+	XMVECTOR fwd  = XMVector3Normalize(XMVectorSubtract(vl, vp));
+	XMVECTOR up   = XMVectorSet(0, 1, 0, 0);
+	XMVECTOR right= XMVector3Normalize(XMVector3Cross(up, fwd));	// 画面右=+
+	XMVECTOR fwdG = XMVector3Normalize(XMVectorSetY(fwd, 0.0f));	// 地面に投影した前方
+	float dist; XMStoreFloat(&dist, XMVector3Length(XMVectorSubtract(vl, vp)));
+	float k = dist * 0.0016f;	// 距離に応じた移動感度
+
+	// マウス右→+right、マウス下→カメラ手前(=-fwdG)
+	XMVECTOR move = XMVectorAdd(XMVectorScale(right, dx * k), XMVectorScale(fwdG, -dy * k));
+	Prop& p = m_props[m_editSel];
+	p.pos[0] += XMVectorGetX(move);
+	p.pos[2] += XMVectorGetZ(move);
 }
 
 //--- 金床のAABBを現在のワールド変換で評価し、砧面(上面)の高さに鉄条を乗せる
@@ -1377,8 +1324,7 @@ void SceneForge::Draw3DBillet()
 
 void SceneForge::Draw()
 {
-	if (!DebugUI::IsVisible())
-		ApplyCamera();	// 固定カメラを適用(GetViewの前に)。デバッグ中は自由カメラを尊重
+	ApplyCamera();	// 固定カメラを適用(GetViewの前に)
 	DrawModelsTest();	// 先に不透明な3Dモデル(金床)を描く
 	Draw3DBillet();		// 3Dの光る鉄条
 	if (DebugUI::IsVisible()) DrawDebugBoxes();	// F1中はAABB/箱を線で表示

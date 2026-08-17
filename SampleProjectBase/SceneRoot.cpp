@@ -6,10 +6,7 @@
 #include "Input.h"
 #include "Geometory.h"
 
-#include "SceneVisual.h"
-#include "SceneBlank.h"
-#include "WallScene.h"
-#include "SceneFire.h"
+#include "SceneBlank.h"	// = 鍛冶場ステージ配置エディタ(SCENE_FORGE_STAGESETTING)
 #include "SceneForge.h"
 #include "DebugUI.h"
 
@@ -21,13 +18,9 @@
 //--- 定数定義
 enum SceneKind
 {
-	SCENE_BLANK,		// 空きシーン
-	SCENE_VISUAL,		// 01_シェーダー入門
-	SCENE_WALL,			// 壁と追尾サンプル
-	SCENE_FIRE,			// 炎と煙パーティクル
-	SCENE_FORGE,		// 鍛冶の火花パーティクル
-	//SCENE_ANIMATION,	// ワンスキンアニメーションサンプル
-	SCENE_MAX			// 終端
+	SCENE_FORGE,			// 鍛冶ミニゲーム本体(ゲーム)
+	SCENE_FORGE_STAGESETTING,	// 鍛冶場のステージ配置エディタ
+	SCENE_MAX				// 終端
 };
 
 /// <summary>
@@ -40,30 +33,14 @@ void SceneRoot::ChangeScene()
 	switch (m_index)
 	{
 	default:
-	case SCENE_BLANK:
-		AddSubScene<SceneBlank>();
-		m_sceneName = "SCENE_BLANK";
-		break;
-	case SCENE_VISUAL:
-		AddSubScene<SceneVisual>();
-		m_sceneName = "SCENE_VISUAL";
-		break;
-	case SCENE_WALL:
-		AddSubScene<WallScene>();
-		m_sceneName = "SCENE_WALL";
-		break;
-	case SCENE_FIRE:
-		AddSubScene<SceneFire>();
-		m_sceneName = "SCENE_FIRE";
-		break;
 	case SCENE_FORGE:
 		AddSubScene<SceneForge>();
 		m_sceneName = "SCENE_FORGE";
 		break;
-	/*case SCENE_ANIMATION:
-		AddSubScene<SceneAnimation>();
-		sceneName = "SCENE_HIT";
-		break;*/
+	case SCENE_FORGE_STAGESETTING:
+		AddSubScene<SceneBlank>();
+		m_sceneName = "SCENE_FORGE_STAGESETTING";
+		break;
 	}
 	DebugLog::log(DebugLog::INFO_LOG,"SceneName = " + m_sceneName);
 	m_isChangeScene = true;
@@ -140,8 +117,9 @@ void SceneRoot::Init()
 	Model* pField = CreateObj<Model>("FieldModel");
 	pField->Load("Assets/Model/field/field.fbx", 1.0f, false, true);
 
-	// シーンの作成
+	// シーンの作成(旧setting.datの範囲外indexは鍛冶ゲームに丸める)
 	m_index = setting.index;
+	if (m_index < 0 || m_index >= SCENE_MAX) m_index = SCENE_FORGE;
 	ChangeScene();
 }
 
@@ -207,7 +185,7 @@ void SceneRoot::Draw()
 	LightBase* pLight = GetObj<LightBase>("Light");
 
 	// 炎・火花シーンでは補助表示(グリッド・軸・ギズモ)を消して芸術的に見せる
-	if (m_index == SCENE_FIRE || m_index == SCENE_FORGE) return;
+	if (m_index == SCENE_FORGE) return;	// ゲームは補助表示OFF。編集シーンはグリッド等を出す
 
 	DirectX::XMFLOAT4X4 fmat;
 	DirectX::XMStoreFloat4x4(&fmat, DirectX::XMMatrixIdentity());

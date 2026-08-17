@@ -159,6 +159,12 @@ private:
 	float m_groundY = 0.0f;	// 床の高さ(金床のワールドAABB下面から算出)
 	bool  m_showScenery = true;
 
+	//--- Unity風のドラッグ配置エディタ(F1中に選択したプロップを地面上でLMBドラッグ移動)
+	int   m_editSel     = -1;		// 選択中のプロップindex(-1=なし)
+	bool  m_editDragging = false;
+	float m_editPrevX = 0.0f, m_editPrevY = 0.0f;
+	void  UpdateEditorDrag();	// LMBドラッグで選択プロップを地面移動
+
 	//--- 炉のマテリアル別テクスチャ(4UVタイル: 石/レンガ/火室/金属)。
 	//    F1で各マテリアルにどのテクスチャを当てるか選び、正解の割当を焼き込む。
 	std::vector<std::shared_ptr<Texture>> m_forgeTex;	// 候補テクスチャ
