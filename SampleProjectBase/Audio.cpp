@@ -188,6 +188,10 @@ namespace Audio
 			"Assets/Sound/hammer.wav",
 			"Assets/Sound/cold.wav",
 			"Assets/Sound/sizzle.wav",
+			"Assets/Sound/SE/anvil_hit_1.wav",	// SE_ANVIL1
+			"Assets/Sound/SE/anvil_hit_2.wav",	// SE_ANVIL2
+			"Assets/Sound/BGM/Factory.wav",		// BGM_MAIN
+			"Assets/Sound/SE/Title/title_bgm.wav",	// SE_TITLE
 		};
 		for (int i = 0; i < SE_MAX; ++i)
 		{
@@ -228,5 +232,35 @@ namespace Audio
 		v->SubmitSourceBuffer(&b);
 		v->SetVolume(volume);
 		v->Start(0);
+	}
+
+	//--- 無限ループ再生(BGM/タイトル)。専用に voices[0] を使う(Playのラウンドロビンとは別)
+	void PlayLoop(SoundId id, float volume)
+	{
+		if (!g_xa || id < 0 || id >= SE_MAX) return;
+		Sound& s = g_sound[id];
+		if (s.voices.empty() || s.data.empty()) return;
+
+		IXAudio2SourceVoice* v = s.voices[0];
+		v->Stop(0);
+		v->FlushSourceBuffers();
+
+		XAUDIO2_BUFFER b = {};
+		b.AudioBytes = (UINT32)s.data.size();
+		b.pAudioData = s.data.data();
+		b.LoopCount  = XAUDIO2_LOOP_INFINITE;	// 閉じるまでループ
+		v->SubmitSourceBuffer(&b);
+		v->SetVolume(volume);
+		v->Start(0);
+	}
+
+	//--- ループ停止(タイトル→ゲーム移行時など)
+	void Stop(SoundId id)
+	{
+		if (!g_xa || id < 0 || id >= SE_MAX) return;
+		Sound& s = g_sound[id];
+		if (s.voices.empty()) return;
+		s.voices[0]->Stop(0);
+		s.voices[0]->FlushSourceBuffers();
 	}
 }

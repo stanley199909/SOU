@@ -19,18 +19,8 @@
 
 using namespace DirectX;
 
-//--- パーティクル用シェーダー(炎と同じ考え方) ---
-static const char* g_vsCode = R"EOT(
-cbuffer Cam : register(b0){ float4x4 view; float4x4 proj; };
-struct VIN  { float3 pos:POSITION0; float2 uv:TEXCOORD0; float4 col:TEXCOORD1; };
-struct VOUT { float4 pos:SV_POSITION; float2 uv:TEXCOORD0; float4 col:TEXCOORD1; };
-VOUT main(VIN v){ VOUT o; o.pos=mul(float4(v.pos,1),view); o.pos=mul(o.pos,proj); o.uv=v.uv; o.col=v.col; return o; }
-)EOT";
-static const char* g_psCode = R"EOT(
-Texture2D tex:register(t0); SamplerState samp:register(s0);
-struct PIN{ float4 pos:SV_POSITION; float2 uv:TEXCOORD0; float4 col:TEXCOORD1; };
-float4 main(PIN i):SV_TARGET{ return tex.Sample(samp,i.uv) * i.col; }
-)EOT";
+// パーティクル用シェーダーは Assets/Shader/VS_Particle.cso / PS_Particle.cso として
+// .hlsl から fxc でコンパイルし、Init で Load する(火花・余燼で共用)。
 
 static float frand()                 { return (float)rand() / (float)RAND_MAX; }
 static float frand(float a, float b)  { return a + (b - a) * frand(); }
@@ -47,19 +37,8 @@ struct PIN{ float4 pos:SV_POSITION; float4 col:TEXCOORD1; };
 float4 main(PIN i):SV_TARGET{ return i.col; }
 )EOT";
 
-//--- 光る炭ベッド用: world/view/proj でテクスチャ板を描き、tintで明るく持ち上げる(Bloom発光)
-static const char* g_coalVS = R"EOT(
-cbuffer Cam : register(b0){ float4x4 world; float4x4 view; float4x4 proj; };
-struct VIN  { float3 pos:POSITION0; float2 uv:TEXCOORD0; float4 col:TEXCOORD1; };
-struct VOUT { float4 pos:SV_POSITION; float2 uv:TEXCOORD0; };
-VOUT main(VIN v){ VOUT o; float4 p=mul(float4(v.pos,1),world); p=mul(p,view); o.pos=mul(p,proj); o.uv=v.uv; return o; }
-)EOT";
-static const char* g_coalPS = R"EOT(
-Texture2D tex : register(t0); SamplerState samp : register(s0);
-cbuffer Tint : register(b0){ float4 tintColor; };
-struct PIN{ float4 pos:SV_POSITION; float2 uv:TEXCOORD0; };
-float4 main(PIN i):SV_TARGET{ float4 c=tex.Sample(samp,i.uv); c.rgb*=tintColor.rgb; return c; }
-)EOT";
+// 光る炭ベッド用シェーダーは Assets/Shader/VS_Coal.cso / PS_Coal.cso として
+// .hlsl から fxc でコンパイルし、Init で Load する(実行時Compileの文字列は廃止)。
 
 //--- 温度(0..1)を鋼の色(float4)に変換。冷たいときも暗い金属色で見える
 static DirectX::XMFLOAT4 HeatRGB(float h, float dmg)
@@ -103,10 +82,13 @@ void SceneForge::Init()
 	m_sparks.reserve(MAX_SPARKS);
 	m_vtx.resize(MAX_SPARKS * 6);
 
+	// 火花/余燼用パーティクルシェーダー(.hlsl → fxc → .cso をLoad)
 	VertexShader* vs = CreateObj<VertexShader>("VS_Forge");
-	vs->Compile(g_vsCode);
+	if (FAILED(vs->Load("Assets/Shader/VS_Particle.cso")))
+		MessageBox(nullptr, "VS_Particle.cso", "Shader Error", MB_OK);
 	PixelShader* ps = CreateObj<PixelShader>("PS_Forge");
-	ps->Compile(g_psCode);
+	if (FAILED(ps->Load("Assets/Shader/PS_Particle.cso")))
+		MessageBox(nullptr, "PS_Particle.cso", "Shader Error", MB_OK);
 
 	// 光の粒テクスチャ(中心が明るい)
 	const int S = 64;
@@ -152,11 +134,14 @@ void SceneForge::Init()
 	PixelShader* bps = CreateObj<PixelShader>("PS_Bar");
 	bps->Compile(g_barPS);
 
-	// 光る炭ベッド用シェーダー(pos/uv/col レイアウト + テクスチャ)
+	// 光る炭ベッド用シェーダー(pos/uv/col レイアウト + テクスチャ)。
+	// 実行時Compileではなく、正規に .hlsl → fxc → .cso をLoadする(VS_Object等と同じ流儀)。
 	VertexShader* cvs = CreateObj<VertexShader>("VS_Coal");
-	cvs->Compile(g_coalVS);
+	if (FAILED(cvs->Load("Assets/Shader/VS_Coal.cso")))
+		MessageBox(nullptr, "VS_Coal.cso", "Shader Error", MB_OK);
 	PixelShader* cps = CreateObj<PixelShader>("PS_Coal");
-	cps->Compile(g_coalPS);
+	if (FAILED(cps->Load("Assets/Shader/PS_Coal.cso")))
+		MessageBox(nullptr, "PS_Coal.cso", "Shader Error", MB_OK);
 
 	m_barVtx.resize(SEG * 48 + 24);	// 両面描画分の頂点を確保
 	MeshBuffer::Description bdesc = {};
@@ -167,16 +152,9 @@ void SceneForge::Init()
 	bdesc.topology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 	m_barMesh = std::make_shared<MeshBuffer>(bdesc);
 
-	Model* anvil = CreateObj<Model>("MdlAnvil");
-	anvil->Load("Assets/MM_Blacksmith_Pack/Anvil/SM_Anvil.fbx", 1.0f, false, true);
-	// FBXがテクスチャを持たないので、BaseColorを手動で割り当てる
-	{
-		auto tex = std::make_shared<Texture>();
-		if (SUCCEEDED(tex->Create("Assets/MM_Blacksmith_Pack/Anvil/Textures/T_Anvil_BaseColor.png")))
-			anvil->SetTexture(tex);
-	}
-	// 金床の境界箱を一度だけ計算してキャッシュ(砧面の高さ算出に使う)
-	anvil->GetLocalAABB(m_anvilMin, m_anvilMax);
+	// 金床はもう特別扱いしない。他の道具と同じ "StAnvil" プロップとして下でロードする。
+	// 光る鉄条の落点(UpdateBarAnchor)は StAnvil のワールド変換＋AABBから毎フレーム算出するので、
+	// 配置ファイルで金床を動かしても鉄条が自動追従する(第8節の最重要ポイント)。
 
 	// 3Dハンマー
 	Model* hammer = CreateObj<Model>("MdlHammer");
@@ -187,20 +165,50 @@ void SceneForge::Init()
 			hammer->SetTexture(tex);
 	}
 
-	// --- シーン装飾: 鍛冶場らしく素材を配置 ---
-	//   各モデルはBaseColorを手動割当(FBXがテクスチャ参照を持たないため)。
-	//   位置はF1"Scenery"パネルで調整→最終値をここの既定に焼き込む。
-	//   ※パックにForge用テクスチャが無いので、暫定で金床の金属テクスチャを流用。
-	//   第4引数 = 目標サイズ(ワールド単位=おおよそメートル。AABBの最大辺がこの大きさになる)
-	//   金床は上面が約2.3、高さ約2.3。それを基準に周囲へ配置する。
-	// 炉のテクスチャ(UE版から書き出した4UVタイル)。UV_1(石)を既定で全体に貼る。
-	const char* kForgeDir = "Assets/MM_Blacksmith_Pack/Forges/Textures/";
+	// --- シーン装飾: 編集シーン(StageSetting)と同じ道具一式・同じキー(St...)で読み込む ---
+	//   キーを St... に統一したので Assets/stage_layout.txt を両シーンで共有できる。
+	//   ここは既定値。この後 LoadLayout() が保存済み配置で上書きする。
+	//   LoadProp 引数: (key, fbx, tex, targetSize, X, Y, Z, Yaw, groundSnap)
+	//     targetSize = AABBの最大辺がこの大きさになる自動スケール(魔法数字を避ける)
+	const std::string P = "Assets/MM_Blacksmith_Pack/";
+	const std::string kAnvilTex = P + "Anvil/Textures/T_Anvil_BaseColor.png";
+	const std::string kWood     = P + "Ballows/Textures/T_Wood_BaseColor.png";
+	const std::string kTable    = P + "Worktable/Textures/T_BS_Worktable_V1_BaseColor.png";
+	const std::string kBucket   = P + "Buckets/Textures/T_Buckets_V1_BaseColor.png";
+	const std::string kSharp    = P + "Sharpner/Textures/T_Sharpner_V1_BaseColor.png";
+	const std::string kTools    = P + "Tools/Textures/1024x512/T_BS_Tools_BaseColor.png";
+	const std::string kMetal    = P + "Metal Parts/Textures/T_Metal_parts_BaseColor.png";
+	const char* kForgeDir   = "Assets/MM_Blacksmith_Pack/Forges/Textures/";
 	const char* kForgeStone = "Assets/MM_Blacksmith_Pack/Forges/Textures/T_Forge_1_UV1_BaseColor.PNG";
-	LoadProp("PropGround",    "Assets/Model/plane/plane.fbx",
-	         "Assets/Model/field/wooden-plank-textured-background-material.jpg",
-	                                                              12.0f, 0.0f, 0.0f,  0.0f,  0.0f, true);
-	LoadProp("PropForge",     "Assets/MM_Blacksmith_Pack/Forges/SM_BS_Forge_1.fbx",
-	         kForgeStone,                                         2.6f,  3.2f, 0.0f,  1.8f,  0.0f, true);
+
+	LoadProp("StGround",   "Assets/Model/plane/plane.fbx", "Assets/Model/field/wooden-plank-textured-background-material.jpg", 12.0f, 0.0f, 0.0f, 0.0f, 0.0f, true);
+	LoadProp("StStump",    (P+"Anvil/SM_Stump.fbx").c_str(),             kAnvilTex.c_str(), 0.60f, 0.0f, 0.0f,  0.0f, 0.0f, true);
+	LoadProp("StAnvil",    (P+"Anvil/SM_Anvil.fbx").c_str(),             kAnvilTex.c_str(), 0.70f, 0.0f, 0.0f,  0.0f, 0.0f, true);
+	LoadProp("StForge",    (P+"Forges/SM_BS_Forge_1.fbx").c_str(),       kForgeStone,       2.60f, 1.8f, 0.0f,  0.6f, 0.0f, true);
+	LoadProp("StStand",    (P+"Ballows/SM_Bellows_stand_1.fbx").c_str(), kWood.c_str(),     1.20f, 3.2f, 0.0f,  1.0f, 0.0f, true);
+	LoadProp("StBellows",  (P+"Ballows/SM_Bellows.fbx").c_str(),         kWood.c_str(),     1.40f, 3.2f, 0.0f,  1.0f, 0.0f, true);
+	LoadProp("StWorktable",(P+"Worktable/SM_BS_Worktable.fbx").c_str(),  kTable.c_str(),    2.20f,-2.6f, 0.0f,  0.6f, 0.0f, true);
+	LoadProp("StTrough",   (P+"Buckets/SM_Trough.fbx").c_str(),          kBucket.c_str(),   1.60f,-1.4f, 0.0f, -0.9f, 0.0f, true);
+	LoadProp("StBucket",   (P+"Buckets/SM_B_Bucket_1.fbx").c_str(),      kBucket.c_str(),   0.70f, 0.9f, 0.0f, -0.9f, 0.0f, true);
+	LoadProp("StGrind",    (P+"Sharpner/SM_Sharpner.fbx").c_str(),       kSharp.c_str(),    1.40f,-4.2f, 0.0f, -1.8f, 0.0f, true);
+	LoadProp("StPoker",    (P+"Tools/SM_BS_Poker.fbx").c_str(),          kTools.c_str(),    1.20f, 1.8f, 0.0f,  0.3f, 0.0f, true);
+	LoadProp("StPliers",   (P+"Tools/SM_BS_Pliers_1.fbx").c_str(),       kTools.c_str(),    0.60f,-2.4f, 0.0f,  0.6f, 0.0f, true);
+	LoadProp("StMetal1",   (P+"Metal Parts/SM_Metal_part_1.fbx").c_str(),kMetal.c_str(),    0.40f,-2.8f, 0.0f,  0.6f, 0.0f, true);
+	LoadProp("StMetal2",   (P+"Metal Parts/SM_Metal_part_2.fbx").c_str(),kMetal.c_str(),    0.40f,-3.1f, 0.0f,  0.7f, 0.0f, true);
+
+	// 既定の積み重ね(金床=樹桩の上、風箱=支架の上、道具=作業台の上)。この後 LoadLayout で上書きされる。
+	{
+		auto worldH = [](Prop* p)->float { return (p->aabbMax.y - p->aabbMin.y) * p->scale; };
+		Prop* stump = GetProp("StStump"); Prop* anvil = GetProp("StAnvil");
+		if (stump && anvil) { anvil->pos[0] = stump->pos[0]; anvil->pos[2] = stump->pos[2]; anvil->pos[1] = worldH(stump); }
+		Prop* stand = GetProp("StStand"); Prop* bel = GetProp("StBellows");
+		if (stand && bel) { bel->pos[0] = stand->pos[0]; bel->pos[2] = stand->pos[2]; bel->pos[1] = worldH(stand) * 0.55f; }
+		Prop* table = GetProp("StWorktable");
+		float tableH = table ? worldH(table) : 0.0f;
+		if (Prop* pl = GetProp("StPliers")) if (table) { pl->pos[0] = table->pos[0] + 0.3f; pl->pos[2] = table->pos[2]; pl->pos[1] = tableH; }
+		if (Prop* m1 = GetProp("StMetal1")) if (table) { m1->pos[0] = table->pos[0] - 0.3f; m1->pos[2] = table->pos[2] + 0.1f; m1->pos[1] = tableH; }
+		if (Prop* m2 = GetProp("StMetal2")) if (table) { m2->pos[0] = table->pos[0] + 0.0f; m2->pos[2] = table->pos[2] - 0.2f; m2->pos[1] = tableH; }
+	}
 
 	// 炉のマテリアル別貼り分け用に、候補テクスチャを全部読んでおく
 	// ※ImGui標準フォントはCJK非対応なので名前は英数字で
@@ -224,8 +232,7 @@ void SceneForge::Init()
 	}
 	// マテリアル割当を「作者が付けた材質名(MI_Forge_1_UVx)」から自動判定する。
 	//   m_forgeTex index: 0=UV1石 1=UV2 2=UV3火室 3=UV4 4=UV3炭(発光) 5=UV3合成(灰炭+発光)
-	//   UV3(火室)は合成テクスチャ(=最後)を使う。
-	if (Model* forge = GetObj<Model>("PropForge"))
+	if (Model* forge = GetObj<Model>("StForge"))
 	{
 		size_t mc = forge->GetMaterialCount();
 		m_forgeMatPick.assign(mc, 0);				// 既定は石(該当なしの保険)
@@ -238,15 +245,6 @@ void SceneForge::Init()
 			else if (n.find("UV4") != std::string::npos) m_forgeMatPick[i] = 3;
 		}
 	}
-	LoadProp("PropBellows",   "Assets/MM_Blacksmith_Pack/Ballows/SM_Bellows.fbx",
-	         "Assets/MM_Blacksmith_Pack/Ballows/Textures/T_Wood_BaseColor.png",
-	                                                              1.6f,  4.6f, 0.0f,  1.8f,  0.0f, true);
-	LoadProp("PropWorktable", "Assets/MM_Blacksmith_Pack/Worktable/SM_BS_Worktable.fbx",
-	         "Assets/MM_Blacksmith_Pack/Worktable/Textures/T_BS_Worktable_V1_BaseColor.png",
-	                                                              2.2f, -3.0f, 0.0f,  1.2f,  0.0f, true);
-	LoadProp("PropBucket",    "Assets/MM_Blacksmith_Pack/Buckets/SM_B_Bucket_1.fbx",
-	         "Assets/MM_Blacksmith_Pack/Buckets/Textures/T_Buckets_V1_BaseColor.png",
-	                                                              0.7f,  1.4f, 0.0f, -0.9f,  0.0f, true);
 
 	// --- 自作の光る炭ベッド(水平な板。両面。合成炭テクスチャを貼る) ---
 	{
@@ -265,7 +263,13 @@ void SceneForge::Init()
 		if (!m_forgeTex.empty()) m_coalTex = m_forgeTex.back();
 	}
 
+	// 編集シーンで作った配置(Assets/stage_layout.txt)を反映。無ければ上の既定のまま。
+	LoadLayout();
+
 	Strike();	// 開始直後から火花を出す
+	// ロード完了後にここで音を開始(起動途中でBGMが鳴らないように Main から移動)
+	Audio::PlayLoop(Audio::BGM_MAIN, 0.40f);	// BGMは常時ループ
+	Audio::PlayLoop(Audio::SE_TITLE, 0.7f);		// 起動時はタイトル状態なので専用ループ
 }
 
 void SceneForge::Uninit()
@@ -280,14 +284,15 @@ void SceneForge::Uninit()
 	DestroyObj("PS_Coal");
 	m_coalMesh.reset();
 	m_coalTex.reset();
-	DestroyObj("MdlAnvil");
-	DestroyObj("MdlHammer");
+	DestroyObj("MdlHammer");	// 金床(StAnvil)は m_props ループで破棄される
 	for (auto& p : m_props) DestroyObj(p.key.c_str());
 	m_props.clear();
 	m_barMesh.reset();
 	m_mesh.reset();
 	m_glow.reset();
 	m_sparks.clear();
+	m_embers.clear();
+	Audio::Stop(Audio::SE_TITLE);	// ゲームシーンを離れるときタイトルループを止める(BGMは継続)
 	if (!m_cursorShown) { ShowCursor(TRUE); m_cursorShown = true; }	// カーソルを戻す
 }
 
@@ -351,6 +356,7 @@ float SceneForge::ShapeMatch() const
 //====================================================================
 void SceneForge::StartGame()
 {
+	Audio::Stop(Audio::SE_TITLE);	// タイトル専用ループを止める(BGMは継続)
 	m_state    = GAME_PLAY;
 	m_progress = 0.0f;
 	m_score    = 0;
@@ -533,9 +539,13 @@ void SceneForge::DoStrike()
 	float sparkScale = (0.4f + power * 1.2f) * (over ? 0.7f : 1.0f);
 	if (!cold) Strike(sparkScale);
 
-	// 打撃音: 冷打は鈍い音、それ以外は力量に応じた「カン」
+	// 打撃音: 冷打は鈍い音。通常打撃は金床音を 1→2→1→2 と交互に鳴らす
 	if (cold) Audio::Play(Audio::SE_COLD, 0.9f);
-	else      Audio::Play(Audio::SE_HAMMER, 0.35f + power * 0.65f);
+	else
+	{
+		Audio::Play(m_hammerAlt ? Audio::SE_ANVIL2 : Audio::SE_ANVIL1, 0.55f + power * 0.45f);
+		m_hammerAlt = !m_hammerAlt;
+	}
 	// 冷打は「ガツン」と大きく揺れる(手応えが悪い=衝撃だけ大きい)
 	m_shake = cold ? (0.6f + power * 0.6f) : (0.3f + power * 0.7f);
 	m_strikeAnim = 1.0f;	// ハンマーを振り下ろすアニメ開始
@@ -572,6 +582,7 @@ void SceneForge::UpdateResult(float /*tick*/)
 	if (IsKeyTrigger(VK_SPACE))
 	{
 		m_state = GAME_TITLE;
+		Audio::PlayLoop(Audio::SE_TITLE, 0.7f);	// タイトルへ戻ったので専用ループ再開
 	}
 }
 
@@ -624,6 +635,52 @@ void SceneForge::Update(float tick)
 			s.vel.x *= 0.6f;
 			s.vel.z *= 0.6f;
 		}
+		++i;
+	}
+
+	// 炭火の余燼(火の粉)も常時シミュレート
+	UpdateEmbers(tick);
+}
+
+//====================================================================
+//  炭火の余燼(火の粉) : 炭床から持続的に発生し、熱気で上昇して淡出する
+//====================================================================
+void SceneForge::UpdateEmbers(float tick)
+{
+	// 発生: 炭がONのとき、炭床(m_coalPos ± m_coalSize)の各所から少しずつ湧かせる
+	if (m_coalOn)
+	{
+		m_emberSpawn += tick * m_emberRate;
+		int n = (int)m_emberSpawn;	// 今フレームで出す整数個
+		m_emberSpawn -= n;			// 端数は次フレームへ持ち越し
+		for (int k = 0; k < n && (int)m_embers.size() < MAX_EMBERS; ++k)
+		{
+			Spark e = {};
+			// 中心に寄せて発生(frand*frandで中央ほど密)。発生器の位置/範囲は配置ファイル駆動
+			float rx = frand(-1.0f, 1.0f) * frand(0.0f, 1.0f) * m_emberArea[0];
+			float rz = frand(-1.0f, 1.0f) * frand(0.0f, 1.0f) * m_emberArea[1];
+			e.pos = XMFLOAT3(m_emberPos[0] + rx, m_emberPos[1] + 0.05f, m_emberPos[2] + rz);
+			// ほぼ真上へ、わずかな横ぶれ(火花のような下向き重力はナシ=熱気で上がる)
+			e.vel = XMFLOAT3(frand(-0.15f, 0.15f), m_emberRise * frand(0.7f, 1.3f), frand(-0.15f, 0.15f));
+			e.maxLife = frand(1.2f, 2.6f);
+			e.life = e.maxLife;
+			e.size = frand(0.02f, 0.05f);
+			m_embers.push_back(e);
+		}
+	}
+
+	// シミュレート: 浮力で上昇＋ゆらぎ＋寿命で消滅
+	for (size_t i = 0; i < m_embers.size(); )
+	{
+		Spark& e = m_embers[i];
+		e.life -= tick;
+		if (e.life <= 0.0f) { e = m_embers.back(); m_embers.pop_back(); continue; }
+		e.vel.y += 0.4f * tick;												// 浮力(少し加速して上る)
+		e.vel.x += sinf(m_time * 3.0f + e.pos.y * 8.0f) * 0.10f * tick;		// 横ゆらぎ
+		e.vel.z += cosf(m_time * 2.3f + e.pos.x * 8.0f) * 0.10f * tick;
+		e.pos.x += e.vel.x * tick;
+		e.pos.y += e.vel.y * tick;
+		e.pos.z += e.vel.z * tick;
 		++i;
 	}
 }
@@ -962,15 +1019,11 @@ void SceneForge::UpdateEditorDrag()
 //    別の金床モデルに差し替えてもAABBが変わるだけで再調整不要。
 void SceneForge::UpdateBarAnchor()
 {
-	Model* anvil = GetObj<Model>("MdlAnvil");
+	// 金床はプロップ(StAnvil)。配置ファイルで動かしても、そのワールド変換＋AABBから
+	// 砧面(上面中心)を毎フレーム求めるので鉄条が自動追従する。
+	Prop* anvil = GetProp("StAnvil");
 	if (!anvil) return;
-
-	// DrawModelsTest と同じワールド行列を作る
-	XMMATRIX world =
-		XMMatrixScaling(m_mScale, m_mScale, m_mScale) *
-		XMMatrixRotationY(m_mYaw) *
-		XMMatrixTranslation(m_mPos[0], m_mPos[1], m_mPos[2]);
-	world = anvil->GetScaleBaseMatrix() * world;
+	XMMATRIX world = PropWorld(*anvil);
 
 	// AABBの8隅をワールドへ変換し、一番高いY(砧面)と、X/Zの中心を求める
 	float topY = -1e18f, botY = 1e18f;
@@ -978,9 +1031,9 @@ void SceneForge::UpdateBarAnchor()
 	for (int i = 0; i < 8; ++i)
 	{
 		XMFLOAT3 p(
-			(i & 1) ? m_anvilMax.x : m_anvilMin.x,
-			(i & 2) ? m_anvilMax.y : m_anvilMin.y,
-			(i & 4) ? m_anvilMax.z : m_anvilMin.z);
+			(i & 1) ? anvil->aabbMax.x : anvil->aabbMin.x,
+			(i & 2) ? anvil->aabbMax.y : anvil->aabbMin.y,
+			(i & 4) ? anvil->aabbMax.z : anvil->aabbMin.z);
 		XMVECTOR wv = XMVector3TransformCoord(XMLoadFloat3(&p), world);
 		float x = XMVectorGetX(wv), y = XMVectorGetY(wv), z = XMVectorGetZ(wv);
 		if (y > topY) topY = y;
@@ -1010,7 +1063,7 @@ static void DrawBoxEdges(const XMFLOAT3 c[8])
 void SceneForge::DrawDebugBoxes()
 {
 	CameraBase* cam   = GetObj<CameraBase>("Camera");
-	Model*      anvil = GetObj<Model>("MdlAnvil");
+	Prop*       anvil = GetProp("StAnvil");
 	if (!cam || !anvil) return;
 
 	XMFLOAT4X4 id; XMStoreFloat4x4(&id, XMMatrixIdentity());
@@ -1019,18 +1072,14 @@ void SceneForge::DrawDebugBoxes()
 	Geometory::SetProjection(cam->GetProj());
 
 	// 金床のワールドAABB(緑)
-	XMMATRIX world =
-		XMMatrixScaling(m_mScale, m_mScale, m_mScale) *
-		XMMatrixRotationY(m_mYaw) *
-		XMMatrixTranslation(m_mPos[0], m_mPos[1], m_mPos[2]);
-	world = anvil->GetScaleBaseMatrix() * world;
+	XMMATRIX world = PropWorld(*anvil);
 	XMFLOAT3 ac[8];
 	for (int i = 0; i < 8; ++i)
 	{
 		XMFLOAT3 p(
-			(i & 1) ? m_anvilMax.x : m_anvilMin.x,
-			(i & 2) ? m_anvilMax.y : m_anvilMin.y,
-			(i & 4) ? m_anvilMax.z : m_anvilMin.z);
+			(i & 1) ? anvil->aabbMax.x : anvil->aabbMin.x,
+			(i & 2) ? anvil->aabbMax.y : anvil->aabbMin.y,
+			(i & 4) ? anvil->aabbMax.z : anvil->aabbMin.z);
 		XMStoreFloat3(&ac[i], XMVector3TransformCoord(XMLoadFloat3(&p), world));
 	}
 	Geometory::SetColor(XMFLOAT4(0.2f, 1.0f, 0.3f, 1.0f));
@@ -1103,20 +1152,21 @@ void SceneForge::LoadProp(const char* key, const char* fbx, const char* tex,
 	m_props.push_back(p);
 }
 
-//--- プロップのワールド行列(金床と同じ規約)。groundSnapで底面を床に自動設置
+//--- プロップのワールド行列(編集シーンSceneBlankと同一規約=床は常にY=0)。
+//    こうすると同じ stage_layout.txt が両シーンで完全に同じ配置になる。
+//    groundSnap時: Pos.Y はAABB下面を床(0)に付けてからの「床からの高さ」。
 XMMATRIX SceneForge::PropWorld(Prop& p)
 {
 	Model* m = GetObj<Model>(p.key.c_str());
 	XMMATRIX base = m ? (XMMATRIX)m->GetScaleBaseMatrix() : XMMatrixIdentity();
-	XMMATRIX srt =
+	// まずY=0で組み、pos.Yは最後に足す(=床からの持ち上げ)
+	XMMATRIX world = base *
 		XMMatrixScaling(p.scale, p.scale, p.scale) *
 		XMMatrixRotationY(p.yaw) *
-		XMMatrixTranslation(p.pos[0], p.pos[1], p.pos[2]);
-	XMMATRIX world = base * srt;
+		XMMatrixTranslation(p.pos[0], 0.0f, p.pos[2]);
 
 	if (p.groundSnap)
 	{
-		// 現在の変換でAABB下面のワールドYを求め、床(m_groundY)に合わせて持ち上げる
 		float minY = 1e18f;
 		for (int i = 0; i < 8; ++i)
 		{
@@ -1127,15 +1177,64 @@ XMMATRIX SceneForge::PropWorld(Prop& p)
 			float y = XMVectorGetY(XMVector3TransformCoord(XMLoadFloat3(&c), world));
 			if (y < minY) minY = y;
 		}
-		world = world * XMMatrixTranslation(0.0f, m_groundY - minY, 0.0f);
+		world = world * XMMatrixTranslation(0.0f, -minY, 0.0f);	// 底面を床(0)へ
 	}
+	world = world * XMMatrixTranslation(0.0f, p.pos[1], 0.0f);	// 床からの持ち上げ/絶対Y
 	return world;
+}
+
+//--- m_props からキーで検索(無ければnullptr)
+SceneForge::Prop* SceneForge::GetProp(const char* key)
+{
+	for (auto& p : m_props) if (p.key == key) return &p;
+	return nullptr;
+}
+
+//--- 編集シーンが保存した stage_layout.txt を読み、プロップ/炭の配置を上書きする。
+//    SceneBlank::LoadLayout と同じパーサ(キーが一致するプロップにだけ適用)。
+//    'W'(水面)はゲーム側に未実装なのでスキップ(水shaderは別チャットで実装予定)。
+void SceneForge::LoadLayout()
+{
+	FILE* fp = nullptr;
+	fopen_s(&fp, "Assets/stage_layout.txt", "r");
+	if (!fp) return;
+	char line[256];
+	bool hasE = false;
+	while (fgets(line, sizeof(line), fp))
+	{
+		if (line[0] == 'P')
+		{
+			char key[64]; float x, y, z, yaw, sc; int snap;
+			if (sscanf_s(line, "P %63s %f %f %f %f %f %d", key, (unsigned)sizeof(key), &x, &y, &z, &yaw, &sc, &snap) == 7)
+				if (Prop* p = GetProp(key))
+				{ p->pos[0]=x; p->pos[1]=y; p->pos[2]=z; p->yaw=yaw; p->scale=sc; p->groundSnap=(snap!=0); }
+		}
+		else if (line[0] == 'C')
+		{
+			float x, y, z, yaw, sx, sy, g; int on;
+			if (sscanf_s(line, "C %f %f %f %f %f %f %f %d", &x, &y, &z, &yaw, &sx, &sy, &g, &on) == 8)
+			{ m_coalPos[0]=x; m_coalPos[1]=y; m_coalPos[2]=z; m_coalYaw=yaw; m_coalSize[0]=sx; m_coalSize[1]=sy; m_coalGlow=g; m_coalOn=(on!=0); }
+		}
+		else if (line[0] == 'E')	// 余燼発生器(編集シーンで調整した値)
+		{
+			float x, y, z, sx, sy, rt, ri;
+			if (sscanf_s(line, "E %f %f %f %f %f %f %f", &x, &y, &z, &sx, &sy, &rt, &ri) == 7)
+			{ m_emberPos[0]=x; m_emberPos[1]=y; m_emberPos[2]=z; m_emberArea[0]=sx; m_emberArea[1]=sy; m_emberRate=rt; m_emberRise=ri; hasE=true; }
+		}
+	}
+	// 旧い配置ファイル(E行なし)なら、余燼を炭の位置に合わせておく
+	if (!hasE)
+	{
+		m_emberPos[0]=m_coalPos[0]; m_emberPos[1]=m_coalPos[1]; m_emberPos[2]=m_coalPos[2];
+		m_emberArea[0]=m_coalSize[0]*0.85f; m_emberArea[1]=m_coalSize[1]*0.85f;
+	}
+	fclose(fp);
 }
 
 //--- 炉のマテリアルへ、F1で選んだテクスチャを割り当てる
 void SceneForge::ApplyForgeTextures()
 {
-	Model* forge = GetObj<Model>("PropForge");
+	Model* forge = GetObj<Model>("StForge");
 	if (!forge || m_forgeTex.empty()) return;
 	for (size_t i = 0; i < m_forgeMatPick.size(); ++i)
 	{
@@ -1155,7 +1254,7 @@ void SceneForge::DrawScenery()
 		Model* m = GetObj<Model>(p.key.c_str());
 		if (!m) continue;
 		// 炉だけ、のっぺり感を抑えるため僅かに暗い暖色を掛ける(炉内が煤けて見える)
-		XMFLOAT4 tint = (p.key == "PropForge")
+		XMFLOAT4 tint = (p.key == "StForge")
 			? XMFLOAT4(0.80f, 0.76f, 0.72f, 1.0f)
 			: XMFLOAT4(1, 1, 1, 1);
 		DrawModelWorld(m, PropWorld(p), tint);
@@ -1183,12 +1282,8 @@ void SceneForge::DrawCoalBed()
 	XMStoreFloat4x4(&mat[0], XMMatrixTranspose(world));
 	vs->WriteBuffer(0, mat);
 
-	// 明滅: 複数のsinを混ぜて自然に揺らす(生きた炭火)
-	float f = 0.85f
-		+ 0.10f * sinf(m_time * 3.1f)
-		+ 0.05f * sinf(m_time * 7.7f + 1.3f);
-	float g = m_coalGlow * f;
-	XMFLOAT4 tint(g, g, g, 1.0f);	// テクスチャを明るく持ち上げ→Bloomで発光
+	// 明滅計算はGPU(PS)へ移した。CPUは「素の明るさ」と「時間」を渡すだけ。
+	XMFLOAT4 tint(m_coalGlow, m_coalGlow, m_coalGlow, m_time);	// rgb=明るさ, a=時間
 	ps->WriteBuffer(0, &tint);
 
 	SetBlendMode(BLEND_ALPHA);
@@ -1202,17 +1297,7 @@ void SceneForge::DrawCoalBed()
 void SceneForge::DrawModelsTest()
 {
 	if (!m_show3D) return;
-	DrawScenery();	// 床・炉・風箱・作業台・水桶を先に
-	Model* anvil = GetObj<Model>("MdlAnvil");
-	if (anvil)
-	{
-		XMMATRIX world =
-			XMMatrixScaling(m_mScale, m_mScale, m_mScale) *
-			XMMatrixRotationY(m_mYaw) *
-			XMMatrixTranslation(m_mPos[0], m_mPos[1], m_mPos[2]);
-		world = anvil->GetScaleBaseMatrix() * world;
-		DrawModelWorld(anvil, world);
-	}
+	DrawScenery();	// 床・樹桩・金床・炉・風箱・作業台・水槽・道具などを一括描画(金床もここ)
 	DrawHammer3D();
 }
 
@@ -1329,6 +1414,8 @@ void SceneForge::Draw()
 	Draw3DBillet();		// 3Dの光る鉄条
 	if (DebugUI::IsVisible()) DrawDebugBoxes();	// F1中はAABB/箱を線で表示
 
+	DrawEmbers();		// 炭火から立ち上る余燼(火花描画より前に。火花が無くても出す)
+
 	CameraBase* pCamera = GetObj<CameraBase>("Camera");
 	VertexShader* vs = GetObj<VertexShader>("VS_Forge");
 	PixelShader*  ps = GetObj<PixelShader>("PS_Forge");
@@ -1398,6 +1485,75 @@ void SceneForge::Draw()
 	m_mesh->Draw(v);
 
 	// 状態を戻す
+	SetBlendMode(BLEND_ALPHA);
+	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
+}
+
+//--- 余燼(火の粉)をカメラ向きの丸い光点(ビルボード)で加算描画。火花と同じシェーダー/グロー貼り
+void SceneForge::DrawEmbers()
+{
+	if (m_embers.empty()) return;
+	CameraBase*   cam = GetObj<CameraBase>("Camera");
+	VertexShader* vs  = GetObj<VertexShader>("VS_Forge");
+	PixelShader*  ps  = GetObj<PixelShader>("PS_Forge");
+	if (!cam || !vs || !ps || !m_mesh) return;
+
+	XMFLOAT3 camPos = cam->GetPos();
+	XMVECTOR vcam    = XMLoadFloat3(&camPos);
+	XMVECTOR worldUp = XMVectorSet(0, 1, 0, 0);
+
+	XMFLOAT4X4 camMat[2];
+	camMat[0] = cam->GetView();
+	camMat[1] = cam->GetProj();
+	vs->WriteBuffer(0, camMat);
+
+	int v = 0;
+	for (const Spark& e : m_embers)
+	{
+		float t = e.life / e.maxLife;		// 1→0(消えるほど暗く小さく)
+		// 温かい橙色。消えぎわは赤く、細かくチラつく
+		float fl = 0.70f + 0.30f * sinf(m_time * 25.0f + e.pos.x * 10.0f);
+		float br = t * fl;
+		XMFLOAT4 col(1.0f * br, (0.5f * t + 0.1f) * br, 0.12f * t * br, 1.0f);
+
+		// カメラを向く正方形(右up)を作る = 丸いグロー点
+		XMVECTOR c     = XMLoadFloat3(&e.pos);
+		XMVECTOR toCam = XMVector3Normalize(XMVectorSubtract(vcam, c));
+		XMVECTOR right = XMVector3Cross(worldUp, toCam);
+		if (XMVectorGetX(XMVector3Length(right)) < 0.001f) right = XMVectorSet(1, 0, 0, 0);
+		right = XMVector3Normalize(right);
+		XMVECTOR up = XMVector3Normalize(XMVector3Cross(toCam, right));
+
+		float sz = e.size * (0.6f + 0.6f * t);	// 消えるほど少し縮む
+		XMVECTOR R = XMVectorScale(right, sz);
+		XMVECTOR U = XMVectorScale(up,    sz);
+
+		XMFLOAT3 tl, tr, bl, br3;
+		XMStoreFloat3(&tl,  XMVectorAdd(XMVectorSubtract(c, R), U));
+		XMStoreFloat3(&tr,  XMVectorAdd(XMVectorAdd(c, R), U));
+		XMStoreFloat3(&bl,  XMVectorSubtract(XMVectorSubtract(c, R), U));
+		XMStoreFloat3(&br3, XMVectorSubtract(XMVectorAdd(c, R), U));
+
+		Vertex* q = &m_vtx[v];
+		q[0] = { tl,  XMFLOAT2(0,0), col };
+		q[1] = { tr,  XMFLOAT2(1,0), col };
+		q[2] = { bl,  XMFLOAT2(0,1), col };
+		q[3] = { bl,  XMFLOAT2(0,1), col };
+		q[4] = { tr,  XMFLOAT2(1,0), col };
+		q[5] = { br3, XMFLOAT2(1,1), col };
+		v += 6;
+		if (v + 6 > (int)m_vtx.size()) break;
+	}
+	if (v == 0) return;
+
+	SetBlendMode(BLEND_ADD);
+	SetDepthTest(DEPTH_ENABLE_TEST);	// 深度は見るが書かない(半透明の光)
+	ps->SetTexture(0, m_glow.get());
+	m_mesh->Write(m_vtx.data());
+	vs->Bind();
+	ps->Bind();
+	m_mesh->Draw(v);
+
 	SetBlendMode(BLEND_ALPHA);
 	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
 }

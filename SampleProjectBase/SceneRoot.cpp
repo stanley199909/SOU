@@ -95,13 +95,13 @@ void SceneRoot::Init()
 	pLight->UpdateParam();
 
 
-	// モデルの読み込み
+	// 教材デモ用モデル(spot牛/Rock)は不要シーン(Visual/Wall)専用で、鍛冶ゲームでは未使用。
+	// 実行環境に不要な巨大アセットを持ち込まないよう、読み込みは停止(オブジェクトは空で保持)。
 	CreateObj<Model>("Model");
-	GetObj<Model>("Model")->Load("Assets/Model/spot/spot.fbx", 1.0f, true);
-	
-	// モデルの読み込み
+	//GetObj<Model>("Model")->Load("Assets/Model/spot/spot.fbx", 1.0f, true);
+
 	CreateObj<Model>("Rock2");
-	GetObj<Model>("Rock2")->Load("Assets/Model/Rock-Set/Rock_2/Rock_2.fbx", 0.005f, true, true);
+	//GetObj<Model>("Rock2")->Load("Assets/Model/Rock-Set/Rock_2/Rock_2.fbx", 0.005f, true, true);
 
 	// アニメーション用モデル読み込み 重いので見たいとき以外はコメントアウト
 	/*Model* pAnimModel = CreateObj<Model>("Akai");
@@ -114,12 +114,13 @@ void SceneRoot::Init()
 	Model* pPlane = CreateObj<Model>("ModelPlane");
 	pPlane->Load("Assets/Model/plane/plane.fbx");
 
-	Model* pField = CreateObj<Model>("FieldModel");
-	pField->Load("Assets/Model/field/field.fbx", 1.0f, false, true);
+	// field.fbx も教材デモ用(鍛冶ゲームは自前の StGround を使う)。読み込み停止。
+	CreateObj<Model>("FieldModel");
+	//pField->Load("Assets/Model/field/field.fbx", 1.0f, false, true);
 
-	// シーンの作成(旧setting.datの範囲外indexは鍛冶ゲームに丸める)
-	m_index = setting.index;
-	if (m_index < 0 || m_index >= SCENE_MAX) m_index = SCENE_FORGE;
+	// 起動時は常にゲーム本体(SCENE_FORGE)から。編集シーンへは SHIFT+←/→ で移動。
+	// (setting.dat のカメラ/ライトは復元するが、開始シーンはゲーム固定にする)
+	m_index = SCENE_FORGE;
 	ChangeScene();
 }
 

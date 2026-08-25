@@ -22,7 +22,7 @@ HRESULT Init(HWND hWnd, UINT width, UINT height)
 	Geometory::Init();
 	Sprite::Init();
 	InitInput();
-	Audio::Init();
+	Audio::Init();	// BGMはロード完了後にゲームシーン側で開始する(起動途中で鳴らない)
 
 	// シーン作成
 	g_pScene = std::make_shared<SceneRoot>();

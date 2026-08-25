@@ -10,23 +10,19 @@
 #include "MeshBuffer.h"
 #include "Input.h"
 #include "imgui/imgui.h"
+#include <cstdio>
+#include <cstdlib>
+#include <cmath>
 
 using namespace DirectX;
 using namespace DirectX::SimpleMath;
 
-// coal bed shaders (pos/uv/col layout + texture, tint brightens for Bloom)
-static const char* g_stCoalVS = R"EOT(
-cbuffer Cam : register(b0){ float4x4 world; float4x4 view; float4x4 proj; };
-struct VIN  { float3 pos:POSITION0; float2 uv:TEXCOORD0; float4 col:TEXCOORD1; };
-struct VOUT { float4 pos:SV_POSITION; float2 uv:TEXCOORD0; };
-VOUT main(VIN v){ VOUT o; float4 p=mul(float4(v.pos,1),world); p=mul(p,view); o.pos=mul(p,proj); o.uv=v.uv; return o; }
-)EOT";
-static const char* g_stCoalPS = R"EOT(
-Texture2D tex : register(t0); SamplerState samp : register(s0);
-cbuffer Tint : register(b0){ float4 tintColor; };
-struct PIN{ float4 pos:SV_POSITION; float2 uv:TEXCOORD0; };
-float4 main(PIN i):SV_TARGET{ float4 c=tex.Sample(samp,i.uv); c.rgb*=tintColor.rgb; return c; }
-)EOT";
+static float frand()               { return (float)rand() / (float)RAND_MAX; }
+static float frand(float a, float b){ return a + (b - a) * frand(); }
+
+// coal/water shaders are now the shared .cso files compiled from
+// VS_Coal.hlsl / PS_Coal.hlsl (same ones the game SceneForge uses).
+// Coal uses PS_Coal (flicker); water reuses PS_TexTint (flat, no flicker).
 
 static void GetMouseClient(float& mx, float& my)
 {
@@ -66,8 +62,15 @@ void SceneBlank::Init()
 	PixelShader* ps = CreateObj<PixelShader>("StPS");
 	if (FAILED(ps->Load("Assets/Shader/PS_TexTint.cso")))
 		MessageBox(nullptr, "PS_TexTint.cso", "Shader Error", MB_OK);
-	VertexShader* cvs = CreateObj<VertexShader>("StCoalVS"); cvs->Compile(g_stCoalVS);
-	PixelShader*  cps = CreateObj<PixelShader>("StCoalPS");  cps->Compile(g_stCoalPS);
+	VertexShader* cvs = CreateObj<VertexShader>("StCoalVS");
+	if (FAILED(cvs->Load("Assets/Shader/VS_Coal.cso")))
+		MessageBox(nullptr, "VS_Coal.cso", "Shader Error", MB_OK);
+	PixelShader*  cps = CreateObj<PixelShader>("StCoalPS");
+	if (FAILED(cps->Load("Assets/Shader/PS_Coal.cso")))
+		MessageBox(nullptr, "PS_Coal.cso", "Shader Error", MB_OK);
+	PixelShader*  wps = CreateObj<PixelShader>("StWaterPS");
+	if (FAILED(wps->Load("Assets/Shader/PS_Water.cso")))
+		MessageBox(nullptr, "PS_Water.cso", "Shader Error", MB_OK);
 
 	const std::string P = "Assets/MM_Blacksmith_Pack/";
 	const std::string kAnvilTex = P + "Anvil/Textures/T_Anvil_BaseColor.png";
@@ -154,6 +157,37 @@ void SceneBlank::Init()
 		if (SUCCEEDED(t->Create("Assets/Model/plane/stone.png"))) m_waterTex = t;
 	}
 
+	// --- coal ember particles: same system as the game (VS_Particle/PS_Particle) ---
+	VertexShader* pvs = CreateObj<VertexShader>("StPartVS");
+	if (FAILED(pvs->Load("Assets/Shader/VS_Particle.cso")))
+		MessageBox(nullptr, "VS_Particle.cso", "Shader Error", MB_OK);
+	PixelShader*  pps = CreateObj<PixelShader>("StPartPS");
+	if (FAILED(pps->Load("Assets/Shader/PS_Particle.cso")))
+		MessageBox(nullptr, "PS_Particle.cso", "Shader Error", MB_OK);
+	// soft radial dot texture (bright center -> transparent edge)
+	{
+		const int S = 64;
+		std::vector<unsigned char> pix(S * S * 4);
+		for (int y = 0; y < S; ++y)
+		for (int x = 0; x < S; ++x)
+		{
+			float dx = (x + 0.5f) / S * 2 - 1, dy = (y + 0.5f) / S * 2 - 1;
+			float f = 1.0f - sqrtf(dx * dx + dy * dy); if (f < 0) f = 0; f = f * f;
+			unsigned char c = (unsigned char)(f * 255);
+			int idx = (y * S + x) * 4; pix[idx] = pix[idx+1] = pix[idx+2] = pix[idx+3] = c;
+		}
+		m_emberGlow = std::make_shared<Texture>();
+		m_emberGlow->Create(DXGI_FORMAT_R8G8B8A8_UNORM, S, S, pix.data());
+	}
+	// dynamic billboard mesh
+	m_emberVtx.resize(MAX_EMBERS * 6);
+	{
+		MeshBuffer::Description d = {};
+		d.pVtx = m_emberVtx.data(); d.vtxSize = sizeof(Vertex); d.vtxCount = (UINT)m_emberVtx.size();
+		d.isWrite = true; d.topology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+		m_emberMesh = std::make_shared<MeshBuffer>(d);
+	}
+
 	// place the camera to see the stage (then ALT+drag is free)
 	if (CameraBase* cam = GetObj<CameraBase>("Camera"))
 	{
@@ -161,15 +195,166 @@ void SceneBlank::Init()
 		cam->SetLook(XMFLOAT3(0.0f, 0.8f,  0.5f));
 		cam->SetUp  (XMFLOAT3(0.0f, 1.0f,  0.0f));
 	}
+
+	LoadLayout();	// override defaults with the saved arrangement if it exists
+}
+
+//--- coal embers: spawn from the coal bed center, rise with buoyancy, fade out
+void SceneBlank::UpdateEmbers(float tick)
+{
+	if (m_coalOn)
+	{
+		m_emberSpawn += tick * m_emberRate;
+		int n = (int)m_emberSpawn; m_emberSpawn -= n;
+		for (int k = 0; k < n && (int)m_embers.size() < MAX_EMBERS; ++k)
+		{
+			Ember e = {};
+			float rx = frand(-1.0f, 1.0f) * frand(0.0f, 1.0f) * m_emberArea[0];
+			float rz = frand(-1.0f, 1.0f) * frand(0.0f, 1.0f) * m_emberArea[1];
+			e.pos = XMFLOAT3(m_emberPos[0] + rx, m_emberPos[1] + 0.05f, m_emberPos[2] + rz);
+			e.vel = XMFLOAT3(frand(-0.15f, 0.15f), m_emberRise * frand(0.7f, 1.3f), frand(-0.15f, 0.15f));
+			e.maxLife = frand(1.2f, 2.6f); e.life = e.maxLife;
+			e.size = frand(0.02f, 0.05f);
+			m_embers.push_back(e);
+		}
+	}
+	for (size_t i = 0; i < m_embers.size(); )
+	{
+		Ember& e = m_embers[i];
+		e.life -= tick;
+		if (e.life <= 0.0f) { e = m_embers.back(); m_embers.pop_back(); continue; }
+		e.vel.y += 0.4f * tick;
+		e.vel.x += sinf(m_time * 3.0f + e.pos.y * 8.0f) * 0.10f * tick;
+		e.vel.z += cosf(m_time * 2.3f + e.pos.x * 8.0f) * 0.10f * tick;
+		e.pos.x += e.vel.x * tick; e.pos.y += e.vel.y * tick; e.pos.z += e.vel.z * tick;
+		++i;
+	}
+}
+
+//--- draw embers as camera-facing glowing dots (additive), reusing the particle shader
+void SceneBlank::DrawEmbers()
+{
+	if (m_embers.empty()) return;
+	CameraBase*   cam = GetObj<CameraBase>("Camera");
+	VertexShader* vs  = GetObj<VertexShader>("StPartVS");
+	PixelShader*  ps  = GetObj<PixelShader>("StPartPS");
+	if (!cam || !vs || !ps || !m_emberMesh) return;
+
+	XMFLOAT3 camPos = cam->GetPos();
+	XMVECTOR vcam = XMLoadFloat3(&camPos), worldUp = XMVectorSet(0, 1, 0, 0);
+	XMFLOAT4X4 camMat[2]; camMat[0] = cam->GetView(); camMat[1] = cam->GetProj();
+	vs->WriteBuffer(0, camMat);
+
+	int v = 0;
+	for (const Ember& e : m_embers)
+	{
+		float t = e.life / e.maxLife;
+		float fl = 0.70f + 0.30f * sinf(m_time * 25.0f + e.pos.x * 10.0f);
+		float br = t * fl;
+		XMFLOAT4 col(1.0f * br, (0.5f * t + 0.1f) * br, 0.12f * t * br, 1.0f);
+
+		XMVECTOR c = XMLoadFloat3(&e.pos);
+		XMVECTOR toCam = XMVector3Normalize(XMVectorSubtract(vcam, c));
+		XMVECTOR right = XMVector3Cross(worldUp, toCam);
+		if (XMVectorGetX(XMVector3Length(right)) < 0.001f) right = XMVectorSet(1, 0, 0, 0);
+		right = XMVector3Normalize(right);
+		XMVECTOR up = XMVector3Normalize(XMVector3Cross(toCam, right));
+		float sz = e.size * (0.6f + 0.6f * t);
+		XMVECTOR R = XMVectorScale(right, sz), U = XMVectorScale(up, sz);
+
+		XMFLOAT3 tl, tr, bl, br3;
+		XMStoreFloat3(&tl,  XMVectorAdd(XMVectorSubtract(c, R), U));
+		XMStoreFloat3(&tr,  XMVectorAdd(XMVectorAdd(c, R), U));
+		XMStoreFloat3(&bl,  XMVectorSubtract(XMVectorSubtract(c, R), U));
+		XMStoreFloat3(&br3, XMVectorSubtract(XMVectorAdd(c, R), U));
+
+		Vertex* q = &m_emberVtx[v];
+		q[0] = { tl, XMFLOAT2(0,0), col }; q[1] = { tr, XMFLOAT2(1,0), col };
+		q[2] = { bl, XMFLOAT2(0,1), col }; q[3] = { bl, XMFLOAT2(0,1), col };
+		q[4] = { tr, XMFLOAT2(1,0), col }; q[5] = { br3, XMFLOAT2(1,1), col };
+		v += 6;
+		if (v + 6 > (int)m_emberVtx.size()) break;
+	}
+	if (v == 0) return;
+
+	SetBlendMode(BLEND_ADD);
+	SetDepthTest(DEPTH_ENABLE_TEST);
+	ps->SetTexture(0, m_emberGlow.get());
+	m_emberMesh->Write(m_emberVtx.data());
+	vs->Bind(); ps->Bind();
+	m_emberMesh->Draw(v);
+	SetBlendMode(BLEND_ALPHA);
+	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
+}
+
+static const char* STAGE_FILE = "Assets/stage_layout.txt";
+
+//--- save the whole layout to a text file (like the teacher's setting.dat, but text)
+void SceneBlank::SaveLayout()
+{
+	FILE* fp = nullptr;
+	fopen_s(&fp, STAGE_FILE, "w");
+	if (!fp) return;
+	for (auto& p : m_props)
+		fprintf(fp, "P %s %.4f %.4f %.4f %.4f %.5f %d\n",
+			p.key.c_str(), p.pos[0], p.pos[1], p.pos[2], p.yaw, p.scale, p.groundSnap ? 1 : 0);
+	fprintf(fp, "C %.4f %.4f %.4f %.4f %.4f %.4f %.3f %d\n",
+		m_coalPos[0], m_coalPos[1], m_coalPos[2], m_coalYaw, m_coalSize[0], m_coalSize[1], m_coalGlow, m_coalOn ? 1 : 0);
+	fprintf(fp, "W %.4f %.4f %.4f %.4f %.4f %.4f %d\n",
+		m_waterPos[0], m_waterPos[1], m_waterPos[2], m_waterYaw, m_waterSize[0], m_waterSize[1], m_waterOn ? 1 : 0);
+	fprintf(fp, "E %.4f %.4f %.4f %.4f %.4f %.2f %.3f\n",
+		m_emberPos[0], m_emberPos[1], m_emberPos[2], m_emberArea[0], m_emberArea[1], m_emberRate, m_emberRise);
+	fclose(fp);
+}
+
+//--- load the saved layout (applies to matching props; missing file = keep defaults)
+void SceneBlank::LoadLayout()
+{
+	FILE* fp = nullptr;
+	fopen_s(&fp, STAGE_FILE, "r");
+	if (!fp) return;
+	char line[256];
+	while (fgets(line, sizeof(line), fp))
+	{
+		if (line[0] == 'P')
+		{
+			char key[64]; float x, y, z, yaw, sc; int snap;
+			if (sscanf_s(line, "P %63s %f %f %f %f %f %d", key, (unsigned)sizeof(key), &x, &y, &z, &yaw, &sc, &snap) == 7)
+				for (auto& p : m_props) if (p.key == key)
+				{ p.pos[0] = x; p.pos[1] = y; p.pos[2] = z; p.yaw = yaw; p.scale = sc; p.groundSnap = (snap != 0); }
+		}
+		else if (line[0] == 'C')
+		{
+			float x, y, z, yaw, sx, sy, g; int on;
+			if (sscanf_s(line, "C %f %f %f %f %f %f %f %d", &x, &y, &z, &yaw, &sx, &sy, &g, &on) == 8)
+			{ m_coalPos[0]=x; m_coalPos[1]=y; m_coalPos[2]=z; m_coalYaw=yaw; m_coalSize[0]=sx; m_coalSize[1]=sy; m_coalGlow=g; m_coalOn=(on!=0); }
+		}
+		else if (line[0] == 'W')
+		{
+			float x, y, z, yaw, sx, sy; int on;
+			if (sscanf_s(line, "W %f %f %f %f %f %f %d", &x, &y, &z, &yaw, &sx, &sy, &on) == 7)
+			{ m_waterPos[0]=x; m_waterPos[1]=y; m_waterPos[2]=z; m_waterYaw=yaw; m_waterSize[0]=sx; m_waterSize[1]=sy; m_waterOn=(on!=0); }
+		}
+		else if (line[0] == 'E')
+		{
+			float x, y, z, sx, sy, rt, ri;
+			if (sscanf_s(line, "E %f %f %f %f %f %f %f", &x, &y, &z, &sx, &sy, &rt, &ri) == 7)
+			{ m_emberPos[0]=x; m_emberPos[1]=y; m_emberPos[2]=z; m_emberArea[0]=sx; m_emberArea[1]=sy; m_emberRate=rt; m_emberRise=ri; }
+		}
+	}
+	fclose(fp);
 }
 
 void SceneBlank::Uninit()
 {
+	SaveLayout();	// persist the arrangement on leaving/closing the scene
 	DestroyObj("StVS"); DestroyObj("StPS");
-	DestroyObj("StCoalVS"); DestroyObj("StCoalPS");
+	DestroyObj("StCoalVS"); DestroyObj("StCoalPS"); DestroyObj("StWaterPS");
+	DestroyObj("StPartVS"); DestroyObj("StPartPS");
 	for (auto& p : m_props) DestroyObj(p.key.c_str());
 	m_props.clear();
 	m_coalMesh.reset(); m_coalTex.reset();
+	m_emberMesh.reset(); m_emberGlow.reset(); m_embers.clear();
 }
 
 XMMATRIX SceneBlank::PropWorld(Prop& p)
@@ -245,9 +430,8 @@ void SceneBlank::DrawCoalBed()
 	mat[1] = cam->GetView(); mat[2] = cam->GetProj();
 	XMStoreFloat4x4(&mat[0], XMMatrixTranspose(world));
 	vs->WriteBuffer(0, mat);
-	float f = 0.85f + 0.10f * sinf(m_time * 3.1f) + 0.05f * sinf(m_time * 7.7f + 1.3f);
-	float g = m_coalGlow * f;
-	XMFLOAT4 tint(g, g, g, 1.0f);
+	// flicker now runs in PS_Coal on the GPU; CPU only sends brightness + time
+	XMFLOAT4 tint(m_coalGlow, m_coalGlow, m_coalGlow, m_time);	// rgb=brightness, a=time
 	ps->WriteBuffer(0, &tint);
 	SetBlendMode(BLEND_ALPHA);
 	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
@@ -256,13 +440,13 @@ void SceneBlank::DrawCoalBed()
 	m_coalMesh->Draw();
 }
 
-//--- water surface for the trough (flat blue quad, reuses the coal mesh + coal shader)
+//--- water surface for the trough: procedural moving water (PS_Water), not a flat texture
 void SceneBlank::DrawWater()
 {
-	if (!m_waterOn || !m_coalMesh || !m_waterTex) return;
+	if (!m_waterOn || !m_coalMesh) return;
 	CameraBase*   cam = GetObj<CameraBase>("Camera");
-	VertexShader* vs  = GetObj<VertexShader>("StCoalVS");
-	PixelShader*  ps  = GetObj<PixelShader>("StCoalPS");
+	VertexShader* vs  = GetObj<VertexShader>("StCoalVS");	// generic pos/uv/col VS
+	PixelShader*  ps  = GetObj<PixelShader>("StWaterPS");	// PS_Water: animated ripples
 	if (!cam || !vs || !ps) return;
 	XMMATRIX world =
 		XMMatrixScaling(m_waterSize[0], 1.0f, m_waterSize[1]) *
@@ -272,12 +456,11 @@ void SceneBlank::DrawWater()
 	mat[1] = cam->GetView(); mat[2] = cam->GetProj();
 	XMStoreFloat4x4(&mat[0], XMMatrixTranspose(world));
 	vs->WriteBuffer(0, mat);
-	XMFLOAT4 tint(0.20f, 0.40f, 0.70f, 1.0f);	// bluish water
-	ps->WriteBuffer(0, &tint);
+	XMFLOAT4 params(m_time, 0.0f, 0.0f, 0.0f);	// params.x = time -> drives the ripples
+	ps->WriteBuffer(0, &params);
 	SetBlendMode(BLEND_ALPHA);
 	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
 	vs->Bind(); ps->Bind();
-	ps->SetTexture(0, m_waterTex.get());
 	m_coalMesh->Draw();
 }
 
@@ -517,11 +700,13 @@ void SceneBlank::Update(float tick)
 {
 	m_time += tick;
 	UpdateEditorDrag();
+	UpdateEmbers(tick);	// coal embers rise even while editing
 }
 
 void SceneBlank::Draw()
 {
 	DrawScenery();
+	DrawEmbers();				// coal embers rising from the forge
 	DrawSelectionHighlight();	// yellow box around the selected prop
 	DrawGizmo();				// XYZ move arrows on the selected prop
 }
@@ -553,6 +738,10 @@ void SceneBlank::DrawUI()
 				ImGui::DragFloat("Scale", &p.scale, 0.001f, 0.0001f, 20.0f, "%.4f");
 				ImGui::Checkbox("Ground snap (Pos Y = height above floor)", &p.groundSnap);
 			}
+			// persistence: layout auto-saves on exit; button forces an immediate save
+			ImGui::Separator();
+			if (ImGui::Button("Save layout now")) SaveLayout();
+			ImGui::TextDisabled("Auto-saves on exit to Assets/stage_layout.txt");
 			ImGui::EndTabItem();
 		}
 		//--- Coal tab
@@ -564,6 +753,13 @@ void SceneBlank::DrawUI()
 			ImGui::SliderFloat("Coal Yaw", &m_coalYaw, -3.1416f, 3.1416f);
 			ImGui::DragFloat2("Coal Size", m_coalSize, 0.01f, 0.05f, 3.0f);
 			ImGui::SliderFloat("Coal Glow", &m_coalGlow, 0.5f, 4.0f, "%.2f");
+			ImGui::Separator();
+			ImGui::Text("Embers (rising fire sparks)");
+			ImGui::DragFloat3("Ember Pos", m_emberPos, 0.02f);
+			ImGui::DragFloat2("Ember Area", m_emberArea, 0.01f, 0.02f, 3.0f);
+			ImGui::SliderFloat("Ember Rate", &m_emberRate, 0.0f, 120.0f, "%.0f/s");
+			ImGui::SliderFloat("Ember Rise", &m_emberRise, 0.2f, 2.5f, "%.2f");
+			if (ImGui::Button("Ember = Coal pos")) { m_emberPos[0]=m_coalPos[0]; m_emberPos[1]=m_coalPos[1]; m_emberPos[2]=m_coalPos[2]; m_emberArea[0]=m_coalSize[0]*0.85f; m_emberArea[1]=m_coalSize[1]*0.85f; }
 			ImGui::Separator();
 			ImGui::Text("Water (quench trough)");
 			ImGui::Checkbox("Water on", &m_waterOn);

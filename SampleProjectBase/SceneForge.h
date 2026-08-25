@@ -53,6 +53,10 @@ private:
 	//--- 火花
 	void Strike(float scale = 1.0f);	// 1回叩く(火花をまとめて発生, scaleで量と勢いを調整)
 
+	//--- 炭火から立ち上る余燼(火の粉)。持続発生・上昇・淡出
+	void UpdateEmbers(float tick);	// 発生＋上昇＋消滅のシミュレーション(CPU)
+	void DrawEmbers();				// 余燼をカメラ向きビルボードで加算描画(火花と同じシェーダー)
+
 	//--- 状態ごとの更新
 	void UpdateTitle(float tick);
 	void UpdatePlay(float tick);
@@ -79,6 +83,8 @@ private:
 	//--- シーン装飾(炉/風箱/作業台/水桶/床)
 	void  LoadProp(const char* key, const char* fbx, const char* tex,
 	               float targetSize, float px, float py, float pz, float yaw, bool groundSnap);
+	Prop* GetProp(const char* key);			// m_props からキーで検索(無ければnullptr)
+	void  LoadLayout();						// stage_layout.txt を読み、プロップ/炭の配置を上書き(編集シーンと共有)
 	DirectX::XMMATRIX PropWorld(Prop& p);	// アンカー方式のワールド行列(地面に自動設置)
 	void  DrawScenery();		// 装飾モデルをまとめて描画
 	void  DrawHammer3D();		// 3Dハンマー(蓄力で上がり打撃で振り下ろす)
@@ -92,6 +98,14 @@ private:
 private:
 	//--- 火花シミュレーション
 	std::vector<Spark>  m_sparks;
+	std::vector<Spark>  m_embers;		// 炭火の余燼(火の粉)。上昇して淡出
+	float               m_emberSpawn = 0.0f;	// 余燼発生の端数(1未満を持ち越す)
+	static const int    MAX_EMBERS = 500;
+	//--- 余燼発生器の調整値(編集シーンで調整→stage_layout.txtの E 行で読む)
+	float m_emberPos[3]  = { 3.20f, 0.60f, 1.80f };	// 発生中心(既定は炭付近)
+	float m_emberArea[2] = { 0.45f, 0.60f };		// 発生半径(X,Z)
+	float m_emberRate    = 45.0f;					// 1秒あたりの発生数
+	float m_emberRise    = 0.8f;					// 上昇初速
 	std::vector<Vertex> m_vtx;
 	std::shared_ptr<MeshBuffer> m_mesh;
 	std::shared_ptr<Texture>    m_glow;
@@ -204,6 +218,7 @@ private:
 	float m_strikeCD  = 0.0f;		// 打撃後のクールダウン残り(連打防止)
 	int   m_strikeSeg = SEG / 2;	// 打撃位置(セグメント)
 	bool  m_canStrike = false;		// 開始直後の誤爆防止(SPACEを一度離すまで無効)
+	bool  m_hammerAlt = false;		// 金床打撃音の交互再生(false→SE_ANVIL1, true→SE_ANVIL2)
 	float m_shake     = 0.0f;		// 打撃時の揺れ
 
 	//--- 打撃フィードバック(ポップアップ文字)

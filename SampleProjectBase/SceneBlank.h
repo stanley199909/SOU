@@ -62,6 +62,22 @@ private:
 	float m_coalGlow = 1.8f;
 	void  DrawCoalBed();
 
+	//--- coal embers (rising sparks) - same idea as the game's particle system
+	struct Ember { DirectX::XMFLOAT3 pos, vel; float life, maxLife, size; };
+	std::vector<Ember>          m_embers;
+	std::vector<Vertex>         m_emberVtx;		// billboard vertices (rebuilt each frame)
+	std::shared_ptr<MeshBuffer> m_emberMesh;	// dynamic buffer for the billboards
+	std::shared_ptr<Texture>    m_emberGlow;	// soft radial dot texture
+	float m_emberSpawn = 0.0f;					// fractional spawn carry-over
+	static const int MAX_EMBERS = 500;
+	//--- adjustable emitter (edited here, saved to stage_layout.txt, read by the game)
+	float m_emberPos[3]  = { 1.80f, 0.60f, 0.60f };	// emitter center (defaults near coal)
+	float m_emberArea[2] = { 0.45f, 0.60f };		// spawn radius (X,Z)
+	float m_emberRate    = 45.0f;					// particles per second
+	float m_emberRise    = 0.8f;					// upward launch speed
+	void  UpdateEmbers(float tick);				// spawn + rise + fade (CPU)
+	void  DrawEmbers();							// camera-facing glowing dots (additive)
+
 	//--- water surface (for the quench trough)
 	std::shared_ptr<Texture> m_waterTex;
 	bool  m_waterOn = true;
@@ -83,6 +99,10 @@ private:
 	int   PickGizmoAxis(float mx, float my);	// which arrow is under the cursor (-1 = none)
 	void  DrawSelectionHighlight();			// yellow box around the selected prop
 	void  DrawGizmo();						// XYZ arrows on the selected prop
+
+	//--- persistence: save/load the whole layout to a text file (survives restart)
+	void  SaveLayout();
+	void  LoadLayout();
 };
 
 #endif // __SCENE_BLANK_H___
