@@ -196,6 +196,15 @@ private:
 	float m_coalGlow   = 1.8f;				// 明るさ(Bloomで光る)
 	void  DrawCoalBed();	// 光る炭ベッドを描画
 
+	//--- 水槽の水面(真の屈折。背後のシーンをスナップショットして透ける)
+	//    メッシュは m_coalMesh(±1の水平板)を流用。シェーダーだけ PS_Water に差し替える。
+	bool  m_waterOn     = true;
+	float m_waterPos[3] = { -1.40f, 0.55f, 0.0f };	// 水槽の位置(stage_layout.txtで上書き)
+	float m_waterYaw    = 0.0f;
+	float m_waterSize[2]= { 0.45f, 0.55f };			// 板の半径(X,Z)
+	float m_waterBump   = 1.0f;						// さざ波の強さ(屈折/法線)
+	void  DrawWater();	// 水面を描画(屈折)
+
 	//--- 金床のモデル空間AABB(アンカー計算用。Initで一度求めてキャッシュ)
 	DirectX::XMFLOAT3 m_anvilMin = { 0,0,0 };
 	DirectX::XMFLOAT3 m_anvilMax = { 0,0,0 };

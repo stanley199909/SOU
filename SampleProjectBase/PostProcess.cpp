@@ -135,6 +135,8 @@ void PostProcess::Init(UINT width, UINT height)
 
 	// シーン描画用のオフスクリーンRTを作成
 	m_sceneRT.Create(DXGI_FORMAT_R8G8B8A8_UNORM, width, height);
+	// water refraction snapshot (full res copy of the scene behind the water)
+	m_refractRT.Create(DXGI_FORMAT_R8G8B8A8_UNORM, width, height);
 	// ブルーム用は半解像度(軽くて柔らかくなる)
 	m_brightRT.Create(DXGI_FORMAT_R8G8B8A8_UNORM, width / 2, height / 2);
 	m_blurRT.Create(DXGI_FORMAT_R8G8B8A8_UNORM, width / 2, height / 2);
@@ -218,6 +220,15 @@ void PostProcess::Begin(DepthStencil* pDSV)
 	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
 	SetBlendMode(BLEND_ALPHA);
 	SetSamplerState(SAMPLER_LINEAR);
+}
+
+// Copy the scene rendered so far into m_refractRT and hand it to the water PS.
+// CopyResource does not change the current render target, so m_sceneRT stays
+// bound and the water is still drawn into the scene (and gets bloomed later).
+Texture* PostProcess::CaptureScene()
+{
+	GetContext()->CopyResource(m_refractRT.GetTexture2D(), m_sceneRT.GetTexture2D());
+	return &m_refractRT;
 }
 
 void PostProcess::End(RenderTarget* pScreen)

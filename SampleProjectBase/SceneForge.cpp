@@ -11,6 +11,7 @@
 #include "DebugUI.h"
 #include "Defines.h"
 #include "Audio.h"
+#include "PostProcess.h"
 #include <cstdlib>
 #include <cmath>
 #include <cstdio>
@@ -18,6 +19,9 @@
 #include <string>
 
 using namespace DirectX;
+
+// 水面の屈折用に、シーンのスナップショットを撮る PostProcess を参照する(Mainのグローバル)。
+extern std::shared_ptr<PostProcess> g_pPost;
 
 // パーティクル用シェーダーは Assets/Shader/VS_Particle.cso / PS_Particle.cso として
 // .hlsl から fxc でコンパイルし、Init で Load する(火花・余燼で共用)。
@@ -142,6 +146,11 @@ void SceneForge::Init()
 	PixelShader* cps = CreateObj<PixelShader>("PS_Coal");
 	if (FAILED(cps->Load("Assets/Shader/PS_Coal.cso")))
 		MessageBox(nullptr, "PS_Coal.cso", "Shader Error", MB_OK);
+
+	// 水面用ピクセルシェーダー(屈折)。頂点は VS_Coal を流用(pos/uv/col レイアウト)。
+	PixelShader* wps = CreateObj<PixelShader>("PS_Water");
+	if (FAILED(wps->Load("Assets/Shader/PS_Water.cso")))
+		MessageBox(nullptr, "PS_Water.cso", "Shader Error", MB_OK);
 
 	m_barVtx.resize(SEG * 48 + 24);	// 両面描画分の頂点を確保
 	MeshBuffer::Description bdesc = {};
@@ -282,6 +291,7 @@ void SceneForge::Uninit()
 	DestroyObj("PS_Bar");
 	DestroyObj("VS_Coal");
 	DestroyObj("PS_Coal");
+	DestroyObj("PS_Water");
 	m_coalMesh.reset();
 	m_coalTex.reset();
 	DestroyObj("MdlHammer");	// 金床(StAnvil)は m_props ループで破棄される
@@ -1192,7 +1202,7 @@ SceneForge::Prop* SceneForge::GetProp(const char* key)
 
 //--- 編集シーンが保存した stage_layout.txt を読み、プロップ/炭の配置を上書きする。
 //    SceneBlank::LoadLayout と同じパーサ(キーが一致するプロップにだけ適用)。
-//    'W'(水面)はゲーム側に未実装なのでスキップ(水shaderは別チャットで実装予定)。
+//    'W'(水面)もゲーム側で対応済み(屈折する水。DrawWater)。
 void SceneForge::LoadLayout()
 {
 	FILE* fp = nullptr;
@@ -1214,6 +1224,12 @@ void SceneForge::LoadLayout()
 			float x, y, z, yaw, sx, sy, g; int on;
 			if (sscanf_s(line, "C %f %f %f %f %f %f %f %d", &x, &y, &z, &yaw, &sx, &sy, &g, &on) == 8)
 			{ m_coalPos[0]=x; m_coalPos[1]=y; m_coalPos[2]=z; m_coalYaw=yaw; m_coalSize[0]=sx; m_coalSize[1]=sy; m_coalGlow=g; m_coalOn=(on!=0); }
+		}
+		else if (line[0] == 'W')	// 水面(編集シーンで配置した水槽の水)
+		{
+			float x, y, z, yaw, sx, sy; int on;
+			if (sscanf_s(line, "W %f %f %f %f %f %f %d", &x, &y, &z, &yaw, &sx, &sy, &on) == 7)
+			{ m_waterPos[0]=x; m_waterPos[1]=y; m_waterPos[2]=z; m_waterYaw=yaw; m_waterSize[0]=sx; m_waterSize[1]=sy; m_waterOn=(on!=0); }
 		}
 		else if (line[0] == 'E')	// 余燼発生器(編集シーンで調整した値)
 		{
@@ -1291,6 +1307,48 @@ void SceneForge::DrawCoalBed()
 	vs->Bind(); ps->Bind();
 	ps->SetTexture(0, m_coalTex.get());
 	m_coalMesh->Draw();
+}
+
+//--- 水槽の水面を描画(真の屈折)。
+//    直前までに描かれた不透明シーンを PostProcess がスナップショットし、
+//    水面PS(PS_Water)がそれを法線でずらしてサンプルする=槽の中が透けて見える。
+//    メッシュは炭と同じ ±1 水平板を流用し、world で位置/大きさを与える。
+void SceneForge::DrawWater()
+{
+	if (!m_waterOn || !m_coalMesh || !g_pPost) return;
+	CameraBase*   cam = GetObj<CameraBase>("Camera");
+	VertexShader* vs  = GetObj<VertexShader>("VS_Coal");	// pos/uv/col 共通VS
+	PixelShader*  ps  = GetObj<PixelShader>("PS_Water");
+	if (!cam || !vs || !ps) return;
+
+	// 背後のシーンをスナップショット(これを屈折元テクスチャとして使う)
+	Texture* refr = g_pPost->CaptureScene();
+	if (!refr) return;
+
+	XMMATRIX world =
+		XMMatrixScaling(m_waterSize[0], 1.0f, m_waterSize[1]) *
+		XMMatrixRotationY(m_waterYaw) *
+		XMMatrixTranslation(m_waterPos[0], m_waterPos[1], m_waterPos[2]);
+
+	XMFLOAT4X4 mat[3];
+	mat[1] = cam->GetView();
+	mat[2] = cam->GetProj();
+	XMStoreFloat4x4(&mat[0], XMMatrixTranspose(world));
+	vs->WriteBuffer(0, mat);
+
+	// x=時間, y=画面幅, z=画面高さ, w=さざ波の強さ
+	XMFLOAT4 params(m_time, (float)refr->GetWidth(), (float)refr->GetHeight(), m_waterBump);
+	ps->WriteBuffer(0, &params);
+
+	SetBlendMode(BLEND_ALPHA);
+	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
+	vs->Bind(); ps->Bind();
+	ps->SetTexture(0, refr);	// 屈折元=背後のシーン(Bindの後に設定)
+	m_coalMesh->Draw();
+
+	// 次フレームでRTとして使う前にSRVを外しておく(sceneRTの読み書き衝突を避ける)
+	ID3D11ShaderResourceView* pNull = nullptr;
+	GetContext()->PSSetShaderResources(0, 1, &pNull);
 }
 
 //--- 鍛冶素材の3Dモデルを描画(金床＋ハンマー)
@@ -1412,6 +1470,7 @@ void SceneForge::Draw()
 	ApplyCamera();	// 固定カメラを適用(GetViewの前に)
 	DrawModelsTest();	// 先に不透明な3Dモデル(金床)を描く
 	Draw3DBillet();		// 3Dの光る鉄条
+	DrawWater();		// 水槽の水面(屈折。背後のシーンを撮ってから描く=不透明の後)
 	if (DebugUI::IsVisible()) DrawDebugBoxes();	// F1中はAABB/箱を線で表示
 
 	DrawEmbers();		// 炭火から立ち上る余燼(火花描画より前に。火花が無くても出す)

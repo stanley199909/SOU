@@ -27,6 +27,12 @@ public:
 	void Begin(DepthStencil* pDSV);		// オフスクリーンRTへ切り替え
 	void End(RenderTarget* pScreen);	// 画面へ効果を掛けて合成
 
+	// Snapshot the scene rendered so far (opaque geometry) into an offscreen
+	// texture, so transparent water can sample "what is behind it" and refract.
+	// Call after opaque draw, before drawing water; returns the SRV texture to
+	// bind on the water pixel shader. The scene RT stays bound as render target.
+	Texture* CaptureScene();
+
 	// 画面下部などに出したい時用(現在の状態文字列)
 	int  GetCurrent() const { return m_current; }
 	bool IsSplit()    const { return m_split; }
@@ -58,6 +64,7 @@ private:
 	};
 
 	RenderTarget                 m_sceneRT;	// シーンを描くオフスクリーンRT
+	RenderTarget                 m_refractRT;	// water refraction: copy of scene behind the water
 	RenderTarget                 m_brightRT;	// ブルーム用(高輝度抽出/縦ぼかし)
 	RenderTarget                 m_blurRT;		// ブルーム用(横ぼかし)
 	std::shared_ptr<PixelShader> m_ppPS;	// 6種効果用ピクセルシェーダー

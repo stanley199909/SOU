@@ -4,7 +4,7 @@
 #include "DirectX.h"
 
 /// <summary>
-/// ƒeƒNƒXƒ`ƒƒ
+/// ï¿½eï¿½Nï¿½Xï¿½`ï¿½ï¿½
 /// </summary>
 class Texture
 {
@@ -17,20 +17,22 @@ public:
 	UINT GetWidth() const;
 	UINT GetHeight() const;
 	ID3D11ShaderResourceView* GetResource() const;
+	// raw 2D texture (for CopyResource, e.g. water refraction snapshot)
+	ID3D11Texture2D* GetTexture2D() const { return m_pTex; }
 
 protected:
 	D3D11_TEXTURE2D_DESC MakeTexDesc(DXGI_FORMAT format, UINT width, UINT height);
 	virtual HRESULT CreateResource(D3D11_TEXTURE2D_DESC &desc, const void* pData);
 
 protected:
-	UINT m_width;	///< ‰¡•
-	UINT m_height;	///< c•
+	UINT m_width;	///< ï¿½ï¿½ï¿½ï¿½
+	UINT m_height;	///< ï¿½cï¿½ï¿½
 	ID3D11ShaderResourceView *m_pSRV;
 	ID3D11Texture2D* m_pTex;
 };
 
 /// <summary>
-/// ƒŒƒ“ƒ_[ƒ^[ƒQƒbƒg
+/// ï¿½ï¿½ï¿½ï¿½ï¿½_ï¿½[ï¿½^ï¿½[ï¿½Qï¿½bï¿½g
 /// </summary>
 class RenderTarget : public Texture
 {
@@ -51,7 +53,7 @@ private:
 };
 
 /// <summary>
-/// [“xƒeƒNƒXƒ`ƒƒ
+/// ï¿½[ï¿½xï¿½eï¿½Nï¿½Xï¿½`ï¿½ï¿½
 /// </summary>
 class DepthStencil : public Texture
 {
