@@ -88,11 +88,9 @@ private:
 	DirectX::XMMATRIX PropWorld(Prop& p);	// アンカー方式のワールド行列(地面に自動設置)
 	void  DrawScenery();		// 装飾モデルをまとめて描画
 	void  DrawHammer3D();		// 3Dハンマー(蓄力で上がり打撃で振り下ろす)
-	int   BuildBarMesh();		// m_th[]から3D鉄条の頂点を生成(戻り値=頂点数)
-	void  Draw3DBillet();		// 3Dの光る鉄条を描画
-	void  DrawBillet();		// 2D側面図で光る鉄条を描く(旧, 参考用)
+	int   BuildBarMesh();		// 高さ場 m_h[][] から3D鉄板の頂点を生成(戻り値=頂点数)
+	void  Draw3DBillet();		// 3Dの光る鉄板を描画
 	void DrawHeatGauge();	// 温度ゲージ(HUD)
-	void DrawHammer();		// ハンマーと打撃カーソル
 	void DoStrike();		// 蓄力を解放して1打(変形＋フィードバック)
 
 private:
@@ -123,12 +121,27 @@ private:
 	//--- 温度(0=冷たい 〜 1=白熱)
 	float m_heat = 0.0f;
 
-	//--- 鉄条の側面プロファイル(中心線からの半分の厚み, 正規化 1.0=初期の太さ)
-	static const int SEG = 24;		// 長手方向の分割数
-	float m_th[SEG];				// 各セグメントの半厚み(叩くと減る)
-	float m_dmg[SEG];				// 各セグメントの損傷(冷打の割れ/過熱の焼け, 0..1)
-	float m_target[SEG];			// 目標形状(剣のシルエット)の半厚み
-	float m_match = 0.0f;			// 目標形状との一致度 0..1
+	//--- 鉄板の二次元セル(粗いブロック): KCD式「注定成形」。
+	//    俯視の板を 長さNL × 幅NW の「格子(ブロック)」に切り、各セルが1つの独立した高さ m_h[i][j]。
+	//    1打=命中した「その1セルだけ」を目標高さ m_hTgt へ「下げる」(只下不上=注定, 形は壊れない)。
+	//    起点は一様な厚板。周囲のセルを叩き下げると、高いセル=武器がブロックとして浮き出る。
+	//      i = 長さ方向(Z, 0=柄端タング → NL-1=切先) / j = 幅方向(X, 中央=刃の峰)
+	static const int NL = 20;		// 長さ方向(Z)のセル数
+	static const int NW = 6;		// 幅方向(X)のセル数
+	float m_h[NL][NW];				// 現在の高さ(厚み)場
+	float m_hTgt[NL][NW];			// 目標(完成武器)の高さ場
+	float m_dmgF[NL][NW];			// 各セルの損傷(冷打の割れ/過熱の焼け, 0..1)
+	float m_hStart = 0.17f;			// 鉄坯(平板)の一様な高さ = 武器の最厚部
+	float m_match  = 0.0f;			// 成形の進捗(平均) 0..1
+	//--- FPS式照準: 画面中心の準心から射線を飛ばし、板に当たったセルを求める
+	int   m_aimI = NL / 2, m_aimJ = NW / 2;		// 現在照準しているセル
+	bool  m_aimValid = false;					// 準心が板の上にあるか
+	DirectX::XMFLOAT3 m_aimWorld = { 0, 0, 0 };	// 準心が当たった板上のワールド座標
+	//--- FPS式の受限環視カメラ(マウスで視角を回す。準心は常に画面中心=カメラ正前方)
+	float m_lookYaw = 0.0f, m_lookPitch = 0.0f;	// 基準視線からのマウス累積回転(夹住)
+	DirectX::XMFLOAT3 m_camFwd = { 0, 0, 1 };	// 現在のカメラ正前方(照準射線に使う)
+	void  UpdateMouseLook();		// マウス移動を視角(yaw/pitch)へ累積(再センタリング方式)
+	void  UpdateAim();				// 準心射線を板と交差させ m_aimI/J/World を更新
 
 	//--- 3Dモデル配置の調整用(F1デバッグでスライダ操作)
 	bool  m_show3D  = true;
@@ -154,7 +167,7 @@ private:
 	float m_barY     = 2.32f;	// 鉄条の中心の高さ(UpdateBarAnchorが金床の砧面から自動算出)
 	float m_barLen   = 1.8f;	// 長さ
 	float m_barThick = 0.18f;	// 初期の半分の厚み
-	float m_barWidth = 0.12f;	// 半分の幅
+	float m_barWidth = 0.22f;	// 鉄坯(進捗0)の一様な半幅。目標プロファイルより広く=削って武器へ
 	float m_barLift  = 0.0f;	// 砧面からの微調整オフセット(F1)
 
 	//--- シーン装飾のプロップ(炉/風箱/作業台/水桶/床)。F1スライダで配置調整→焼込む
@@ -203,7 +216,9 @@ private:
 	float m_waterYaw    = 0.0f;
 	float m_waterSize[2]= { 0.45f, 0.55f };			// 板の半径(X,Z)
 	float m_waterBump   = 1.0f;						// さざ波の強さ(屈折/法線)
-	void  DrawWater();	// 水面を描画(屈折)
+	float m_waterFoam   = 0.06f;					// 岸の泡(容器壁との交差)の帯幅(視空間)
+	float m_waterDepthFade = 0.35f;					// 水深で色が濃くなる距離(視空間)
+	void  DrawWater();	// 水面を描画(屈折+深度)
 
 	//--- 金床のモデル空間AABB(アンカー計算用。Initで一度求めてキャッシュ)
 	DirectX::XMFLOAT3 m_anvilMin = { 0,0,0 };
@@ -225,7 +240,6 @@ private:
 	bool  m_charging  = false;		// 蓄力中か
 	float m_charge    = 0.0f;		// 蓄力(0..1)
 	float m_strikeCD  = 0.0f;		// 打撃後のクールダウン残り(連打防止)
-	int   m_strikeSeg = SEG / 2;	// 打撃位置(セグメント)
 	bool  m_canStrike = false;		// 開始直後の誤爆防止(SPACEを一度離すまで無効)
 	bool  m_hammerAlt = false;		// 金床打撃音の交互再生(false→SE_ANVIL1, true→SE_ANVIL2)
 	float m_shake     = 0.0f;		// 打撃時の揺れ
@@ -258,7 +272,9 @@ private:
 	//--- 打撃パラメータ
 	static constexpr float CHARGE_RATE = 1.6f;	// 蓄力速度(/秒, 満蓄力まで約0.6秒)
 	static constexpr float STRIKE_COOL = 0.08f;	// 1打ごとに下がる温度
-	static constexpr float DEFORM_MAX  = 0.22f;	// 満蓄力・最適温度での最大変形量
+	static constexpr float DEFORM_MAX  = 0.22f;	// (旧)満蓄力・最適温度での最大変形量
+	static constexpr float FLOW_DROP = 0.095f;	// 満蓄力・最適温度で1打が命中セルから押し出す高さ量
+	static constexpr float H_MIN     = 0.0f;	// セル高さの下限(これ以上は薄くできない)
 	static constexpr float COLD_LIMIT  = 0.35f;	// これ未満は冷たすぎ(ほぼ変形せず割れる)
 	static constexpr float CADENCE_MIN = 0.45f;	// 良い打撃間隔の下限(これより速いと駄目)
 	static constexpr float CADENCE_MAX = 1.00f;	// 良い打撃間隔の上限(これより遅いと駄目)

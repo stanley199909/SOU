@@ -120,8 +120,9 @@ void SceneForge::Init()
 	desc.topology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 	m_mesh = std::make_shared<MeshBuffer>(desc);
 
-	// 鉄条プロファイルを一様な太さ・無傷で初期化
-	for (int i = 0; i < SEG; ++i) { m_th[i] = 1.0f; m_dmg[i] = 0.0f; }
+	// 鉄板を一様な厚板(=進捗0)・無傷で初期化。BuildTargetが目標高さ場を作る。
+	for (int i = 0; i < NL; ++i)
+	for (int j = 0; j < NW; ++j) { m_h[i][j] = m_hStart; m_dmgF[i][j] = 0.0f; }
 	BuildTarget();
 
 	// --- 【3D化テスト】鍛冶素材モデルの読み込み ---
@@ -152,7 +153,8 @@ void SceneForge::Init()
 	if (FAILED(wps->Load("Assets/Shader/PS_Water.cso")))
 		MessageBox(nullptr, "PS_Water.cso", "Shader Error", MB_OK);
 
-	m_barVtx.resize(SEG * 48 + 24);	// 両面描画分の頂点を確保
+	// ブロックメッシュ: 各セルを箱(上面+側面4=5面, 各面両面12頂点=60頂点)で描く分を確保
+	m_barVtx.resize(NL * NW * 60 + 64);
 	MeshBuffer::Description bdesc = {};
 	bdesc.pVtx     = m_barVtx.data();
 	bdesc.vtxSize  = sizeof(Vertex);
@@ -331,33 +333,82 @@ void SceneForge::Strike(float scale)
 //====================================================================
 //  目標形状(剣のシルエット)
 //====================================================================
+//--- 完成武器(短剣)の目標「高さ場」を定義する。
+//    i = 長さ方向(0=柄端タング → 切先) / j = 幅方向(中央=刃の峰)。
+//    各(i,j)セルに目標高さを入れる。武器の内側=高い(峰は最も高い), 武器の外側=飛边でほぼ0。
+//    起点の厚板(m_hStart)を周囲だけ叩き下げると、この高い所=武器が浮き出る(注定成形)。
 void SceneForge::BuildTarget()
 {
-	// 左=柄側(タング), 右=切先。鉄条(一様1.0)から削って剣形に近づける
-	for (int i = 0; i < SEG; ++i)
+	const float flashH = 0.012f;	// 武器の外側(飛边=叩き落とす余肉)のごく薄い高さ
+	for (int i = 0; i < NL; ++i)
 	{
-		float u = i / (float)(SEG - 1);	// 0..1
-		float th;
-		if (u < 0.20f)
-			th = 0.50f;					// タング(柄)は細め
-		else
+		float u = (i + 0.5f) / NL;	// セル中心 0=柄端 → 1=切先
+
+		// この長さ位置での「武器が占める半幅の割合」wfrac(0..1) と「峰の高さ」ridgeH
+		float wfrac, ridgeH;
+		if (u < 0.20f)					// タング(柄の芯): 細い/厚い
 		{
-			float v = (u - 0.20f) / 0.80f;	// 0..1(刃の付け根→切先)
-			th = 0.85f + (0.08f - 0.85f) * v;	// 付け根0.85 → 切先0.08 へテーパー
+			wfrac  = 0.34f;
+			ridgeH = 0.90f;
 		}
-		m_target[i] = th;
+		else if (u < 0.30f)				// 護手・刃の付け根(肩): 幅が最大に張り出す
+		{
+			float v = (u - 0.20f) / 0.10f;
+			wfrac  = 0.34f + (0.95f - 0.34f) * v;
+			ridgeH = 0.90f + (0.72f - 0.90f) * v;
+		}
+		else							// 刀身: 幅も高さも切先へテーパー
+		{
+			float v = (u - 0.30f) / 0.70f;
+			wfrac  = 0.95f + (0.05f - 0.95f) * v;	// 幅広い付け根 → 尖った切先
+			ridgeH = 0.72f + (0.14f - 0.72f) * v;	// 厚い付け根 → 薄い切先
+		}
+
+		for (int j = 0; j < NW; ++j)
+		{
+			float cv = fabsf((j + 0.5f) / NW - 0.5f) * 2.0f;	// セル中心 0=中央 .. 1=端
+			float h;
+			if (cv <= wfrac)
+			{
+				// 武器の内側: 中央(峰)が高く、刃の縁に向かって薄くなる断面
+				float e = cv / (wfrac > 1e-4f ? wfrac : 1.0f);	// 0=峰 .. 1=刃縁
+				float bevel = 1.0f - 0.75f * e;					// 峰1.0 → 刃縁0.25
+				h = ridgeH * bevel;
+			}
+			else h = flashH;	// 武器の外側=飛边
+
+			m_hTgt[i][j] = h * m_hStart;	// 倍率を実寸へ
+		}
+	}
+
+	// 体積守恒: 目標の総体積を鉄坯(=全セルhStart)の総体積に一致させる。
+	// これで「料を再分配するだけで目標に到達できる」ことが保証される(過不足なし)。
+	float sumT = 0.0f;
+	for (int i = 0; i < NL; ++i)
+	for (int j = 0; j < NW; ++j) sumT += m_hTgt[i][j];
+	float sumS = (float)(NL * NW) * m_hStart;
+	if (sumT > 1e-6f)
+	{
+		float k = sumS / sumT;
+		for (int i = 0; i < NL; ++i)
+		for (int j = 0; j < NW; ++j) m_hTgt[i][j] *= k;
 	}
 }
 
-//--- 現在の形状と目標の一致度(0..1)。平均誤差が小さいほど高い
+//--- 成形の一致度(0..1)。現在の高さ場と目標高さ場の差(L1)が小さいほど100%へ。
+//    体積守恒なので、料を目標どおりに再分配できているほど誤差が減る。
 float SceneForge::ShapeMatch() const
 {
 	float err = 0.0f;
-	for (int i = 0; i < SEG; ++i) err += fabsf(m_th[i] - m_target[i]);
-	err /= SEG;
-	float m = 1.0f - err / 0.40f;	// 平均誤差0.40で0%
-	if (m < 0.0f) m = 0.0f;
-	if (m > 1.0f) m = 1.0f;
+	for (int i = 0; i < NL; ++i)
+	for (int j = 0; j < NW; ++j) err += fabsf(m_h[i][j] - m_hTgt[i][j]);
+	// 誤差の基準: 全セルが「起点(hStart)」にある初期状態の誤差。ここから0へ近づく。
+	float ref = 0.0f;
+	for (int i = 0; i < NL; ++i)
+	for (int j = 0; j < NW; ++j) ref += fabsf(m_hStart - m_hTgt[i][j]);
+	if (ref < 1e-6f) return 1.0f;
+	float m = 1.0f - err / ref;
+	if (m < 0.0f) m = 0.0f; if (m > 1.0f) m = 1.0f;
 	return m;
 }
 
@@ -371,7 +422,8 @@ void SceneForge::StartGame()
 	m_progress = 0.0f;
 	m_score    = 0;
 	m_heat     = 0.0f;
-	for (int i = 0; i < SEG; ++i) { m_th[i] = 1.0f; m_dmg[i] = 0.0f; }	// 鉄条を初期状態に戻す
+	for (int i = 0; i < NL; ++i)
+	for (int j = 0; j < NW; ++j) { m_h[i][j] = m_hStart; m_dmgF[i][j] = 0.0f; }	// 厚板に戻す
 	BuildTarget();
 	m_match = 0.0f;
 
@@ -380,7 +432,9 @@ void SceneForge::StartGame()
 	m_strikeCD    = 0.0f;
 	m_strikeAnim  = 0.0f;
 	m_hammerLift  = HAMMER_REST_LIFT;
-	m_strikeSeg   = SEG / 2;
+	m_aimI = NL / 2; m_aimJ = NW / 2; m_aimValid = false;
+	m_aimWorld = m_barAnchor;	// 最初の有効照準までのハンマー既定位置(板中心)
+	m_lookYaw = 0.0f; m_lookPitch = 0.0f;
 	m_canStrike   = false;		// SPACEを一度離すまで蓄力しない
 	m_shake        = 0.0f;
 	m_popupLife    = 0.0f;
@@ -424,10 +478,11 @@ void SceneForge::UpdatePlay(float tick)
 	// --- 過熱で放置すると鋼全体が焼けていく(損傷が蓄積)＋ジュー音 ---
 	if (m_heat > OVERHEAT)
 	{
-		for (int i = 0; i < SEG; ++i)
+		for (int i = 0; i < NL; ++i)
+		for (int j = 0; j < NW; ++j)
 		{
-			m_dmg[i] += BURN_RATE * tick;
-			if (m_dmg[i] > 1.0f) m_dmg[i] = 1.0f;
+			m_dmgF[i][j] += BURN_RATE * tick;
+			if (m_dmgF[i][j] > 1.0f) m_dmgF[i][j] = 1.0f;
 		}
 		m_sizzleTimer -= tick;
 		if (m_sizzleTimer <= 0.0f) { Audio::Play(Audio::SE_SIZZLE); m_sizzleTimer = 0.22f; }
@@ -439,16 +494,9 @@ void SceneForge::UpdatePlay(float tick)
 	// 長く止まっていたらリズムはリセット(遅すぎ)
 	if (m_sinceStrike > CADENCE_MAX) m_rhythmStreak = 0;
 
-	// --- 照準(シンプル方式): マウスの画面上の縦位置を鉄条のセグメントに割り当てる ---
-	// 3D投影を使わないので絶対にズレない。鉄条が画面に映る縦範囲(上端/下端の割合)に対応させる。
-	if (inputOn)
-	{
-		float mx, my, cw, ch; GetMouseClient(mx, my, cw, ch);
-		float t = (my / ch - m_aimTop) / (m_aimBottom - m_aimTop);	// 鉄条範囲内で0..1
-		if (t < 0.0f) t = 0.0f;
-		if (t > 1.0f) t = 1.0f;
-		m_strikeSeg = (int)((1.0f - t) * (SEG - 1) + 0.5f);	// 画面上=切先(奥), 下=柄(手前)
-	}
+	// --- 照準(FPS方式): 画面中心の準心=カメラ正前方の射線を板と交差させ、当たったセルを求める ---
+	//   マウス移動はUpdateMouseLook(Updateの先頭)で視角に累積済み。ApplyCameraがm_camFwdを更新。
+	if (inputOn) UpdateAim();
 
 	// --- 蓄力ハンマー: 左クリック押しっぱなしで蓄力、離すと打撃。打撃後はクールダウン ---
 	if (m_strikeCD > 0.0f) m_strikeCD -= tick;	// クールダウン消化
@@ -522,25 +570,60 @@ void SceneForge::DoStrike()
 	bool inGroove = (m_rhythmStreak >= GROOVE_HITS);	// テンポが乗ると効率アップ
 	float grooveMult = inGroove ? 1.3f : 1.0f;			// 変形効率の上昇
 
+	// 準心が板の上に無いなら空振り: 変形も評価もせず、鉄には当たっていないので打鉄音も出さない
+	// (冷打音は誤解のもと。清脆な打鉄音が鳴らないこと自体が「外した」合図になる)。
+	if (!m_aimValid)
+	{
+		m_strikeAnim = 1.0f;	// 空振りのモーションだけ
+		return;
+	}
+
 	// 温度係数(冷たい→ほぼ効かない, 過熱→効くが品質悪, 適温→最大)
 	float heatFactor = cold ? 0.10f : (over ? 0.7f : 1.0f);
-	float deform = DEFORM_MAX * power * heatFactor * grooveMult;
+	// 引导式流动(体積守恒 + 結果注定): 命中セルは「目標高さ」までしか下げない(削り過ぎない)。
+	// 押し出した料は「設計がより料を欲しがっている(=e が小さい)隣」へ多く流す。
+	//   e = 現在高 - 目標高 (>0=余り/削るべき, <0=不足/盛るべき)。料は e の高→低へ流れる。
+	// これで叩くほど形は設計の目標へ収束し、余肉(飛边)は不足部(刃身/峰)へ引かれる=可控。
+	float want = FLOW_DROP * power * heatFactor * grooveMult;
+	int ci = m_aimI, cj = m_aimJ;
+	float eC = m_h[ci][cj] - m_hTgt[ci][cj];	// 命中セルの余り(surplus)
+	float delta = want;
+	if (delta > eC) delta = eC;					// 目標より下げない=結果が壊れない
+	if (delta < 0.0f) delta = 0.0f;				// 既に目標以下=削る余肉なし(空砕き)
 
-	// 打撃位置を中心に鉄を薄くする(近傍にもなだらかに)。
-	// 冷打=割れ / 過熱打=焼け として、その場に損傷を刻む
-	float dmgAdd = cold ? 0.35f : (over ? 0.25f : 0.0f);
-	for (int i = 0; i < SEG; ++i)
+	if (delta > 0.0f)
 	{
-		int d = abs(i - m_strikeSeg);
-		if (d > 3) continue;
-		float falloff = 1.0f - d / 4.0f;
-		m_th[i] -= deform * falloff;
-		if (m_th[i] < 0.05f) m_th[i] = 0.05f;
-		if (dmgAdd > 0.0f)
+		// 板の内側にある4近傍(端では隣が減る=料は板から出ない)
+		int ni[4], nj[4], n = 0;
+		if (ci > 0)      { ni[n] = ci - 1; nj[n] = cj;     ++n; }
+		if (ci < NL - 1) { ni[n] = ci + 1; nj[n] = cj;     ++n; }
+		if (cj > 0)      { ni[n] = ci;     nj[n] = cj - 1; ++n; }
+		if (cj < NW - 1) { ni[n] = ci;     nj[n] = cj + 1; ++n; }
+		if (n > 0)
 		{
-			m_dmg[i] += dmgAdd * falloff;
-			if (m_dmg[i] > 1.0f) m_dmg[i] = 1.0f;
+			// 各隣の重み = max(0, eC - eK): 命中セルより「不足寄り(e が小)」の隣ほど多く受ける。
+			float w[4], wsum = 0.0f;
+			for (int k = 0; k < n; ++k)
+			{
+				float eK = m_h[ni[k]][nj[k]] - m_hTgt[ni[k]][nj[k]];
+				float ww = eC - eK;
+				if (ww < 0.0f) ww = 0.0f;
+				w[k] = ww;
+				wsum += ww;
+			}
+			if (wsum < 1e-6f) { for (int k = 0; k < n; ++k) w[k] = 1.0f; wsum = (float)n; }	// 全隣が余り側→均等
+			m_h[ci][cj] -= delta;				// 命中セルは目標へ近づく
+			for (int k = 0; k < n; ++k)			// 押し出した料を不足寄りの隣へ流す
+				m_h[ni[k]][nj[k]] += delta * (w[k] / wsum);
 		}
+	}
+
+	// 冷打=割れ / 過熱打=焼け として、命中セルに損傷を刻む
+	float dmgAdd = cold ? 0.35f : (over ? 0.25f : 0.0f);
+	if (dmgAdd > 0.0f)
+	{
+		m_dmgF[ci][cj] += dmgAdd;
+		if (m_dmgF[ci][cj] > 1.0f) m_dmgF[ci][cj] = 1.0f;
 	}
 
 	// 温度が下がる / 火花 / 振動
@@ -599,9 +682,11 @@ void SceneForge::UpdateResult(float /*tick*/)
 void SceneForge::Update(float tick)
 {
 	m_time += tick;
+	// PLAY中かつF1非表示のときだけ、マウスをFPS式に視角へ累積(ApplyCameraより先に)。
+	if (m_state == GAME_PLAY && !DebugUI::IsVisible()) UpdateMouseLook();
 	// デバッグUI表示中はカメラ固定を外し、DCCの自由カメラ(ALT+ドラッグでオービット)を許可。
 	// 非表示時(=プレイ中)はKCD風の固定カメラに上書きする。
-	ApplyCamera();		// KCD風の固定カメラ(編集は STAGESETTING シーンで行う)
+	ApplyCamera();		// FPS式受限環視カメラ(編集は STAGESETTING シーンで行う)
 	UpdateBarAnchor();	// 金床の砧面の高さに鉄条を自動配置
 
 	// PLAY中はOSカーソルを隠す(照準は光るセグメントで示す)。デバッグUI表示中は出す
@@ -731,82 +816,6 @@ static ImU32 HeatColor(float h, float alpha = 1.0f)
 	return IM_COL32((int)(r * 255), (int)(g * 255), (int)(b * 255), (int)(alpha * 255));
 }
 
-//--- 2D側面図で光る鉄条(＋簡単な金床)を描く
-void SceneForge::DrawBillet()
-{
-	ImDrawList* dl = ImGui::GetBackgroundDrawList();
-
-	const float left     = SCREEN_WIDTH * 0.25f;
-	const float right    = SCREEN_WIDTH * 0.75f;
-	const float cy       = SCREEN_HEIGHT * 0.50f;
-	const float baseHalf = 30.0f;	// 初期の半分の太さ(px)
-
-	// --- 金床(鉄条の下の台) ---
-	ImU32 anvilCol = IM_COL32(45, 45, 52, 255);
-	dl->AddRectFilled(ImVec2(left - 40, cy + 34), ImVec2(right + 40, cy + 120), anvilCol, 6.0f);
-	dl->AddRectFilled(ImVec2(left + 60, cy + 110), ImVec2(right - 60, cy + 200),
-		IM_COL32(32, 32, 38, 255), 4.0f);
-
-	// --- 鉄条本体 ---
-	ImU32 col  = HeatColor(m_heat);
-	ImU32 glow = HeatColor(m_heat, 0.35f);	// 外側のにじみ(発光感)
-
-	// 打撃時の揺れ(鉄条だけを揺らして衝撃感を出す)
-	float sx = 0.0f, sy = 0.0f;
-	if (m_shake > 0.0f)
-	{
-		sx = frand(-1.0f, 1.0f) * m_shake * 8.0f;
-		sy = frand(-1.0f, 1.0f) * m_shake * 8.0f;
-	}
-	const float cyb = cy + sy;
-
-	auto nodeX = [&](int i) { return left + (right - left) * (i / (float)(SEG - 1)) + sx; };
-
-	for (int i = 0; i < SEG - 1; ++i)
-	{
-		float x0 = nodeX(i),     x1 = nodeX(i + 1);
-		float h0 = baseHalf * m_th[i], h1 = baseHalf * m_th[i + 1];
-
-		// 発光(少し大きめ・薄く)
-		dl->AddQuadFilled(
-			ImVec2(x0, cyb - h0 - 6), ImVec2(x1, cyb - h1 - 6),
-			ImVec2(x1, cyb + h1 + 6), ImVec2(x0, cyb + h0 + 6), glow);
-		// 本体
-		dl->AddQuadFilled(
-			ImVec2(x0, cyb - h0), ImVec2(x1, cyb - h1),
-			ImVec2(x1, cyb + h1), ImVec2(x0, cyb + h0), col);
-
-		// 損傷(冷打の割れ / 過熱の焼け)を黒い染みで表現
-		float dmg = (m_dmg[i] > m_dmg[i + 1]) ? m_dmg[i] : m_dmg[i + 1];
-		if (dmg > 0.01f)
-		{
-			ImU32 dc = IM_COL32(15, 8, 5, (int)(dmg * 210));
-			dl->AddQuadFilled(
-				ImVec2(x0, cyb - h0), ImVec2(x1, cyb - h1),
-				ImVec2(x1, cyb + h1), ImVec2(x0, cyb + h0), dc);
-		}
-	}
-
-	// 目標形状(剣)のゴースト輪郭。これに近づくように削る
-	ImU32 tcol = IM_COL32(120, 220, 255, 150);
-	for (int i = 0; i < SEG - 1; ++i)
-	{
-		float tx0 = left + (right - left) * (i / (float)(SEG - 1));
-		float tx1 = left + (right - left) * ((i + 1) / (float)(SEG - 1));
-		float t0 = baseHalf * m_target[i], t1 = baseHalf * m_target[i + 1];
-		dl->AddLine(ImVec2(tx0, cy - t0), ImVec2(tx1, cy - t1), tcol, 2.0f);
-		dl->AddLine(ImVec2(tx0, cy + t0), ImVec2(tx1, cy + t1), tcol, 2.0f);
-	}
-
-	// 過熱中は赤い警告枠を点滅させる(鋼が焼けている合図)
-	if (m_heat > OVERHEAT)
-	{
-		float p = 0.5f + 0.5f * sinf(m_time * 12.0f);
-		ImU32 wc = IM_COL32(255, 60, 40, (int)(110 + p * 130));
-		dl->AddRect(ImVec2(left - 50, cyb - 74), ImVec2(right + 50, cyb + 74), wc, 6.0f, 0, 4.0f);
-	}
-}
-
 //--- 温度ゲージ(HUD)
 void SceneForge::DrawHeatGauge()
 {
@@ -844,42 +853,6 @@ void SceneForge::DrawHeatGauge()
 	dl->AddText(ImVec2(x1 - 220, y - 22), stc, st);
 }
 
-//--- ハンマー・打撃カーソル・蓄力メーター・拍
-void SceneForge::DrawHammer()
-{
-	ImDrawList* dl = ImGui::GetForegroundDrawList();
-
-	const float left     = SCREEN_WIDTH * 0.25f;
-	const float right    = SCREEN_WIDTH * 0.75f;
-	const float cy       = SCREEN_HEIGHT * 0.50f;
-	const float baseHalf = 30.0f;
-
-	float x    = left + (right - left) * (m_strikeSeg / (float)(SEG - 1));
-	float topY = cy - baseHalf * m_th[m_strikeSeg];
-
-	// 打撃位置マーカー(下向き三角)
-	float my = topY - 14;
-	dl->AddTriangleFilled(ImVec2(x - 8, my - 14), ImVec2(x + 8, my - 14), ImVec2(x, my),
-		IM_COL32(255, 240, 180, 230));
-
-	// ハンマー(蓄力するほど高く持ち上がる)
-	float raise = 34.0f + m_charge * 70.0f;
-	float hy    = topY - raise;
-	dl->AddLine(ImVec2(x, hy), ImVec2(x, topY - 8), IM_COL32(120, 90, 60, 255), 4.0f);	// 柄
-	dl->AddRectFilled(ImVec2(x - 24, hy - 16), ImVec2(x + 24, hy + 8),
-		IM_COL32(95, 95, 105, 255), 3.0f);	// ハンマー頭
-
-	// 蓄力メーター
-	if (m_charging)
-	{
-		float bw = 70.0f, bx = x - bw * 0.5f, by = cy - baseHalf - 120.0f;
-		dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bw, by + 9), IM_COL32(40, 40, 40, 220), 2.0f);
-		ImU32 cc = (m_charge > 0.85f) ? IM_COL32(255, 220, 120, 255) : IM_COL32(255, 180, 70, 255);
-		dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bw * m_charge, by + 9), cc, 2.0f);
-	}
-	// 拍(リズム)は視覚では出さず、音で伝える予定(段階: 音響)
-}
-
 void SceneForge::DrawTitleUI()
 {
 	CenterText("- FORGE -",            0.34f, 3.0f, IM_COL32(255, 200, 120, 255));
@@ -894,7 +867,20 @@ void SceneForge::DrawPlayUI()
 	// 温度ゲージ
 	DrawHeatGauge();
 
-	// 照準は鉄条の光るセグメントで示す(クロスヘアは使わない)
+	// FPS準心: 画面中心に十字。鉄の上(照準有効)なら橙で光り、外れていれば暗い白。
+	{
+		ImDrawList* dl = ImGui::GetForegroundDrawList();
+		ImVec2 disp = ImGui::GetIO().DisplaySize;
+		float cx = disp.x * 0.5f, cy = disp.y * 0.5f;
+		float r = 12.0f, g = 4.0f;	// 半径と中央の隙間
+		ImU32 col = m_aimValid ? IM_COL32(255, 180, 70, 255) : IM_COL32(220, 220, 220, 130);
+		float th = m_aimValid ? 3.0f : 2.0f;
+		dl->AddLine(ImVec2(cx - r, cy), ImVec2(cx - g, cy), col, th);
+		dl->AddLine(ImVec2(cx + g, cy), ImVec2(cx + r, cy), col, th);
+		dl->AddLine(ImVec2(cx, cy - r), ImVec2(cx, cy - g), col, th);
+		dl->AddLine(ImVec2(cx, cy + g), ImVec2(cx, cy + r), col, th);
+		if (m_aimValid) dl->AddCircle(ImVec2(cx, cy), r + 3.0f, col, 0, 1.5f);
+	}
 
 	// 過熱の警告(点滅)
 	if (m_heat > OVERHEAT)
@@ -970,23 +956,88 @@ void SceneForge::ApplyCamera()
 	CameraBase* cam = GetObj<CameraBase>("Camera");
 	if (!cam) return;
 
-	// マウス位置に応じて注視点をわずかにずらし、視点を軽く揺らす
-	// (一人称の"生きてる"感。カーソルはロックせず自由なまま)
-	float nx = 0.0f, ny = 0.0f;
-	if (!DebugUI::IsVisible())	// F1(デバッグUI)を開いている間は視点を揺らさない
-	{
-		float mx, my, cw, ch; GetMouseClient(mx, my, cw, ch);
-		nx = (mx / cw - 0.5f) * 2.0f;	// -1(左) .. +1(右)
-		ny = (my / ch - 0.5f) * 2.0f;	// -1(上) .. +1(下)
-	}
-	XMFLOAT3 look = {
-		m_camLook[0] + nx * m_camSway,
-		m_camLook[1] - ny * m_camSway * 0.7f,
-		m_camLook[2],
-	};
+	// FPS式受限環視: 基準視線(m_camPos→m_camLook)を、マウス累積のyaw/pitchだけ回す。
+	// 準心は常に画面中心=カメラ正前方。yaw/pitchは UpdateMouseLook で夹住済み。
+	XMVECTOR pos  = XMVectorSet(m_camPos[0], m_camPos[1], m_camPos[2], 0);
+	XMVECTOR base = XMVectorSet(m_camLook[0], m_camLook[1], m_camLook[2], 0);
+	XMVECTOR fwd0 = XMVector3Normalize(XMVectorSubtract(base, pos));	// 基準の正前方
+
+	// yaw(世界Y軸回り) → pitch(カメラ右軸回り) の順に回す
+	XMMATRIX rotY = XMMatrixRotationY(m_lookYaw);
+	XMVECTOR fwd  = XMVector3TransformNormal(fwd0, rotY);
+	XMVECTOR right= XMVector3Normalize(XMVector3Cross(XMVectorSet(0,1,0,0), fwd));
+	XMMATRIX rotP = XMMatrixRotationAxis(right, m_lookPitch);
+	fwd = XMVector3Normalize(XMVector3TransformNormal(fwd, rotP));
+
+	XMStoreFloat3(&m_camFwd, fwd);	// 照準射線に使う
+	XMVECTOR look = XMVectorAdd(pos, fwd);
+
+	XMFLOAT3 lf; XMStoreFloat3(&lf, look);
 	cam->SetPos (XMFLOAT3(m_camPos[0], m_camPos[1], m_camPos[2]));
-	cam->SetLook(look);
+	cam->SetLook(lf);
 	cam->SetUp  (XMFLOAT3(0.0f, 1.0f, 0.0f));
+}
+
+//--- マウス移動を視角(yaw/pitch)へ累積する。FPS方式: 毎フレーム、カーソルを画面中心へ
+//    戻し(再センタリング)、その差分を回転量にする。範囲は板の周囲に夹住する。
+void SceneForge::UpdateMouseLook()
+{
+	HWND hwnd = GetActiveWindow();
+	if (!hwnd) return;
+	RECT rc; GetClientRect(hwnd, &rc);
+	POINT center = { (rc.right - rc.left) / 2, (rc.bottom - rc.top) / 2 };
+	POINT cp; GetCursorPos(&cp);
+	POINT cs = center; ClientToScreen(hwnd, &cs);	// 画面座標の中心
+	POINT co = center; // クライアント基準
+	// 現在のカーソルをクライアント座標へ
+	POINT cc = cp; ScreenToClient(hwnd, &cc);
+	float dx = (float)(cc.x - co.x);
+	float dy = (float)(cc.y - co.y);
+
+	const float SENS = 0.0026f;			// 感度(rad/px)
+	m_lookYaw   += dx * SENS;
+	m_lookPitch += dy * SENS;			// 下げると見下ろす(dyは下が正)
+	// 板の周囲に夹住(見失わないように)
+	const float YAW_LIM = 0.55f, PITCH_LIM = 0.40f;
+	if (m_lookYaw   >  YAW_LIM) m_lookYaw   =  YAW_LIM;
+	if (m_lookYaw   < -YAW_LIM) m_lookYaw   = -YAW_LIM;
+	if (m_lookPitch >  PITCH_LIM) m_lookPitch =  PITCH_LIM;
+	if (m_lookPitch < -PITCH_LIM) m_lookPitch = -PITCH_LIM;
+
+	SetCursorPos(cs.x, cs.y);			// 中心へ戻す(累積の基準を保つ)
+}
+
+//--- 画面中心の準心(=カメラ正前方 m_camFwd)から射線を飛ばし、板の上面(水平面)と交差させ、
+//    当たった点を長さ×幅のセル(m_aimI/J)に写す。準心が板の外なら m_aimValid=false。
+void SceneForge::UpdateAim()
+{
+	XMFLOAT3 o = { m_camPos[0], m_camPos[1], m_camPos[2] };
+	XMFLOAT3 d = m_camFwd;
+	// 板の上面を代表する水平面 y = planeY と交差
+	float planeY = m_barAnchor.y + m_hStart * 0.5f;
+	if (fabsf(d.y) < 1e-5f) { m_aimValid = false; return; }
+	float t = (planeY - o.y) / d.y;
+	if (t <= 0.0f) { m_aimValid = false; return; }	// 前方でない
+	float hx = o.x + d.x * t;
+	float hz = o.z + d.z * t;
+
+	// ワールド → セル(格子)。0..1に正規化してセル数を掛け、floorでどのブロックか判定。
+	float half = m_barLen * 0.5f;
+	float nj = (hx - (m_barAnchor.x - m_barWidth)) / (2.0f * m_barWidth);	// 0..1(幅)
+	float ni = (hz - (m_barAnchor.z - half)) / m_barLen;					// 0..1(長さ)
+	if (ni < 0.0f || ni >= 1.0f || nj < 0.0f || nj >= 1.0f)
+	{
+		m_aimValid = false; return;	// 板の外
+	}
+	m_aimI = (int)(ni * NL);
+	m_aimJ = (int)(nj * NW);
+	if (m_aimI < 0) m_aimI = 0; if (m_aimI > NL - 1) m_aimI = NL - 1;
+	if (m_aimJ < 0) m_aimJ = 0; if (m_aimJ > NW - 1) m_aimJ = NW - 1;
+	// 照準セルの中心のワールド座標(ハンマー配置に使う)
+	float cx = (m_barAnchor.x - m_barWidth) + 2.0f * m_barWidth * ((m_aimJ + 0.5f) / NW);
+	float cz = (m_barAnchor.z - half)       + m_barLen        * ((m_aimI + 0.5f) / NL);
+	m_aimWorld = XMFLOAT3(cx, m_barAnchor.y + m_h[m_aimI][m_aimJ], cz);
+	m_aimValid = true;
 }
 
 //--- Unity風ドラッグ配置: F1中に、選択プロップを地面(XZ)上でLMBドラッグ移動する。
@@ -1316,12 +1367,15 @@ void SceneForge::DrawCoalBed()
 void SceneForge::DrawWater()
 {
 	if (!m_waterOn || !m_coalMesh || !g_pPost) return;
-	CameraBase*   cam = GetObj<CameraBase>("Camera");
-	VertexShader* vs  = GetObj<VertexShader>("VS_Coal");	// pos/uv/col 共通VS
-	PixelShader*  ps  = GetObj<PixelShader>("PS_Water");
-	if (!cam || !vs || !ps) return;
+	CameraBase*   cam   = GetObj<CameraBase>("Camera");
+	VertexShader* vs    = GetObj<VertexShader>("VS_Coal");	// pos/uv/col 共通VS
+	PixelShader*  ps    = GetObj<PixelShader>("PS_Water");
+	DepthStencil* depth = GetObj<DepthStencil>("DSV");
+	RenderTarget* scene = g_pPost->GetSceneRT();
+	if (!cam || !vs || !ps || !depth || !scene) return;
 
-	// 背後のシーンをスナップショット(これを屈折元テクスチャとして使う)
+	// 背後のシーンをスナップショット(屈折元テクスチャ)。この時点で深度バッファには
+	// 金床・鉄条まで含めた全不透明シーンの深度が入っている=水深/遮蔽の判定に使える。
 	Texture* refr = g_pPost->CaptureScene();
 	if (!refr) return;
 
@@ -1336,19 +1390,29 @@ void SceneForge::DrawWater()
 	XMStoreFloat4x4(&mat[0], XMMatrixTranspose(world));
 	vs->WriteBuffer(0, mat);
 
-	// x=時間, y=画面幅, z=画面高さ, w=さざ波の強さ
-	XMFLOAT4 params(m_time, (float)refr->GetWidth(), (float)refr->GetHeight(), m_waterBump);
-	ps->WriteBuffer(0, &params);
+	// 深度を線形化する係数(A=proj._33, B=proj._43)。転置していない生の投影行列から取る。
+	XMFLOAT4X4 projNT = cam->GetProj(false);
+	XMFLOAT4 cb[2];
+	cb[0] = XMFLOAT4(m_time, (float)refr->GetWidth(), (float)refr->GetHeight(), m_waterBump);
+	cb[1] = XMFLOAT4(projNT._33, projNT._43, m_waterFoam, m_waterDepthFade);
+	ps->WriteBuffer(0, cb);
 
+	// 深度バッファをテクスチャとして読むため、一旦DSVをOMから外す(sceneRTだけ描画先に)。
+	// これで「同一リソースを深度書き込みとSRV読みに同時使用」する競合を避ける。
+	// 深度テストは無効化し、遮蔽は水PS側で深度を比較して discard で行う。
+	SetRenderTargets(1, &scene, nullptr);
 	SetBlendMode(BLEND_ALPHA);
-	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
+	SetDepthTest(DEPTH_DISABLE);
 	vs->Bind(); ps->Bind();
-	ps->SetTexture(0, refr);	// 屈折元=背後のシーン(Bindの後に設定)
+	ps->SetTexture(0, refr);		// t0 = 屈折元(背後のシーン)
+	ps->SetTexture(1, depth);		// t1 = シーン深度(R32_FLOAT)
 	m_coalMesh->Draw();
 
-	// 次フレームでRTとして使う前にSRVを外しておく(sceneRTの読み書き衝突を避ける)
-	ID3D11ShaderResourceView* pNull = nullptr;
-	GetContext()->PSSetShaderResources(0, 1, &pNull);
+	// SRVを外し、描画先を sceneRT + 深度に戻す(この後の余燼/火花が深度テストできるように)。
+	ID3D11ShaderResourceView* pNull[2] = { nullptr, nullptr };
+	GetContext()->PSSetShaderResources(0, 2, pNull);
+	SetRenderTargets(1, &scene, depth);
+	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
 }
 
 //--- 鍛冶素材の3Dモデルを描画(金床＋ハンマー)
@@ -1365,14 +1429,15 @@ void SceneForge::DrawHammer3D()
 	Model* hammer = GetObj<Model>("MdlHammer");
 	if (!hammer) return;
 
-	// 打撃セグメントの世界位置
-	int seg = m_strikeSeg;
-	float zc = m_barAnchor.z - m_barLen * 0.5f + m_barLen * (seg / (float)(SEG - 1));
-	float barTop = m_barAnchor.y + m_barThick * m_th[seg];
+	// 準心が当たっているセルの真上にハンマーを置く。準心が板の外に出ても、m_aimWorld/m_aimI/J は
+	// 最後に有効だった位置を保持している(UpdateAimは無効時に値を更新しない)ので、そのまま使う=
+	// 中央にリセットせずハンマーは最後の位置に留まる(操作の異様感を無くす)。
+	float wx = m_aimWorld.x, wz = m_aimWorld.z;
+	float barTop = m_barAnchor.y + m_h[m_aimI][m_aimJ];
 	XMFLOAT3 pos = {
-		m_barAnchor.x + m_hammerOff[0],
+		wx + m_hammerOff[0],
 		barTop + m_hammerLift + m_hammerOff[1],
-		zc + m_hammerOff[2],
+		wz + m_hammerOff[2],
 	};
 
 	XMMATRIX world =
@@ -1383,63 +1448,91 @@ void SceneForge::DrawHammer3D()
 	DrawModelWorld(hammer, world);
 }
 
-//--- m_th[] から3D鉄条の頂点を生成(両面。戻り値=頂点数)
+//--- 高さ場を「平滑な曲面」として描く(戻り値=頂点数)。
+//    玩法はセル単位(一锤一格+流動)だが、見た目は方块にならないよう、セル高さを
+//    格子の「角(corner)」で周囲セルの平均に均し、その角高さで連続面を張る=滑らか。
+//    色は熱色を高さで明暗変調し、照準セルに接する角を少しハイライト。周縁は薄いスカートで底へ閉じる。
 int SceneForge::BuildBarMesh()
 {
 	int v = 0;
 	const float half = m_barLen * 0.5f;
-	const float ax   = m_barAnchor.x;	// 砧面中心に合わせる
+	const float ax   = m_barAnchor.x;
 	const float az   = m_barAnchor.z;
-	const float cy   = m_barAnchor.y;
+	const float cy   = m_barAnchor.y;	// 板の底面(砧面)の高さ
 
-	auto tri = [&](const XMFLOAT3& a, const XMFLOAT3& b, const XMFLOAT3& c, const XMFLOAT4& col)
+	// 角(i,j) i=0..NL, j=0..NW の高さ = 周囲(最大4)セルの平均(=平滑化)
+	auto cornerH = [&](int i, int j) -> float
 	{
-		m_barVtx[v++] = { a, XMFLOAT2(0,0), col };
-		m_barVtx[v++] = { b, XMFLOAT2(0,0), col };
-		m_barVtx[v++] = { c, XMFLOAT2(0,0), col };
-	};
-	auto quad = [&](const XMFLOAT3& a, const XMFLOAT3& b, const XMFLOAT3& c, const XMFLOAT3& d, const XMFLOAT4& col)
-	{
-		tri(a, b, c, col); tri(a, c, d, col);	// 表
-		tri(a, c, b, col); tri(a, d, c, col);	// 裏(両面)
-	};
-
-	// 鉄条は Z 方向(奥行き)に伸びる。x=幅, y=厚み, z=長さ
-	const float w = m_barWidth;	// 半分の幅(X方向)
-	for (int i = 0; i < SEG - 1; ++i)
-	{
-		float z0 = az - half + m_barLen * (i       / (float)(SEG - 1));
-		float z1 = az - half + m_barLen * ((i + 1) / (float)(SEG - 1));
-		float y0 = m_barThick * m_th[i], y1 = m_barThick * m_th[i + 1];
-		XMFLOAT4 col = HeatRGB(m_heat, m_dmg[i]);
-
-		// 打撃位置(照準)のセグメントを明るくして見えるようにする
-		if (abs(i - m_strikeSeg) <= 1)
+		float s = 0.0f; int n = 0;
+		for (int di = -1; di <= 0; ++di)
+		for (int dj = -1; dj <= 0; ++dj)
 		{
-			col.x = (col.x + 0.4f > 1.0f) ? 1.0f : col.x + 0.4f;
-			col.y = (col.y + 0.4f > 1.0f) ? 1.0f : col.y + 0.4f;
-			col.z = (col.z + 0.4f > 1.0f) ? 1.0f : col.z + 0.4f;
+			int ci = i + di, cj = j + dj;
+			if (ci < 0 || ci >= NL || cj < 0 || cj >= NW) continue;
+			s += m_h[ci][cj]; ++n;
 		}
-
-		XMFLOAT3 a_tL = { ax - w, cy + y0, z0 }, a_tR = { ax + w, cy + y0, z0 };
-		XMFLOAT3 a_bL = { ax - w, cy - y0, z0 }, a_bR = { ax + w, cy - y0, z0 };
-		XMFLOAT3 b_tL = { ax - w, cy + y1, z1 }, b_tR = { ax + w, cy + y1, z1 };
-		XMFLOAT3 b_bL = { ax - w, cy - y1, z1 }, b_bR = { ax + w, cy - y1, z1 };
-
-		quad(a_tL, a_tR, b_tR, b_tL, col);	// 上面
-		quad(a_bR, a_bL, b_bL, b_bR, col);	// 下面
-		quad(a_tR, a_bR, b_bR, b_tR, col);	// 右(X+)
-		quad(a_bL, a_tL, b_tL, b_bL, col);	// 左(X-)
-	}
-	// 端の蓋
+		return (n > 0) ? s / n : 0.0f;
+	};
+	auto CP = [&](int i, int j) -> XMFLOAT3
 	{
-		float y = m_barThick * m_th[0]; float zc = az - half; XMFLOAT4 c = HeatRGB(m_heat, m_dmg[0]);
-		quad({ ax - w,cy + y,zc }, { ax + w,cy + y,zc }, { ax + w,cy - y,zc }, { ax - w,cy - y,zc }, c);
-	}
+		float z = az - half + m_barLen * (i / (float)NL);
+		float x = ax - m_barWidth + 2.0f * m_barWidth * (j / (float)NW);
+		return XMFLOAT3(x, cy + cornerH(i, j), z);
+	};
+	auto CC = [&](int i, int j) -> XMFLOAT4
 	{
-		float y = m_barThick * m_th[SEG - 1]; float zc = az + half; XMFLOAT4 c = HeatRGB(m_heat, m_dmg[SEG - 1]);
-		quad({ ax - w,cy + y,zc }, { ax + w,cy + y,zc }, { ax + w,cy - y,zc }, { ax - w,cy - y,zc }, c);
+		float h = cornerH(i, j);
+		float dmg = 0.0f;
+		for (int di = -1; di <= 0; ++di)
+		for (int dj = -1; dj <= 0; ++dj)
+		{
+			int ci = i + di, cj = j + dj;
+			if (ci < 0 || ci >= NL || cj < 0 || cj >= NW) continue;
+			if (m_dmgF[ci][cj] > dmg) dmg = m_dmgF[ci][cj];
+		}
+		XMFLOAT4 c = HeatRGB(m_heat, dmg);
+		float norm = h / m_hStart;
+		if (norm < 0.0f) norm = 0.0f; if (norm > 1.0f) norm = 1.0f;
+		float b = 0.26f + 0.74f * norm;
+		c.x *= b; c.y *= b; c.z *= b;
+		if (m_aimValid && (i == m_aimI || i == m_aimI + 1) && (j == m_aimJ || j == m_aimJ + 1))
+		{
+			c.x = (c.x + 0.35f > 1) ? 1 : c.x + 0.35f;
+			c.y = (c.y + 0.35f > 1) ? 1 : c.y + 0.35f;
+			c.z = (c.z + 0.35f > 1) ? 1 : c.z + 0.35f;
+		}
+		return c;
+	};
+	auto tri = [&](const XMFLOAT3& a, const XMFLOAT3& b, const XMFLOAT3& c,
+	               const XMFLOAT4& ca, const XMFLOAT4& cb, const XMFLOAT4& cc)
+	{
+		m_barVtx[v++] = { a, XMFLOAT2(0,0), ca };
+		m_barVtx[v++] = { b, XMFLOAT2(0,0), cb };
+		m_barVtx[v++] = { c, XMFLOAT2(0,0), cc };
+	};
+
+	// 上面(平滑面): 角格子で連続。両面描画。
+	for (int i = 0; i < NL; ++i)
+	for (int j = 0; j < NW; ++j)
+	{
+		XMFLOAT3 p00 = CP(i, j),     p10 = CP(i + 1, j);
+		XMFLOAT3 p01 = CP(i, j + 1), p11 = CP(i + 1, j + 1);
+		XMFLOAT4 c00 = CC(i, j),     c10 = CC(i + 1, j);
+		XMFLOAT4 c01 = CC(i, j + 1), c11 = CC(i + 1, j + 1);
+		tri(p00, p01, p11, c00, c01, c11); tri(p00, p11, p10, c00, c11, c10);
+		tri(p00, p11, p01, c00, c11, c01); tri(p00, p10, p11, c00, c10, c11);
 	}
+	// 周縁スカート: 外周の角から底面(cy)へ薄い壁を張り、横から見て開かないように閉じる
+	auto skirt = [&](int i0, int j0, int i1, int j1)
+	{
+		XMFLOAT3 a = CP(i0, j0), b = CP(i1, j1);
+		XMFLOAT3 a0 = { a.x, cy, a.z }, b0 = { b.x, cy, b.z };
+		XMFLOAT4 ca = CC(i0, j0), cb = CC(i1, j1);
+		tri(a, b, b0, ca, cb, cb); tri(a, b0, a0, ca, cb, ca);
+		tri(a, b0, b, ca, cb, cb); tri(a, a0, b0, ca, ca, cb);	// 両面
+	};
+	for (int i = 0; i < NL; ++i) { skirt(i, 0, i + 1, 0); skirt(i, NW, i + 1, NW); }
+	for (int j = 0; j < NW; ++j) { skirt(0, j, 0, j + 1); skirt(NL, j, NL, j + 1); }
 	return v;
 }
 
@@ -1465,11 +1558,106 @@ void SceneForge::Draw3DBillet()
 	m_barMesh->Draw(n);
 }
 
+#if 0	// 旧: 半透明ゴースト輪郭(P0の初期案)。KCD式「注定成形」に切替えたため未使用。
+//--- m_target[] から半透明ゴースト目標の頂点を生成(戻り値=頂点数)。
+//    実体の鉄条(BuildBarMesh)と同じ箱の作り方だが、太さは目標プロファイル、
+//    色は「逐段フィードバック」= まだ厚すぎる段は赤、合致した段は緑、削りすぎは青。
+//    見やすさのため目標より少しだけ膨らませて外殻の輪郭にする。
+int SceneForge::BuildGhostMesh()
+{
+	int v = 0;
+	const float half = m_barLen * 0.5f;
+	const float ax   = m_barAnchor.x;
+	const float az   = m_barAnchor.z;
+	const float cy   = m_barAnchor.y;
+	const float inflate = 1.04f;	// 目標をわずかに包む外殻
+
+	auto tri = [&](const XMFLOAT3& a, const XMFLOAT3& b, const XMFLOAT3& c, const XMFLOAT4& col)
+	{
+		m_ghostVtx[v++] = { a, XMFLOAT2(0,0), col };
+		m_ghostVtx[v++] = { b, XMFLOAT2(0,0), col };
+		m_ghostVtx[v++] = { c, XMFLOAT2(0,0), col };
+	};
+	auto quad = [&](const XMFLOAT3& a, const XMFLOAT3& b, const XMFLOAT3& c, const XMFLOAT3& d, const XMFLOAT4& col)
+	{
+		tri(a, b, c, col); tri(a, c, d, col);
+		tri(a, c, b, col); tri(a, d, c, col);
+	};
+
+	// 段ごとの誤差から色を決める(diff>0=まだ厚い/削りが足りない, diff<0=削りすぎ)
+	auto segColor = [&](int i) -> XMFLOAT4
+	{
+		float diff = m_th[i] - m_target[i];
+		const float tol = 0.06f;	// この範囲内なら合致とみなす
+		XMFLOAT4 c;
+		if (diff > tol)      c = XMFLOAT4(1.0f, 0.35f, 0.25f, 0.30f);	// 赤: もっと叩く
+		else if (diff < -tol)c = XMFLOAT4(0.35f, 0.55f, 1.0f, 0.30f);	// 青: 叩きすぎ
+		else                 c = XMFLOAT4(0.40f, 1.0f, 0.45f, 0.34f);	// 緑: OK
+		return c;
+	};
+
+	const float w = m_barWidth * inflate;
+	for (int i = 0; i < SEG - 1; ++i)
+	{
+		float z0 = az - half + m_barLen * (i       / (float)(SEG - 1));
+		float z1 = az - half + m_barLen * ((i + 1) / (float)(SEG - 1));
+		float y0 = m_barThick * m_target[i]     * inflate;
+		float y1 = m_barThick * m_target[i + 1] * inflate;
+		XMFLOAT4 col = segColor(i);
+
+		XMFLOAT3 a_tL = { ax - w, cy + y0, z0 }, a_tR = { ax + w, cy + y0, z0 };
+		XMFLOAT3 a_bL = { ax - w, cy - y0, z0 }, a_bR = { ax + w, cy - y0, z0 };
+		XMFLOAT3 b_tL = { ax - w, cy + y1, z1 }, b_tR = { ax + w, cy + y1, z1 };
+		XMFLOAT3 b_bL = { ax - w, cy - y1, z1 }, b_bR = { ax + w, cy - y1, z1 };
+
+		quad(a_tL, a_tR, b_tR, b_tL, col);
+		quad(a_bR, a_bL, b_bL, b_bR, col);
+		quad(a_tR, a_bR, b_bR, b_tR, col);
+		quad(a_bL, a_tL, b_tL, b_bL, col);
+	}
+	// 端の蓋
+	{
+		float y = m_barThick * m_target[0] * inflate; float zc = az - half; XMFLOAT4 c = segColor(0);
+		quad({ ax - w,cy + y,zc }, { ax + w,cy + y,zc }, { ax + w,cy - y,zc }, { ax - w,cy - y,zc }, c);
+	}
+	{
+		float y = m_barThick * m_target[SEG - 1] * inflate; float zc = az + half; XMFLOAT4 c = segColor(SEG - 1);
+		quad({ ax - w,cy + y,zc }, { ax + w,cy + y,zc }, { ax + w,cy - y,zc }, { ax - w,cy - y,zc }, c);
+	}
+	return v;
+}
+
+//--- 半透明の目標剣形を実体の鉄条に重ねて描く(P0)。
+//    深度テストOFF(DEPTH_DISABLE)でX線オーバーレイにし、太い実体の中に埋もれた
+//    目標も透けて見えるようにする。段ごとの色で厚すぎ/薄すぎが一目で分かる。
+void SceneForge::DrawGhostTarget()
+{
+	CameraBase*   cam = GetObj<CameraBase>("Camera");
+	VertexShader* vs  = GetObj<VertexShader>("VS_Bar");
+	PixelShader*  ps  = GetObj<PixelShader>("PS_Bar");
+	if (!cam || !vs || !ps || !m_ghostMesh) return;
+
+	XMFLOAT4X4 cb[2] = { cam->GetView(), cam->GetProj() };
+	vs->WriteBuffer(0, cb);
+
+	int n = BuildGhostMesh();
+	if (n <= 0) return;
+	m_ghostMesh->Write(m_ghostVtx.data());
+
+	SetBlendMode(BLEND_ALPHA);
+	SetDepthTest(DEPTH_DISABLE);	// 実体に埋もれても透けて見えるX線オーバーレイ
+	vs->Bind();
+	ps->Bind();
+	m_ghostMesh->Draw(n);
+	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);	// 後続の描画のため元に戻す
+}
+#endif
+
 void SceneForge::Draw()
 {
 	ApplyCamera();	// 固定カメラを適用(GetViewの前に)
 	DrawModelsTest();	// 先に不透明な3Dモデル(金床)を描く
-	Draw3DBillet();		// 3Dの光る鉄条
+	Draw3DBillet();		// 3Dの光る鉄条(成形中の武器そのものが見える)
 	DrawWater();		// 水槽の水面(屈折。背後のシーンを撮ってから描く=不透明の後)
 	if (DebugUI::IsVisible()) DrawDebugBoxes();	// F1中はAABB/箱を線で表示
 

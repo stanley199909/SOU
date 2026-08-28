@@ -33,6 +33,10 @@ public:
 	// bind on the water pixel shader. The scene RT stays bound as render target.
 	Texture* CaptureScene();
 
+	// The offscreen scene render target (so the water pass can re-bind it while
+	// temporarily unbinding the depth buffer to sample it as a texture).
+	RenderTarget* GetSceneRT() { return &m_sceneRT; }
+
 	// 画面下部などに出したい時用(現在の状態文字列)
 	int  GetCurrent() const { return m_current; }
 	bool IsSplit()    const { return m_split; }

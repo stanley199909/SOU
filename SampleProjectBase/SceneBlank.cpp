@@ -10,12 +10,16 @@
 #include "MeshBuffer.h"
 #include "Input.h"
 #include "imgui/imgui.h"
+#include "PostProcess.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
 
 using namespace DirectX;
 using namespace DirectX::SimpleMath;
+
+// 水面の屈折/深度用に、シーンのスナップショットを撮る PostProcess を参照(Mainのグローバル)
+extern std::shared_ptr<PostProcess> g_pPost;
 
 static float frand()               { return (float)rand() / (float)RAND_MAX; }
 static float frand(float a, float b){ return a + (b - a) * frand(); }
@@ -443,11 +447,18 @@ void SceneBlank::DrawCoalBed()
 //--- water surface for the trough: procedural moving water (PS_Water), not a flat texture
 void SceneBlank::DrawWater()
 {
-	if (!m_waterOn || !m_coalMesh) return;
-	CameraBase*   cam = GetObj<CameraBase>("Camera");
-	VertexShader* vs  = GetObj<VertexShader>("StCoalVS");	// generic pos/uv/col VS
-	PixelShader*  ps  = GetObj<PixelShader>("StWaterPS");	// PS_Water: animated ripples
-	if (!cam || !vs || !ps) return;
+	if (!m_waterOn || !m_coalMesh || !g_pPost) return;
+	CameraBase*   cam   = GetObj<CameraBase>("Camera");
+	VertexShader* vs    = GetObj<VertexShader>("StCoalVS");	// generic pos/uv/col VS
+	PixelShader*  ps    = GetObj<PixelShader>("StWaterPS");	// PS_Water: refraction + depth
+	DepthStencil* depth = GetObj<DepthStencil>("DSV");
+	RenderTarget* scene = g_pPost->GetSceneRT();
+	if (!cam || !vs || !ps || !depth || !scene) return;
+
+	// Snapshot the opaque scene (refraction source); depth buffer holds scene depth.
+	Texture* refr = g_pPost->CaptureScene();
+	if (!refr) return;
+
 	XMMATRIX world =
 		XMMatrixScaling(m_waterSize[0], 1.0f, m_waterSize[1]) *
 		XMMatrixRotationY(m_waterYaw) *
@@ -456,12 +467,27 @@ void SceneBlank::DrawWater()
 	mat[1] = cam->GetView(); mat[2] = cam->GetProj();
 	XMStoreFloat4x4(&mat[0], XMMatrixTranspose(world));
 	vs->WriteBuffer(0, mat);
-	XMFLOAT4 params(m_time, 0.0f, 0.0f, 0.0f);	// params.x = time -> drives the ripples
-	ps->WriteBuffer(0, &params);
+
+	XMFLOAT4X4 projNT = cam->GetProj(false);
+	XMFLOAT4 cb[2];
+	cb[0] = XMFLOAT4(m_time, (float)refr->GetWidth(), (float)refr->GetHeight(), 1.0f);
+	cb[1] = XMFLOAT4(projNT._33, projNT._43, 0.06f, 0.35f);	// A, B, foam, depthFade
+	ps->WriteBuffer(0, cb);
+
+	// Unbind the depth buffer from OM so we can read it as a texture; occlusion is
+	// done in the water PS via depth compare + discard (same as the game scene).
+	SetRenderTargets(1, &scene, nullptr);
 	SetBlendMode(BLEND_ALPHA);
-	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
+	SetDepthTest(DEPTH_DISABLE);
 	vs->Bind(); ps->Bind();
+	ps->SetTexture(0, refr);	// t0 = scene behind (refraction)
+	ps->SetTexture(1, depth);	// t1 = scene depth
 	m_coalMesh->Draw();
+
+	ID3D11ShaderResourceView* pNull[2] = { nullptr, nullptr };
+	GetContext()->PSSetShaderResources(0, 2, pNull);
+	SetRenderTargets(1, &scene, depth);
+	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
 }
 
 void SceneBlank::DrawScenery()

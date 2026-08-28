@@ -1,28 +1,32 @@
-// Refractive water for the quench trough.
+// Depth-aware refractive water for the quench trough.
 //
-// Real-water look on the cheap: we snapshot the scene rendered behind the water
-// (PostProcess::CaptureScene -> t0), then SEE THROUGH the surface by sampling
-// that scene with screen UVs perturbed by the water's wave normal. On top of the
-// refracted image we add a bluish depth-absorption tint, a fresnel rim that
-// reflects a pale sky colour, and a moving sun glint. No reflection pass, no
-// raymarch -> friendly to an integrated GPU, but it now reads as a body of water
-// you can look INTO rather than a flat blue decal.
+// This is how real games (Genshin/Wuthering Waves style) make water read as a
+// body contained in something -- NOT fluid simulation, but a surface shader that
+// reads the scene DEPTH behind it:
+//   * refraction : sample the scene snapshot, offset by the wave normal (see-through)
+//   * water depth: distance from the water surface to whatever is behind it, from
+//                  the depth buffer -> deep water is richer/opaquer, shallow is clear
+//   * shore foam : a bright line where the water meets geometry (depth ~ 0). This is
+//                  what makes the water look like it FILLS the trough and hugs walls.
+//   * occlusion  : anything closer than the water (the near rim wall) clips it away,
+//                  so a plane bigger than the opening is auto-trimmed to the basin.
+//   * fresnel/glint: sky reflection at grazing angles + a moving sun highlight.
 Texture2D    sceneTex : register(t0);   // scene behind the water (refraction source)
+Texture2D    depthTex : register(t1);   // scene depth (R32_FLOAT view of the DSV)
 SamplerState samp     : register(s0);
 
 cbuffer WaterCB : register(b0)
 {
-    float4 params;   // x = time (s), y = screen width, z = screen height, w = bump strength
+    float4 params;    // x = time (s), y = screen W, z = screen H, w = bump strength
+    float4 params2;   // x = proj._33 (A), y = proj._43 (B), z = foam thickness, w = depth fade
 };
 
 struct PS_IN
 {
-    float4 pos : SV_POSITION;   // pixel position -> screen UV for refraction
+    float4 pos : SV_POSITION;   // .xy = pixel pos (screen UV), .z = this pixel's NDC depth
     float2 uv  : TEXCOORD0;     // surface UV -> drives the ripples
 };
 
-// Sum of moving sine waves -> a ripple height field. Mixed directions/speeds
-// make the interference look organic; "+ t*speed" scrolls each layer.
 float waveH(float2 p, float t)
 {
     float h  =        sin(dot(p, float2( 6.0,  4.0)) + t * 1.5);
@@ -32,67 +36,79 @@ float waveH(float2 p, float t)
     return h;
 }
 
+// NDC depth (0..1) -> linear eye-space Z, from the projection coefficients.
+// clip.z = viewZ*A + B, clip.w = viewZ  =>  ndcZ = A + B/viewZ  =>  viewZ = B/(ndcZ - A)
+float LinearEyeZ(float ndcZ, float A, float B)
+{
+    return B / (ndcZ - A);
+}
+
 float4 main(PS_IN pin) : SV_TARGET
 {
     float  t    = params.x;
     float2 res  = float2(params.y, params.z);
     float  bump = (params.w > 0.0001) ? params.w : 1.0;
+    float  A    = params2.x;
+    float  B    = params2.y;
+    float  foamDist  = (params2.z > 0.0001) ? params2.z : 0.06;   // eye-units of foam band
+    float  depthFade = (params2.w > 0.0001) ? params2.w : 0.35;   // eye-units to full colour
 
-    float2 quv = pin.uv;                     // raw 0..1 across the surface (for depth)
-    float2 uv  = quv * float2(4.0, 2.0);      // stretch ripples along the long trough
+    float2 uv = pin.uv * float2(4.0, 2.0);   // stretch ripples along the long trough
 
-    // --- Fake water DEPTH from the surface UV --------------------------------
-    // The trough is a simple basin, so "how far a point is from the rim" is a good
-    // stand-in for water depth: deep in the middle, shallow at the edges. This is
-    // what turns a flat sheet into a body of water CONTAINED in the trough,
-    // without needing to read the depth buffer.
-    float2 d2   = min(quv, 1.0 - quv);        // distance to nearest edge (0 at rim)
-    float  edge = min(d2.x, d2.y);            // 0 at rim -> 0.5 at center
-    float  depth = saturate(edge / 0.18);     // 0 shallow rim .. 1 deep interior
-    float  rim   = 1.0 - depth;               // strong near the container walls
-
-    // Height field + surface normal from finite differences (the slope).
-    // Ripples fade out near the rim (water is calmer where it meets the wall).
+    // Wave normal from a small height field (finite differences).
     float e  = 0.01;
     float h  = waveH(uv,                t);
     float hx = waveH(uv + float2(e, 0), t);
     float hy = waveH(uv + float2(0, e), t);
     float2 grad = float2(hx - h, hy - h) / e;
-    float  waveAmp = 0.06 * bump * (0.3 + 0.7 * depth);
-    float3 n = normalize(float3(-grad * waveAmp, 1.0));   // wave normal
+    float3 n = normalize(float3(-grad * 0.06 * bump, 1.0));
 
-    // --- Refraction: sample the scene behind, offset by the wave slope --------
-    // Shallow water (rim) barely distorts; deep water distorts more.
     float2 screenUV = pin.pos.xy / res;
-    float2 refrUV   = screenUV + n.xy * 0.03 * bump * depth;
+
+    // --- Water thickness from the depth buffer -------------------------------
+    float sceneNdc = depthTex.Sample(samp, screenUV).r;   // depth of what's behind
+    float zScene   = LinearEyeZ(sceneNdc, A, B);
+    float zWater   = LinearEyeZ(pin.pos.z, A, B);
+    float thick    = zScene - zWater;    // >0: water over floor.  <=0: object in front
+
+    // Occlusion: something is in front of the water surface here -> not water.
+    if (thick <= 0.0) discard;
+
+    float depth01 = saturate(thick / depthFade);   // 0 at shore .. 1 deep
+
+    // --- Refraction (deeper water bends more; shore barely bends) -------------
+    float2 refrUV = screenUV + n.xy * 0.03 * bump * saturate(depth01 + 0.15);
     refrUV = clamp(refrUV, 0.001, 0.999);
+    // Don't pull colour from in front of the water (halo guard): if the refracted
+    // sample is actually closer than the water, fall back to the straight sample.
+    float refrNdc = depthTex.Sample(samp, refrUV).r;
+    if (LinearEyeZ(refrNdc, A, B) < zWater) refrUV = screenUV;
     float3 behind = sceneTex.Sample(samp, refrUV).rgb;
 
-    // --- Depth absorption (Beer-Lambert-ish): deeper water = more colour, less
-    // see-through. Rim stays clear so you can see the wall/lip of the trough. ---
-    float3 shallowTint = float3(0.20, 0.42, 0.48);
-    float3 deepTint    = float3(0.03, 0.14, 0.24);
-    float3 waterCol = lerp(shallowTint, deepTint, depth);
-    float  absorb   = saturate(0.25 + 0.65 * depth);      // clear rim -> opaque core
+    // --- Depth absorption: clear at the shore, rich blue in the deep ----------
+    float3 shallowTint = float3(0.16, 0.40, 0.46);
+    float3 deepTint    = float3(0.02, 0.12, 0.22);
+    float3 waterCol = lerp(shallowTint, deepTint, depth01);
+    float  absorb   = saturate(0.15 + 0.75 * depth01);
     float3 col = lerp(behind, waterCol, absorb);
 
-    // --- Soft edge line where the water meets the container wall (meniscus) ----
-    float foam = smoothstep(0.9, 1.0, rim);               // only the last sliver
-    col = lerp(col, float3(0.55, 0.62, 0.65), foam * 0.35);
+    // --- Shore foam: bright band where water meets geometry (thin thickness) ---
+    float foam = 1.0 - saturate(thick / foamDist);
+    foam = foam * foam;                                   // tighten to a line
+    col = lerp(col, float3(0.85, 0.9, 0.95), foam * 0.6);
 
-    // --- Fresnel: grazing angles reflect the sky, head-on stays transparent ---
+    // --- Fresnel sky reflection + moving sun glint ----------------------------
     float  fres = pow(1.0 - saturate(n.z), 3.0);
     float3 sky  = float3(0.55, 0.68, 0.80);
-    col = lerp(col, sky, saturate(fres * 0.9));
+    col = lerp(col, sky, saturate(fres * 0.8));
 
-    // --- Moving sun glint (Blinn-Phong highlight on the wave normal) ----------
     float3 L = normalize(float3(0.35, 0.75, 0.55));
-    float3 V = float3(0.0, 1.0, 0.0);          // fixed top-down-ish view
+    float3 V = float3(0.0, 1.0, 0.0);
     float3 Hh = normalize(L + V);
-    float  spec = pow(saturate(dot(n, Hh)), 90.0) * depth;   // no glare on the rim
+    float  spec = pow(saturate(dot(n, Hh)), 90.0) * saturate(depth01 + 0.2);
     col += spec * 1.4;
 
-    // Edge is more transparent (see the lip through it), interior is fuller.
-    float alpha = lerp(0.55, 0.97, depth);
+    // Thin water (shore) is more transparent; deep water and foam are opaque.
+    float alpha = max(saturate(0.45 + 0.55 * depth01), foam);
     return float4(col, alpha);
 }
