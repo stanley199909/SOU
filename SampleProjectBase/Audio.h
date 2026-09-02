@@ -12,6 +12,7 @@ namespace Audio
 		SE_HAMMER,	// 打撃の「カン」(合成音フォールバック)
 		SE_COLD,	// 冷打の鈍い「ドン」
 		SE_SIZZLE,	// 過熱の「ジュー」
+		SE_SWING,	// 空振り(鉄に当たらなかった)の「ヒュッ」
 		SE_ANVIL1,	// 金床打撃1(実音源)。打撃ごとに1→2→1→2で交互再生
 		SE_ANVIL2,	// 金床打撃2(実音源)
 		BGM_MAIN,	// BGM(常時ループ)

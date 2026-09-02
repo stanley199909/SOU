@@ -159,6 +159,18 @@ namespace
 			}
 			break;
 		}
+		case Audio::SE_SWING:
+		{
+			int n = sr * 18 / 100;	// 0.18s の「ヒュッ」(空を切る音=帯域ノイズが立ち上がって減衰)
+			w.resize(n);
+			for (int i = 0; i < n; ++i)
+			{
+				float t = (float)i / sr;
+				float env = (1.0f - expf(-t * 60.0f)) * expf(-t * 18.0f);	// 素早く立ち上がり素早く減衰
+				w[i] = noise() * 0.22f * env;
+			}
+			break;
+		}
 		default: break;
 		}
 		ToPCM16(w, s.data);
@@ -188,6 +200,7 @@ namespace Audio
 			"Assets/Sound/hammer.wav",
 			"Assets/Sound/cold.wav",
 			"Assets/Sound/sizzle.wav",
+			"Assets/Sound/swing.wav",			// SE_SWING(無ければ合成音)
 			"Assets/Sound/SE/anvil_hit_1.wav",	// SE_ANVIL1
 			"Assets/Sound/SE/anvil_hit_2.wav",	// SE_ANVIL2
 			"Assets/Sound/BGM/Factory.wav",		// BGM_MAIN

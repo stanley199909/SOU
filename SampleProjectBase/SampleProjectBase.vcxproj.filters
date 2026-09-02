@@ -150,6 +150,9 @@
     <ClCompile Include="SceneForge.cpp">
       <Filter>ソース ファイル\App\Scene</Filter>
     </ClCompile>
+    <ClCompile Include="AimSystem.cpp">
+      <Filter>ソース ファイル\App\Scene</Filter>
+    </ClCompile>
     <ClCompile Include="DebugUI.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
@@ -273,6 +276,9 @@
       <Filter>ヘッダー ファイル\App\Scene</Filter>
     </ClInclude>
     <ClInclude Include="SceneForge.h">
+      <Filter>ヘッダー ファイル\App\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="AimSystem.h">
       <Filter>ヘッダー ファイル\App\Scene</Filter>
     </ClInclude>
     <ClInclude Include="DebugUI.h">

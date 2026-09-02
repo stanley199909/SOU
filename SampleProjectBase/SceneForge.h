@@ -32,7 +32,8 @@ private:
 	{
 		GAME_TITLE,		// タイトル画面
 		GAME_PLAY,		// 鍛造中
-		GAME_RESULT,	// 結果表示
+		GAME_RESULT,	// 結果表示(成功)
+		GAME_OVER,		// 廃件(失敗)
 	};
 
 	struct Spark
@@ -61,15 +62,27 @@ private:
 	void UpdateTitle(float tick);
 	void UpdatePlay(float tick);
 	void UpdateResult(float tick);
+	void UpdateGameOver(float tick);
 
 	//--- 状態ごとのUI
 	void DrawTitleUI();
 	void DrawPlayUI();
 	void DrawResultUI();
+	void DrawGameOverUI();
 
 	//--- ゲーム進行
 	void StartGame();	// タイトル → 鍛造開始
-	void FinishGame();	// 鍛造完了 → 結果へ
+	void FinishGame();	// 鍛造完了 → 結果へ(成功)
+	void GameOverGame();// 廃件 → GameOverへ(失敗)
+
+	//--- 廃件槽(失误で満ちると失敗)。KCD式: 「叩く場所」は指示しない。誤打だけ負向で知らせる。
+	//    廃件率 = 不可逆。良い打撃でも減らない。満(1.0)で武器が廃棄=GameOver。
+	float m_spoil   = 0.0f;			// 廃件率 0..1(過熱/冷打/完成済みの段を叩く=無用打撃で増える。減らない)
+	static constexpr float SPOIL_BURN  = 0.10f;	// 過熱打(焼け)      … 1打で+10%
+	static constexpr float SPOIL_COLD  = 0.05f;	// 冷打(赤くない鋼)  … 1打で+5%(開始時は冷たいので軽め)
+	static constexpr float SPOIL_WASTE = 0.08f;	// 無用打撃(完成段をまた叩く) … 1打で+8%
+	// 瞄準区域の可視化(デバッグ用)。既定OFF。Pキーでトグル。
+	bool  m_showAimHi = false;
 
 	//--- 鍛造(鉄塊)
 	void  BuildTarget();		// 目標形状(剣)を生成
@@ -150,8 +163,8 @@ private:
 	float m_mYaw    = 0.0f;
 
 	//--- ゲーム用固定カメラ(KCD風の見下ろし)
-	float m_camPos[3]  = { 0.0f, 3.4f, -1.6f };	// 頭の高さから見下ろす(やや急角度)
-	float m_camLook[3] = { 0.0f, 1.4f,  0.2f };	// 金床の上面(鉄条)を見る
+	float m_camPos[3]  = { 0.0f, 3.20f, -2.20f };	// KCD風の3/4斜視。厚薄が見え、照準も素直
+	float m_camLook[3] = { 0.0f, 1.85f,  0.15f };	// 砧面(工件)を斜め上から見る
 	float m_camSway    = 0.30f;					// マウスに応じた視点の揺れ幅
 	bool  m_cursorShown = true;					// OSカーソルの表示状態(PLAY中は隠す)
 
@@ -160,6 +173,35 @@ private:
 	float m_coolRate    = 0.03f;	// 自然冷却速度(/秒)
 	float m_aimTop      = 0.12f;	// 鉄条が画面に映る上端(高さ割合)。照準の対応範囲
 	float m_aimBottom   = 0.82f;	// 鉄条が画面に映る下端(高さ割合)
+
+	//--- 武器モーフ(Blenderで作った同拓扑の各段FBXを頂点補間して成形する) ---
+	struct WpVtx { DirectX::XMFLOAT3 pos; DirectX::XMFLOAT3 nrm; DirectX::XMFLOAT4 col; };
+	struct WpStage { std::vector<DirectX::XMFLOAT3> pos, nrm; };	// 1段分の生頂点(ローカル)
+	std::vector<WpStage>        m_wpStage;		// stage_0 .. stage_final
+	std::vector<unsigned int>   m_wpIdx;		// インデックス(全段共通)
+	std::vector<WpVtx>          m_wpVtx;		// 補間後の頂点(毎フレーム再構築)
+	std::shared_ptr<MeshBuffer> m_wpMesh;
+	int   m_wpN = 0;							// 1段の頂点数
+	bool  m_wpOk = false;						// 読み込み成功&段間で頂点数一致
+	float m_forgeProg = 0.0f;					// 全体進捗 0..1(=各区域の平均。F1のプレビュー用)
+	//--- 分区域進度: 刀身を長手方向に NSEG 分割し、各区域を独立に成形する(KCDの指示に従う核心)。
+	//    各区域は stage_0 位置 → stage_final 位置へ、その区域の進度で個別に頂点補間される。
+	//    ある区域が到位(~1.0)後にまた叩く=無用打撃→廃件率↑。全区域到位で完成。
+	static const int NSEG = 5;
+	float m_segProg[NSEG] = {};					// 各区域の成形進捗 0..1
+	static constexpr float SEG_DONE = 0.98f;	// この値以上で「その区域は完成」とみなす
+	int   m_aimSeg = 0;							// 現在照準している区域(AimSystemが更新)
+	// 照準している区域番号。AimSystem(射線×区域ボックス)が決めた値をそのまま返す。
+	int   AimSeg() const { return m_aimSeg; }
+	DirectX::XMFLOAT3 m_wpMin = { 0,0,0 }, m_wpMax = { 0,0,0 };	// stage0のローカルAABB(配置用)
+	//--- 配置調整(F1スライダ。向き/大きさをここで合わせて焼き込む)
+	float m_wpScale = 1.0f;						// 追加スケール倍率(AABBフィットにさらに掛ける)
+	float m_wpYaw = 1.5708f, m_wpPitch = 0.0f, m_wpRoll = 0.0f;	// 向き
+	float m_wpOff[3] = { 0.0f, 0.0f, 0.0f };	// 砧面アンカーからの微調整
+	void  LoadWeaponStages();					// Assets/Model/weapon/stage_*.fbx を読む
+	DirectX::XMMATRIX WeaponWorld() const;		// 武器ローカル→ワールドのフィット変換(照準/描画で共用)
+	void  BuildWeaponMorph();					// m_forgeProgから補間頂点を作る
+	void  DrawWeapon();							// 武器を描画(発光+簡易ライティング)
 
 	//--- 3D鉄条メッシュ
 	std::vector<Vertex> m_barVtx;
@@ -245,7 +287,7 @@ private:
 	float m_shake     = 0.0f;		// 打撃時の揺れ
 
 	//--- 打撃フィードバック(ポップアップ文字)
-	char         m_popupText[24] = "";
+	char         m_popupText[96] = "";	// 日本語(UTF-8)の主人公セリフも入るよう余裕を持たせる
 	float        m_popupLife = 0.0f;
 	unsigned int m_popupCol  = 0;
 
@@ -274,6 +316,7 @@ private:
 	static constexpr float STRIKE_COOL = 0.08f;	// 1打ごとに下がる温度
 	static constexpr float DEFORM_MAX  = 0.22f;	// (旧)満蓄力・最適温度での最大変形量
 	static constexpr float FLOW_DROP = 0.095f;	// 満蓄力・最適温度で1打が命中セルから押し出す高さ量
+	static constexpr float FORGE_STEP = 0.055f;	// 満蓄力・最適温度で1打が進める成形進捗(武器モーフ用)
 	static constexpr float H_MIN     = 0.0f;	// セル高さの下限(これ以上は薄くできない)
 	static constexpr float COLD_LIMIT  = 0.35f;	// これ未満は冷たすぎ(ほぼ変形せず割れる)
 	static constexpr float CADENCE_MIN = 0.45f;	// 良い打撃間隔の下限(これより速いと駄目)

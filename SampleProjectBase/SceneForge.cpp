@@ -12,13 +12,43 @@
 #include "Defines.h"
 #include "Audio.h"
 #include "PostProcess.h"
+#include "AimSystem.h"
 #include <cstdlib>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include "assimp/Importer.hpp"
+#include "assimp/scene.h"
+#include "assimp/postprocess.h"
 
 using namespace DirectX;
+
+//--- 武器モーフ用シェーダー(頂点色=熱色 + 簡易ライティング + 程序化の黒い酸化スケール)。
+//    KCD風: 熱い鋼の表面に黒い酸化皮(スケール)の斑が乗る。UV不要=世界座標の値ノイズで生成(核显向け)。
+static const char* g_wpVS = R"EOT(
+cbuffer Cam : register(b0){ float4x4 view; float4x4 proj; };
+struct VIN  { float3 pos:POSITION0; float3 nrm:NORMAL0; float4 col:TEXCOORD1; };
+struct VOUT { float4 pos:SV_POSITION; float3 nrm:TEXCOORD0; float4 col:TEXCOORD1; float3 wp:TEXCOORD2; };
+VOUT main(VIN v){ VOUT o; o.pos=mul(float4(v.pos,1),view); o.pos=mul(o.pos,proj); o.nrm=v.nrm; o.col=v.col; o.wp=v.pos; return o; }
+)EOT";
+static const char* g_wpPS = R"EOT(
+struct PIN{ float4 pos:SV_POSITION; float3 nrm:TEXCOORD0; float4 col:TEXCOORD1; float3 wp:TEXCOORD2; };
+float  h21(float2 p){ return frac(sin(dot(p,float2(41.3,289.1)))*43758.5453); }
+float  vnoise(float2 p){ float2 i=floor(p),f=frac(p); f=f*f*(3.0-2.0*f);
+  float a=h21(i),b=h21(i+float2(1,0)),c=h21(i+float2(0,1)),d=h21(i+float2(1,1));
+  return lerp(lerp(a,b,f.x),lerp(c,d,f.x),f.y); }
+float4 main(PIN i):SV_TARGET{
+  float3 n = normalize(i.nrm);
+  float3 l = normalize(float3(0.35,0.85,-0.4));
+  float d = 0.5 + 0.5*saturate(dot(n,l));                 // 発光ベース+ライトで立体感
+  // 黒い酸化スケール: 刃長(z)方向に伸ばした斑。2オクターブの安価な値ノイズ。
+  float2 uv = float2(i.wp.z*6.0, i.wp.x*11.0);
+  float s = vnoise(uv)*0.6 + vnoise(uv*3.1 + 7.0)*0.4;
+  float scale = lerp(0.28, 1.0, smoothstep(0.34, 0.72, s)); // 暗い酸化斑
+  return float4(i.col.rgb * d * scale, i.col.a);
+}
+)EOT";
 
 // 水面の屈折用に、シーンのスナップショットを撮る PostProcess を参照する(Mainのグローバル)。
 extern std::shared_ptr<PostProcess> g_pPost;
@@ -138,6 +168,11 @@ void SceneForge::Init()
 	bvs->Compile(g_barVS);
 	PixelShader* bps = CreateObj<PixelShader>("PS_Bar");
 	bps->Compile(g_barPS);
+
+	// --- 武器モーフ用シェーダー(pos/normal/col, 簡易ライティング) + FBX各段の読込 ---
+	VertexShader* wpvs = CreateObj<VertexShader>("VS_Wp"); wpvs->Compile(g_wpVS);
+	PixelShader*  wpps = CreateObj<PixelShader>("PS_Wp");  wpps->Compile(g_wpPS);
+	LoadWeaponStages();
 
 	// 光る炭ベッド用シェーダー(pos/uv/col レイアウト + テクスチャ)。
 	// 実行時Compileではなく、正規に .hlsl → fxc → .cso をLoadする(VS_Object等と同じ流儀)。
@@ -425,6 +460,8 @@ void SceneForge::StartGame()
 	for (int i = 0; i < NL; ++i)
 	for (int j = 0; j < NW; ++j) { m_h[i][j] = m_hStart; m_dmgF[i][j] = 0.0f; }	// 厚板に戻す
 	BuildTarget();
+	m_forgeProg = 0.0f;		// 武器モーフを未打磨(stage_0)に戻す
+	for (int s = 0; s < NSEG; ++s) m_segProg[s] = 0.0f;	// 各区域を未成形に
 	m_match = 0.0f;
 
 	m_charging    = false;
@@ -432,7 +469,7 @@ void SceneForge::StartGame()
 	m_strikeCD    = 0.0f;
 	m_strikeAnim  = 0.0f;
 	m_hammerLift  = HAMMER_REST_LIFT;
-	m_aimI = NL / 2; m_aimJ = NW / 2; m_aimValid = false;
+	m_aimI = NL / 2; m_aimJ = NW / 2; m_aimSeg = 0; m_aimValid = false;
 	m_aimWorld = m_barAnchor;	// 最初の有効照準までのハンマー既定位置(板中心)
 	m_lookYaw = 0.0f; m_lookPitch = 0.0f;
 	m_canStrike   = false;		// SPACEを一度離すまで蓄力しない
@@ -443,11 +480,17 @@ void SceneForge::StartGame()
 	m_sizzleTimer  = 0.0f;
 	m_qualitySum   = 0.0f;
 	m_strikeCount  = 0;
+	m_spoil        = 0.0f;		// 廃件率リセット
 }
 
 void SceneForge::FinishGame()
 {
 	m_state = GAME_RESULT;
+}
+
+void SceneForge::GameOverGame()
+{
+	m_state = GAME_OVER;		// 廃件(失敗)。分数はそのまま結果画面で見せる
 }
 
 //--- タイトル: 雰囲気で自動的に火花を出しつつ、SPACEで開始
@@ -465,6 +508,9 @@ void SceneForge::UpdatePlay(float tick)
 {
 	// F1(デバッグUI)を開いている間はゲーム入力を凍結する。閉じていれば通常通り。
 	bool inputOn = !DebugUI::IsVisible();
+
+	// Pキー: 瞄準区域の可視化トグル(デバッグ用。既定OFF=KCD式に「叩く場所」を示さない)
+	if (inputOn && IsKeyTrigger('P')) m_showAimHi = !m_showAimHi;
 
 	// --- 加熱: R長押しで炉で加熱 / 常にゆっくり自然冷却 ---
 	if (inputOn)
@@ -526,8 +572,14 @@ void SceneForge::UpdatePlay(float tick)
 		m_strikeCD = m_strikeCDMax;	// 腕を戻す時間=すぐには次を打てない
 	}
 
-	// --- 目標形状との一致度を更新 ---
-	m_match = ShapeMatch();
+	// --- 目標形状との一致度を更新(武器時=全区域の平均進度) ---
+	if (m_wpOk)
+	{
+		float sum = 0.0f; for (int s = 0; s < NSEG; ++s) sum += m_segProg[s];
+		m_forgeProg = sum / NSEG;	// 全体進捗(表示・モーフのプレビュー用)
+		m_match = m_forgeProg;
+	}
+	else m_match = ShapeMatch();
 
 	// --- ハンマーの上下: 蓄力で上がる / 打撃で振り下ろして戻る ---
 	if (m_strikeAnim > 0.0f)
@@ -552,6 +604,14 @@ void SceneForge::UpdatePlay(float tick)
 
 	// --- 淬火(仕上げ): Qでいつでも完成にできる。一致度と損傷で品質が決まる ---
 	if (inputOn && IsKeyTrigger('Q')) FinishGame();
+
+	// 武器モーフ使用時: 全区域が到位したら自動で完成(淬火)へ。
+	if (m_wpOk)
+	{
+		bool allDone = true;
+		for (int s = 0; s < NSEG; ++s) if (m_segProg[s] < SEG_DONE) { allDone = false; break; }
+		if (allDone) FinishGame();
+	}
 }
 
 //--- 蓄力を解放して1打: 変形＋フィードバック
@@ -574,7 +634,8 @@ void SceneForge::DoStrike()
 	// (冷打音は誤解のもと。清脆な打鉄音が鳴らないこと自体が「外した」合図になる)。
 	if (!m_aimValid)
 	{
-		m_strikeAnim = 1.0f;	// 空振りのモーションだけ
+		m_strikeAnim = 1.0f;			// 空振りのモーションだけ
+		Audio::Play(Audio::SE_SWING, 0.7f);	// 空を切る「ヒュッ」(鉄に当たっていない合図。文字は出さない)
 		return;
 	}
 
@@ -626,6 +687,20 @@ void SceneForge::DoStrike()
 		if (m_dmgF[ci][cj] > 1.0f) m_dmgF[ci][cj] = 1.0f;
 	}
 
+	// KCD式: 「叩く場所」は指示しない。玩家が「まだ出来ていない区域」を自分で見つけて叩く。
+	//   照準セル → 区域番号。その区域が既に完成していれば無用打撃(=誤り)。
+	int  seg     = AimSeg();
+	bool segDone = (m_segProg[seg] >= SEG_DONE);
+	bool goodHit = !cold && !over && !segDone;
+	// 良い打撃だけ、その区域の進捗を前進させる(只進不退)。全区域到位で完成。
+	if (goodHit)
+	{
+		// FORGE_STEPは「全体で何%進むか」の値。区域は1/NSEGの長さなので×NSEGして、
+		// 1区域あたりの必要打数を旧・全体と同程度に保つ(分区域化で5倍にならないように)。
+		m_segProg[seg] += FORGE_STEP * NSEG * power * grooveMult;
+		if (m_segProg[seg] > 1.0f) m_segProg[seg] = 1.0f;
+	}
+
 	// 温度が下がる / 火花 / 振動
 	m_heat -= STRIKE_COOL;
 	if (m_heat < 0.0f) m_heat = 0.0f;
@@ -643,30 +718,33 @@ void SceneForge::DoStrike()
 	m_shake = cold ? (0.6f + power * 0.6f) : (0.3f + power * 0.7f);
 	m_strikeAnim = 1.0f;	// ハンマーを振り下ろすアニメ開始
 
-	// 評価ラベル & スコア
-	const char* label; unsigned int col; float quality;
-	if      (cold)          { label = "CRACK!";   col = IM_COL32(120, 170, 255, 255); quality = 0.0f; }
-	else if (over)          { label = "BURNT!";   col = IM_COL32(255, 120, 120, 255); quality = 0.1f; }
-	else if (power > 0.85f) { label = "PERFECT!"; col = IM_COL32(255, 220, 120, 255); quality = 1.0f; }
-	else if (power > 0.50f) { label = "GOOD";     col = IM_COL32(180, 255, 150, 255); quality = 0.7f; }
-	else                    { label = "WEAK";     col = IM_COL32(200, 200, 200, 255); quality = 0.4f; }
-
-	// 良いテンポが乗っているときは効率・品質アップ＋主人公が口笛を吹く
-	if (inGroove)
+	// 評価 & 廃件率: KCD式に「指示せず、誤りだけ知らせる」。負向フィードバックは日本語(主人公の独白)。
+	//   廃件率は不可逆(減らない)。過熱/冷打/完成済みの区域を叩く=誤り→廃件率↑。
+	const char* label; unsigned int col; float quality = 0.0f;
+	// u8"" は C++20 では char8_t。ImGuiはUTF-8バイトを要求するので(const char*)へ再解釈する。
+	if (cold)         { label = (const char*)u8"まだ冷たい…赤くなるまで熱して"; col = IM_COL32(120, 170, 255, 255); m_spoil += SPOIL_COLD; }
+	else if (over)    { label = (const char*)u8"熱しすぎだ！鋼が焼ける";       col = IM_COL32(255, 120, 120, 255); m_spoil += SPOIL_BURN; }
+	else if (segDone) { label = (const char*)u8"ここはもう完成済みだ";         col = IM_COL32(255, 200,  90, 255); m_spoil += SPOIL_WASTE; }
+	else	// 適温 & 未完成の区域に命中 = 成功。得点のみ(廃件率は回復しない)
 	{
-		quality += 0.2f;
-		Audio::Play(Audio::SE_WHISTLE, 0.5f);
+		if      (power > 0.85f) { label = "PERFECT!"; col = IM_COL32(255, 220, 120, 255); quality = 1.0f; }
+		else if (power > 0.50f) { label = "GOOD";     col = IM_COL32(180, 255, 150, 255); quality = 0.7f; }
+		else                    { label = "WEAK";     col = IM_COL32(200, 200, 200, 255); quality = 0.4f; }
+		if (inGroove) { quality += 0.2f; Audio::Play(Audio::SE_WHISTLE, 0.5f); }	// テンポで口笛
+		m_qualitySum += quality;
+		m_score += (int)(quality * 100);
 	}
-
-	m_qualitySum += quality;
 	m_strikeCount++;
-	m_score += (int)(quality * 100);
+	if (m_spoil > 1.0f) m_spoil = 1.0f;	// 上限のみ(下限クランプ不要=減らないので)
 
-	// ポップアップ表示(ノリに乗っている間は印を付ける)
-	if (inGroove) sprintf_s(m_popupText, sizeof(m_popupText), "%s  (in rhythm)", label);
-	else          strcpy_s(m_popupText, sizeof(m_popupText), label);
+	// ポップアップ表示
+	if (inGroove && quality > 0.0f) sprintf_s(m_popupText, sizeof(m_popupText), "%s  (in rhythm)", label);
+	else                            strcpy_s(m_popupText, sizeof(m_popupText), label);
 	m_popupLife = 0.8f;
 	m_popupCol  = col;
+
+	// 廃件槽が満ちたら失敗 → GameOver
+	if (m_spoil >= 1.0f) GameOverGame();
 }
 
 //--- 結果: SPACEでタイトルへ戻る
@@ -676,6 +754,16 @@ void SceneForge::UpdateResult(float /*tick*/)
 	{
 		m_state = GAME_TITLE;
 		Audio::PlayLoop(Audio::SE_TITLE, 0.7f);	// タイトルへ戻ったので専用ループ再開
+	}
+}
+
+//--- 廃件(失敗): SPACEでタイトルへ戻る(=もう一度挑戦)
+void SceneForge::UpdateGameOver(float /*tick*/)
+{
+	if (IsKeyTrigger(VK_SPACE))
+	{
+		m_state = GAME_TITLE;
+		Audio::PlayLoop(Audio::SE_TITLE, 0.7f);
 	}
 }
 
@@ -706,6 +794,7 @@ void SceneForge::Update(float tick)
 	case GAME_TITLE:  UpdateTitle(tick);  break;
 	case GAME_PLAY:   UpdatePlay(tick);   break;
 	case GAME_RESULT: UpdateResult(tick); break;
+	case GAME_OVER:   UpdateGameOver(tick); break;
 	}
 
 	// 火花シミュレーション(重力＋地面バウンド)はどの状態でも動かす
@@ -916,6 +1005,22 @@ void SceneForge::DrawPlayUI()
 		dl->AddRect(ImVec2(bx0, by), ImVec2(bx1, by + bh), IM_COL32(200, 200, 200, 120), 3.0f);
 	}
 
+	// 廃件率(左上, SHAPE MATCHの下)。過熱/冷打/完成済みの段を叩くと溜まり、満ちると失敗。減らない。
+	{
+		float pct = m_spoil; if (pct > 1.0f) pct = 1.0f;
+		sprintf_s(sb, sizeof(sb), "SPOIL  %d%%", (int)(pct * 100));
+		dl->AddText(ImVec2(40, 80), IM_COL32(255, 150, 120, 255), sb);
+		float bx0 = 130.0f, bx1 = 300.0f, by = 84.0f, bh = 10.0f;
+		dl->AddRectFilled(ImVec2(bx0, by), ImVec2(bx1, by + bh), IM_COL32(30, 30, 34, 220), 2.0f);
+		ImU32 sc = (pct > 0.6f) ? IM_COL32(255, 70, 50, 255) : IM_COL32(230, 140, 60, 255);
+		dl->AddRectFilled(ImVec2(bx0, by), ImVec2(bx0 + (bx1 - bx0) * pct, by + bh), sc, 2.0f);
+	}
+
+	// KCD式: 「叩く場所」は指示しない。誤打時だけ主人公の独白(m_popupText)で知らせる。
+	//   デバッグ時のみ Pキーで瞄準区域の可視化ON(状態表示)。
+	if (m_showAimHi)
+		CenterText("[DEBUG] aim highlight ON (P to toggle)", 0.10f, 0.9f, IM_COL32(120, 220, 160, 180));
+
 	// 淬火の準備ができたら促す
 	if (m_match >= 0.85f)
 		CenterText("Shape looks good!  Press  Q  to Quench", 0.86f, 1.2f,
@@ -937,6 +1042,18 @@ void SceneForge::DrawResultUI()
 	CenterText("PRESS  SPACE  TO  RETURN", 0.70f, 1.4f, IM_COL32(255, 255, 255, 220));
 }
 
+//--- 廃件(失敗)画面: 鋼を叩き損じて台無しにした。分数は出すが低評価。
+void SceneForge::DrawGameOverUI()
+{
+	float p = 0.5f + 0.5f * sinf(m_time * 6.0f);
+	CenterText("RUINED",               0.28f, 3.2f, IM_COL32(255, 80, 60, (int)(180 + p * 75)));
+	CenterText("You spoiled the steel", 0.44f, 1.6f, IM_COL32(255, 170, 150, 255));
+	char buf[64];
+	sprintf_s(buf, sizeof(buf), "SCORE  %d", m_score);
+	CenterText(buf,                    0.56f, 2.0f, IM_COL32(255, 255, 255, 255));
+	CenterText("PRESS  SPACE  TO  RETRY", 0.70f, 1.4f, IM_COL32(255, 255, 255, 220));
+}
+
 void SceneForge::DrawUI()
 {
 	// 配置/材質/炭火/カメラの編集はすべて SCENE_FORGE_STAGESETTING に移設。
@@ -947,6 +1064,27 @@ void SceneForge::DrawUI()
 	case GAME_TITLE:  DrawTitleUI();  break;
 	case GAME_PLAY:   DrawPlayUI();   break;
 	case GAME_RESULT: DrawResultUI(); break;
+	case GAME_OVER:   DrawGameOverUI(); break;
+	}
+
+	// F1中: 武器モデルの向き/大きさ/位置を砧面に合わせる調整パネル(合ったら数値を焼き込む)
+	if (DebugUI::IsVisible() && m_wpOk)
+	{
+		ImGui::Begin("Weapon Align (F1)");
+		ImGui::Text("stages loaded: %d,  verts: %d", (int)m_wpStage.size(), m_wpN);
+		ImGui::SliderFloat("Forge progress", &m_forgeProg, 0.0f, 1.0f, "%.2f");
+		ImGui::SliderFloat("Yaw",   &m_wpYaw,   -3.1416f, 3.1416f, "%.3f");
+		ImGui::SliderFloat("Pitch", &m_wpPitch, -3.1416f, 3.1416f, "%.3f");
+		ImGui::SliderFloat("Roll",  &m_wpRoll,  -3.1416f, 3.1416f, "%.3f");
+		ImGui::SliderFloat("Scale", &m_wpScale, 0.2f, 3.0f, "%.2f");
+		ImGui::SliderFloat("Off X", &m_wpOff[0], -1.0f, 1.0f, "%.3f");
+		ImGui::SliderFloat("Off Y", &m_wpOff[1], -1.0f, 1.0f, "%.3f");
+		ImGui::SliderFloat("Off Z", &m_wpOff[2], -1.0f, 1.0f, "%.3f");
+		ImGui::Separator();
+		ImGui::TextDisabled("Camera (3/4 forge view)");
+		ImGui::SliderFloat3("Cam Pos",  m_camPos,  -5.0f, 6.0f, "%.2f");
+		ImGui::SliderFloat3("Cam Look", m_camLook, -5.0f, 6.0f, "%.2f");
+		ImGui::End();
 	}
 }
 
@@ -1007,10 +1145,30 @@ void SceneForge::UpdateMouseLook()
 	SetCursorPos(cs.x, cs.y);			// 中心へ戻す(累積の基準を保つ)
 }
 
-//--- 画面中心の準心(=カメラ正前方 m_camFwd)から射線を飛ばし、板の上面(水平面)と交差させ、
-//    当たった点を長さ×幅のセル(m_aimI/J)に写す。準心が板の外なら m_aimValid=false。
+//--- FPS式ヒットスキャン照準。準心(画面中心=カメラ正前方 m_camFwd)から射線を飛ばし、
+//    武器を長手にNSEG分割したボックス群と交差させる。当たった一番手前の区域が照準区域。
+//    どの区域にも当たらなければ空振り(m_aimValid=false)。判定対象が「武器の実体」なので、
+//    準心が刃に乗っている＝射線が刃に当たる、が一致する(Valorant等と同じ原理)。
 void SceneForge::UpdateAim()
 {
+	if (m_wpOk)
+	{
+		XMFLOAT3 o = { m_camPos[0], m_camPos[1], m_camPos[2] };
+		AimSystem::Hit h = AimSystem::Raycast(o, m_camFwd, WeaponWorld(), m_wpMin, m_wpMax, NSEG);
+		m_aimValid = h.valid;
+		if (h.valid)
+		{
+			m_aimSeg   = h.seg;
+			m_aimWorld = h.world;			// ハンマーはこの実際の命中点へ
+			// 旧2Dグリッド(死にコードだが index を要求)が破綻しないよう妥当な値を入れておく
+			m_aimI = (h.seg * NL) / NSEG + (NL / (2 * NSEG));
+			if (m_aimI < 0) m_aimI = 0; if (m_aimI > NL - 1) m_aimI = NL - 1;
+			m_aimJ = NW / 2;
+		}
+		return;
+	}
+
+	// --- フォールバック(武器FBXが無い時): 旧・射線×砧面水平矩形 ---
 	XMFLOAT3 o = { m_camPos[0], m_camPos[1], m_camPos[2] };
 	XMFLOAT3 d = m_camFwd;
 	// 板の上面を代表する水平面 y = planeY と交差
@@ -1021,14 +1179,14 @@ void SceneForge::UpdateAim()
 	float hx = o.x + d.x * t;
 	float hz = o.z + d.z * t;
 
-	// ワールド → セル(格子)。0..1に正規化してセル数を掛け、floorでどのブロックか判定。
+	// ワールド → 工件の footprint(長手×幅)内の正規化座標。FPS判定=準心が実際に鉄の上に無ければ
+	//   空振り(m_aimValid=false)。端に夹まない=狙っていない所を叩いても無効(空揮音のみ)。
 	float half = m_barLen * 0.5f;
 	float nj = (hx - (m_barAnchor.x - m_barWidth)) / (2.0f * m_barWidth);	// 0..1(幅)
 	float ni = (hz - (m_barAnchor.z - half)) / m_barLen;					// 0..1(長さ)
-	if (ni < 0.0f || ni >= 1.0f || nj < 0.0f || nj >= 1.0f)
-	{
-		m_aimValid = false; return;	// 板の外
-	}
+	if (ni < 0.0f || ni > 1.0f || nj < 0.0f || nj > 1.0f) { m_aimValid = false; return; }
+	if (ni > 0.9999f) ni = 0.9999f;
+	if (nj > 0.9999f) nj = 0.9999f;
 	m_aimI = (int)(ni * NL);
 	m_aimJ = (int)(nj * NW);
 	if (m_aimI < 0) m_aimI = 0; if (m_aimI > NL - 1) m_aimI = NL - 1;
@@ -1558,6 +1716,188 @@ void SceneForge::Draw3DBillet()
 	m_barMesh->Draw(n);
 }
 
+//====================================================================
+//  武器モーフ: Blenderで作った同拓扑の各段FBXを頂点補間して成形する
+//====================================================================
+//--- Assets/Model/weapon/stage_0.fbx, stage_1.fbx ... を順に読む。
+//    同拓扑補間のため JoinIdenticalVertices は使わない(段ごとに位置が違うと統合結果がズレる)。
+void SceneForge::LoadWeaponStages()
+{
+	m_wpOk = false;
+	m_wpStage.clear();
+	const char* dir = "Assets/Model/weapon/";
+	for (int s = 0; s < 8; ++s)
+	{
+		char path[256];
+		if (s == 0) sprintf_s(path, sizeof(path), "%sstage_0.fbx", dir);
+		else        sprintf_s(path, sizeof(path), "%sstage_%d.fbx", dir, s);
+		// stage_final.fbx を最終段として許容(stage_1.fbx が無ければ探す)
+		FILE* fp = nullptr;
+		if (fopen_s(&fp, path, "rb") != 0 || !fp)
+		{
+			if (s >= 1) { sprintf_s(path, sizeof(path), "%sstage_final.fbx", dir);
+			              if (fopen_s(&fp, path, "rb") == 0 && fp) { fclose(fp); }
+			              else break; }
+			else break;
+		}
+		else fclose(fp);
+
+		Assimp::Importer imp;
+		unsigned int flag = aiProcess_Triangulate | aiProcess_ConvertToLeftHanded | aiProcess_PreTransformVertices;
+		const aiScene* sc = imp.ReadFile(path, flag);
+		if (!sc || sc->mNumMeshes == 0) break;
+
+		WpStage st;
+		std::vector<unsigned int> idx;
+		unsigned int base = 0;
+		for (unsigned int m = 0; m < sc->mNumMeshes; ++m)
+		{
+			const aiMesh* me = sc->mMeshes[m];
+			for (unsigned int j = 0; j < me->mNumVertices; ++j)
+			{
+				aiVector3D p = me->mVertices[j];
+				aiVector3D n = me->HasNormals() ? me->mNormals[j] : aiVector3D(0, 1, 0);
+				st.pos.push_back(XMFLOAT3(p.x, p.y, p.z));
+				st.nrm.push_back(XMFLOAT3(n.x, n.y, n.z));
+			}
+			if (s == 0)	// インデックスは全段共通なので最初の段だけ作る
+			{
+				for (unsigned int f = 0; f < me->mNumFaces; ++f)
+				{
+					const aiFace& fa = me->mFaces[f];
+					if (fa.mNumIndices != 3) continue;
+					idx.push_back(base + fa.mIndices[0]);
+					idx.push_back(base + fa.mIndices[1]);
+					idx.push_back(base + fa.mIndices[2]);
+				}
+			}
+			base += me->mNumVertices;
+		}
+		if (s == 0) { m_wpIdx = idx; m_wpN = (int)st.pos.size(); m_wpMin = XMFLOAT3(1e9f,1e9f,1e9f); m_wpMax = XMFLOAT3(-1e9f,-1e9f,-1e9f);
+		              for (auto& p : st.pos){ m_wpMin.x=fminf(m_wpMin.x,p.x);m_wpMin.y=fminf(m_wpMin.y,p.y);m_wpMin.z=fminf(m_wpMin.z,p.z);
+		                                      m_wpMax.x=fmaxf(m_wpMax.x,p.x);m_wpMax.y=fmaxf(m_wpMax.y,p.y);m_wpMax.z=fmaxf(m_wpMax.z,p.z);} }
+		else if ((int)st.pos.size() != m_wpN)
+		{
+			MessageBox(nullptr, "武器FBXの頂点数が段ごとに一致しません(同拓扑で作り直してください)", "Weapon", MB_OK);
+			return;
+		}
+		m_wpStage.push_back(std::move(st));
+	}
+
+	if (m_wpStage.size() < 2 || m_wpN <= 0) return;	// 最低2段必要
+
+	m_wpVtx.resize(m_wpN);
+	MeshBuffer::Description d = {};
+	d.pVtx = m_wpVtx.data(); d.vtxSize = sizeof(WpVtx); d.vtxCount = (UINT)m_wpN;
+	d.pIdx = m_wpIdx.data(); d.idxSize = sizeof(unsigned int); d.idxCount = (UINT)m_wpIdx.size();
+	d.isWrite = true; d.topology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+	m_wpMesh = std::make_shared<MeshBuffer>(d);
+	m_wpOk = true;
+}
+
+//--- 武器ローカル→ワールドのフィット変換。照準(AimSystem)と描画(BuildWeaponMorph)で共用し、
+//    両者が必ず同じ配置を見るようにする(照準と見た目のズレを原理的に無くす)。
+XMMATRIX SceneForge::WeaponWorld() const
+{
+	float ex = m_wpMax.x - m_wpMin.x, ey = m_wpMax.y - m_wpMin.y, ez = m_wpMax.z - m_wpMin.z;
+	float maxE = fmaxf(ex, fmaxf(ey, ez)); if (maxE < 1e-5f) maxE = 1.0f;
+	float fit = (m_barLen / maxE) * m_wpScale;
+	XMFLOAT3 c((m_wpMin.x + m_wpMax.x) * 0.5f, (m_wpMin.y + m_wpMax.y) * 0.5f, (m_wpMin.z + m_wpMax.z) * 0.5f);
+	return
+		XMMatrixTranslation(-c.x, -c.y, -c.z) *
+		XMMatrixScaling(fit, fit, fit) *
+		XMMatrixRotationRollPitchYaw(m_wpPitch, m_wpYaw, m_wpRoll) *
+		XMMatrixTranslation(m_barAnchor.x + m_wpOff[0], m_barAnchor.y + m_wpOff[1], m_barAnchor.z + m_wpOff[2]);
+}
+
+//--- 各区域の進捗 m_segProg[] で段を補間して m_wpVtx を作る。ローカル→砧面へのフィット変換もCPUで焼く。
+//    KCD式の核心: 頂点はその「長手位置が属する区域」の進捗で個別に stage_0→stage_final へ動く。
+//    区域分割は AimSystem と同じ「ローカル長手軸」規約なので、高亮する区域＝準心が指す区域＝進む区域。
+void SceneForge::BuildWeaponMorph()
+{
+	if (!m_wpOk) return;
+	int ns = (int)m_wpStage.size();
+
+	XMMATRIX world = WeaponWorld();
+	XMMATRIX rot   = XMMatrixRotationRollPitchYaw(m_wpPitch, m_wpYaw, m_wpRoll);
+
+	// タイトル等(非プレイ)は全体を一様に m_forgeProg で見せる(F1スライダのプレビュー)。
+	const bool  playing = (m_state == GAME_PLAY);
+	const int   segAim  = (playing && m_aimValid) ? AimSeg() : -1;	// 準心が鉄の上に無ければ高亮なし
+	const float pulse   = 0.5f + 0.5f * sinf(m_time * 8.0f);
+	XMFLOAT4 heat = HeatRGB(m_heat, 0.0f);
+
+	for (int i = 0; i < m_wpN; ++i)
+	{
+		// 頂点のローカル長手位置 → 区域(AimSystemと同一規約)。境界は隣とブレンドして滑らかに。
+		const XMFLOAT3& a0 = m_wpStage[0].pos[i];
+		int   thisSeg;
+		float p;
+		if (playing)
+		{
+			float sc = AimSystem::SegCoordLocal(a0, m_wpMin, m_wpMax, NSEG);	// 0..NSEG
+			float fpos = sc - 0.5f;			// 区域中心を基準にした連続座標
+			int   s0 = (int)floorf(fpos);
+			float ft = fpos - s0;
+			int   sa = s0 < 0 ? 0 : (s0 >= NSEG ? NSEG - 1 : s0);
+			int   sb = (s0 + 1) < 0 ? 0 : ((s0 + 1) >= NSEG ? NSEG - 1 : (s0 + 1));
+			p = m_segProg[sa] + (m_segProg[sb] - m_segProg[sa]) * ft;
+			thisSeg = (int)sc; if (thisSeg >= NSEG) thisSeg = NSEG - 1;
+		}
+		else { p = m_forgeProg; thisSeg = -1; }
+		if (p < 0) p = 0; if (p > 1) p = 1;
+
+		// 進捗 p → 段チェーン(stage_0..final)の補間位置
+		float g = p * (ns - 1);
+		int   k = (int)g; if (k < 0) k = 0; if (k > ns - 2) k = ns - 2;
+		float t = g - k; if (t < 0) t = 0; if (t > 1) t = 1;
+		const WpStage& A = m_wpStage[k];
+		const WpStage& B = m_wpStage[k + 1];
+
+		XMVECTOR pa = XMLoadFloat3(&A.pos[i]), pb = XMLoadFloat3(&B.pos[i]);
+		XMVECTOR pp = XMVectorLerp(pa, pb, t);
+		pp = XMVector3TransformCoord(pp, world);
+		XMVECTOR na = XMLoadFloat3(&A.nrm[i]), nb = XMLoadFloat3(&B.nrm[i]);
+		XMVECTOR n = XMVector3Normalize(XMVector3TransformNormal(XMVectorLerp(na, nb, t), rot));
+		XMStoreFloat3(&m_wpVtx[i].pos, pp);
+		XMStoreFloat3(&m_wpVtx[i].nrm, n);
+
+		// 既定は熱色のみ(KCD式=「叩く場所」を示さない)。Pキーでデバッグ可視化ONの時だけ
+		// 「今照準している区域」を青緑で薄く塗る(叩く指示ではなく開発用)。
+		XMFLOAT4 col = heat;
+		if (m_showAimHi && thisSeg == segAim)
+		{
+			float b = 0.30f + 0.20f * pulse;
+			col.x = col.x * (1.0f - b);
+			col.y = col.y + (1.0f - col.y) * b;
+			col.z = col.z + (1.0f - col.z) * b;
+		}
+		m_wpVtx[i].col = col;
+	}
+}
+
+//--- 武器を描画(発光+簡易ライティング)。
+void SceneForge::DrawWeapon()
+{
+	if (!m_wpOk) return;
+	CameraBase*   cam = GetObj<CameraBase>("Camera");
+	VertexShader* vs  = GetObj<VertexShader>("VS_Wp");
+	PixelShader*  ps  = GetObj<PixelShader>("PS_Wp");
+	if (!cam || !vs || !ps || !m_wpMesh) return;
+
+	XMFLOAT4X4 cb[2] = { cam->GetView(), cam->GetProj() };
+	vs->WriteBuffer(0, cb);
+
+	BuildWeaponMorph();
+	m_wpMesh->Write(m_wpVtx.data());
+
+	SetBlendMode(BLEND_NONE);
+	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
+	vs->Bind();
+	ps->Bind();
+	m_wpMesh->Draw();
+}
+
 #if 0	// 旧: 半透明ゴースト輪郭(P0の初期案)。KCD式「注定成形」に切替えたため未使用。
 //--- m_target[] から半透明ゴースト目標の頂点を生成(戻り値=頂点数)。
 //    実体の鉄条(BuildBarMesh)と同じ箱の作り方だが、太さは目標プロファイル、
@@ -1657,7 +1997,8 @@ void SceneForge::Draw()
 {
 	ApplyCamera();	// 固定カメラを適用(GetViewの前に)
 	DrawModelsTest();	// 先に不透明な3Dモデル(金床)を描く
-	Draw3DBillet();		// 3Dの光る鉄条(成形中の武器そのものが見える)
+	if (m_wpOk) DrawWeapon();	// Blender武器モデルを進捗でモーフ(あれば優先)
+	else        Draw3DBillet();	// 無ければ従来の高さ場メッシュ
 	DrawWater();		// 水槽の水面(屈折。背後のシーンを撮ってから描く=不透明の後)
 	if (DebugUI::IsVisible()) DrawDebugBoxes();	// F1中はAABB/箱を線で表示
 

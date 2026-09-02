@@ -180,7 +180,9 @@
     <ClCompile Include="WallScene.cpp" />
     <ClCompile Include="PostProcess.cpp" />
     <ClCompile Include="SceneFire.cpp" />
+    <ClCompile Include="AimSystem.cpp" />
     <ClCompile Include="SceneForge.cpp" />
+    <ClCompile Include="SceneWeaponEdit.cpp" />
     <ClCompile Include="Audio.cpp" />
     <ClCompile Include="DebugUI.cpp" />
     <ClCompile Include="imgui\imgui.cpp" />
@@ -223,7 +225,9 @@
     <ClInclude Include="WallScene.h" />
     <ClInclude Include="PostProcess.h" />
     <ClInclude Include="SceneFire.h" />
+    <ClInclude Include="AimSystem.h" />
     <ClInclude Include="SceneForge.h" />
+    <ClInclude Include="SceneWeaponEdit.h" />
     <ClInclude Include="Audio.h" />
     <ClInclude Include="DebugUI.h" />
     <ClInclude Include="imgui\imgui.h" />
