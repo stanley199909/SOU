@@ -229,8 +229,9 @@ void SceneRoot::Draw()
 void SceneRoot::DrawUI()
 {
 	// --- シーン選択パネル ---
+	// 実在する3シーンに対応(enum SceneKind の順)。旧SP31テンプレの死にラベルは削除済み。
 	static const char* names[] = {
-		"Blank", "Visual (Shader)", "Wall (Chase)", "Fire (Particle)", "Forge (Sparks)"
+		"SceneForge", "Stage Editor", "Weapon Edit"
 	};
 
 	// シーン選択パネルはデバッグUI(F1)がONのときだけ表示

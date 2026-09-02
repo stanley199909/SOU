@@ -141,12 +141,6 @@
     <ClCompile Include="StageEditor.cpp">
       <Filter>ソース ファイル\App\Scene</Filter>
     </ClCompile>
-    <ClCompile Include="SceneAnimation.cpp">
-      <Filter>ソース ファイル\App\Scene</Filter>
-    </ClCompile>
-    <ClCompile Include="SceneVisual.cpp">
-      <Filter>ソース ファイル\App\Scene</Filter>
-    </ClCompile>
     <ClCompile Include="Box.cpp">
       <Filter>ソース ファイル\System</Filter>
     </ClCompile>
@@ -156,14 +150,8 @@
     <ClCompile Include="Enemy.cpp">
       <Filter>ソース ファイル\App</Filter>
     </ClCompile>
-    <ClCompile Include="WallScene.cpp">
-      <Filter>ソース ファイル\App\Scene</Filter>
-    </ClCompile>
     <ClCompile Include="PostProcess.cpp">
       <Filter>ソース ファイル\System</Filter>
-    </ClCompile>
-    <ClCompile Include="SceneFire.cpp">
-      <Filter>ソース ファイル\App\Scene</Filter>
     </ClCompile>
     <ClCompile Include="SceneForge\SceneForge.cpp">
       <Filter>ソース ファイル\App\Scene\SceneForge</Filter>
@@ -206,9 +194,6 @@
     </ClCompile>
     <ClCompile Include="imgui\imgui_impl_win32.cpp">
       <Filter>ソース ファイル\imgui</Filter>
-    </ClCompile>
-    <ClCompile Include="SceneFireTraining.cpp">
-      <Filter>ソース ファイル\App\Scene</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -281,12 +266,6 @@
     <ClInclude Include="StageEditor.h">
       <Filter>ヘッダー ファイル\App\Scene</Filter>
     </ClInclude>
-    <ClInclude Include="SceneAnimation.h">
-      <Filter>ヘッダー ファイル\App\Scene</Filter>
-    </ClInclude>
-    <ClInclude Include="SceneVisual.h">
-      <Filter>ヘッダー ファイル\App\Scene</Filter>
-    </ClInclude>
     <ClInclude Include="Box.h">
       <Filter>ヘッダー ファイル\System</Filter>
     </ClInclude>
@@ -296,14 +275,8 @@
     <ClInclude Include="Enemy.h">
       <Filter>ヘッダー ファイル\App</Filter>
     </ClInclude>
-    <ClInclude Include="WallScene.h">
-      <Filter>ヘッダー ファイル\App\Scene</Filter>
-    </ClInclude>
     <ClInclude Include="PostProcess.h">
       <Filter>ヘッダー ファイル\System</Filter>
-    </ClInclude>
-    <ClInclude Include="SceneFire.h">
-      <Filter>ヘッダー ファイル\App\Scene</Filter>
     </ClInclude>
     <ClInclude Include="SceneForge\SceneForge.h">
       <Filter>ヘッダー ファイル\App\Scene\SceneForge</Filter>
@@ -331,9 +304,6 @@
     </ClInclude>
     <ClInclude Include="imgui\imgui_impl_win32.h">
       <Filter>ヘッダー ファイル\imgui</Filter>
-    </ClInclude>
-    <ClInclude Include="SceneFireTraining.h">
-      <Filter>ヘッダー ファイル\System</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

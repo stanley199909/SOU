@@ -176,10 +176,7 @@
     <ClCompile Include="Box.cpp" />
     <ClCompile Include="Player.cpp" />
     <ClCompile Include="Enemy.cpp" />
-    <ClCompile Include="SceneFireTraining.cpp" />
-    <ClCompile Include="WallScene.cpp" />
     <ClCompile Include="PostProcess.cpp" />
-    <ClCompile Include="SceneFire.cpp" />
     <ClCompile Include="GameLogic\AimSystem.cpp" />
     <ClCompile Include="SceneForge\SceneForge.cpp" />
     <ClCompile Include="SceneForge\WeaponRender.cpp" />
@@ -209,10 +206,8 @@
     <ClCompile Include="Model.cpp" />
     <ClCompile Include="MoveLight.cpp" />
     <ClCompile Include="PointLight.cpp" />
-    <ClCompile Include="SceneAnimation.cpp" />
     <ClCompile Include="SceneBase.cpp" />
     <ClCompile Include="StageEditor.cpp" />
-    <ClCompile Include="SceneVisual.cpp" />
     <ClCompile Include="Shader.cpp" />
     <ClCompile Include="SpotLight.cpp" />
     <ClCompile Include="Sprite.cpp" />
@@ -225,10 +220,7 @@
     <ClInclude Include="Box.h" />
     <ClInclude Include="Player.h" />
     <ClInclude Include="Enemy.h" />
-    <ClInclude Include="SceneFireTraining.h" />
-    <ClInclude Include="WallScene.h" />
     <ClInclude Include="PostProcess.h" />
-    <ClInclude Include="SceneFire.h" />
     <ClInclude Include="GameLogic\AimSystem.h" />
     <ClInclude Include="SceneForge\SceneForge.h" />
     <ClInclude Include="SceneForge\SceneForge_Internal.h" />
@@ -255,11 +247,9 @@
     <ClInclude Include="Model.h" />
     <ClInclude Include="MoveLight.h" />
     <ClInclude Include="PointLight.h" />
-    <ClInclude Include="SceneAnimation.h" />
     <ClInclude Include="SceneBase.hpp" />
     <ClInclude Include="StageEditor.h" />
     <ClInclude Include="SceneRoot.h" />
-    <ClInclude Include="SceneVisual.h" />
     <ClInclude Include="Shader.h" />
     <ClInclude Include="SpotLight.h" />
     <ClInclude Include="Sprite.h" />
