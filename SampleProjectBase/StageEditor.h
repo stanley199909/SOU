@@ -1,5 +1,5 @@
-#ifndef __SCENE_BLANK_H__
-#define __SCENE_BLANK_H__
+#ifndef __STAGE_EDITOR_H__
+#define __STAGE_EDITOR_H__
 
 #include "SceneBase.hpp"
 #include <DirectXMath.h>
@@ -11,12 +11,12 @@ class Model;
 class Texture;
 class MeshBuffer;
 
-// SCENE_FORGE_STAGESETTING : the blacksmith stage-setting editor.
+// SCENE_STAGE_EDITOR : the blacksmith stage-setting editor.
 //  - Loads the same props as the game so you can arrange them.
 //  - Drag objects on the ground with the mouse (Unity-like).
 //  - Tabs: Objects / Coal / Camera. Read the final numbers here and bake into SceneForge.
 //  - Free camera (ALT+drag) works because this scene does not lock the camera.
-class SceneBlank : public SceneBase
+class SceneStageEditor : public SceneBase
 {
 public:
 	void Init();
@@ -105,4 +105,4 @@ private:
 	void  LoadLayout();
 };
 
-#endif // __SCENE_BLANK_H___
+#endif // __STAGE_EDITOR_H___

@@ -6,9 +6,9 @@
 #include "Input.h"
 #include "Geometory.h"
 
-#include "SceneBlank.h"	// = 鍛冶場ステージ配置エディタ(SCENE_FORGE_STAGESETTING)
+#include "StageEditor.h"	// = 鍛冶場ステージ配置エディタ(SCENE_STAGE_EDITOR)
 #include "SceneWeaponEdit.h"	// = 武器(目標形状)デザインエディタ(SCENE_FORGE_WEAPON)
-#include "SceneForge.h"
+#include "SceneForge/SceneForge.h"
 #include "DebugUI.h"
 
 #include "DebugLog.h"
@@ -20,7 +20,7 @@
 enum SceneKind
 {
 	SCENE_FORGE,			// 鍛冶ミニゲーム本体(ゲーム)
-	SCENE_FORGE_STAGESETTING,	// 鍛冶場のステージ配置エディタ
+	SCENE_STAGE_EDITOR,	// 鍛冶場のステージ配置エディタ
 	SCENE_FORGE_WEAPON,		// 武器(目標形状)デザインエディタ
 	SCENE_MAX				// 終端
 };
@@ -39,9 +39,9 @@ void SceneRoot::ChangeScene()
 		AddSubScene<SceneForge>();
 		m_sceneName = "SCENE_FORGE";
 		break;
-	case SCENE_FORGE_STAGESETTING:
-		AddSubScene<SceneBlank>();
-		m_sceneName = "SCENE_FORGE_STAGESETTING";
+	case SCENE_STAGE_EDITOR:
+		AddSubScene<SceneStageEditor>();
+		m_sceneName = "SCENE_STAGE_EDITOR";
 		break;
 	case SCENE_FORGE_WEAPON:
 		AddSubScene<SceneWeaponEdit>();

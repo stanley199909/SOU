@@ -1,5 +1,5 @@
 #include "math.h"
-#include "SceneBlank.h"
+#include "StageEditor.h"
 #include "Geometory.h"
 #include "DebugLog.h"
 #include "Model.h"
@@ -37,7 +37,7 @@ static void GetMouseClient(float& mx, float& my)
 }
 
 //--- load a draggable prop: auto scale so largest AABB extent == targetSize
-void SceneBlank::LoadProp(const char* key, const char* fbx, const char* tex,
+void SceneStageEditor::LoadProp(const char* key, const char* fbx, const char* tex,
                           float targetSize, float px, float pz, float yaw)
 {
 	Model* m = CreateObj<Model>(key);
@@ -58,7 +58,7 @@ void SceneBlank::LoadProp(const char* key, const char* fbx, const char* tex,
 	m_props.push_back(p);
 }
 
-void SceneBlank::Init()
+void SceneStageEditor::Init()
 {
 	VertexShader* vs = CreateObj<VertexShader>("StVS");
 	if (FAILED(vs->Load("Assets/Shader/VS_Object.cso")))
@@ -204,7 +204,7 @@ void SceneBlank::Init()
 }
 
 //--- coal embers: spawn from the coal bed center, rise with buoyancy, fade out
-void SceneBlank::UpdateEmbers(float tick)
+void SceneStageEditor::UpdateEmbers(float tick)
 {
 	if (m_coalOn)
 	{
@@ -236,7 +236,7 @@ void SceneBlank::UpdateEmbers(float tick)
 }
 
 //--- draw embers as camera-facing glowing dots (additive), reusing the particle shader
-void SceneBlank::DrawEmbers()
+void SceneStageEditor::DrawEmbers()
 {
 	if (m_embers.empty()) return;
 	CameraBase*   cam = GetObj<CameraBase>("Camera");
@@ -294,7 +294,7 @@ void SceneBlank::DrawEmbers()
 static const char* STAGE_FILE = "Assets/stage_layout.txt";
 
 //--- save the whole layout to a text file (like the teacher's setting.dat, but text)
-void SceneBlank::SaveLayout()
+void SceneStageEditor::SaveLayout()
 {
 	FILE* fp = nullptr;
 	fopen_s(&fp, STAGE_FILE, "w");
@@ -312,7 +312,7 @@ void SceneBlank::SaveLayout()
 }
 
 //--- load the saved layout (applies to matching props; missing file = keep defaults)
-void SceneBlank::LoadLayout()
+void SceneStageEditor::LoadLayout()
 {
 	FILE* fp = nullptr;
 	fopen_s(&fp, STAGE_FILE, "r");
@@ -349,7 +349,7 @@ void SceneBlank::LoadLayout()
 	fclose(fp);
 }
 
-void SceneBlank::Uninit()
+void SceneStageEditor::Uninit()
 {
 	SaveLayout();	// persist the arrangement on leaving/closing the scene
 	DestroyObj("StVS"); DestroyObj("StPS");
@@ -361,7 +361,7 @@ void SceneBlank::Uninit()
 	m_emberMesh.reset(); m_emberGlow.reset(); m_embers.clear();
 }
 
-XMMATRIX SceneBlank::PropWorld(Prop& p)
+XMMATRIX SceneStageEditor::PropWorld(Prop& p)
 {
 	Model* m = GetObj<Model>(p.key.c_str());
 	XMMATRIX base = m ? (XMMATRIX)m->GetScaleBaseMatrix() : XMMatrixIdentity();
@@ -388,7 +388,7 @@ XMMATRIX SceneBlank::PropWorld(Prop& p)
 	return world;
 }
 
-void SceneBlank::DrawModelWorld(Model* m, const XMMATRIX& world, const XMFLOAT4& tint)
+void SceneStageEditor::DrawModelWorld(Model* m, const XMMATRIX& world, const XMFLOAT4& tint)
 {
 	CameraBase*   cam = GetObj<CameraBase>("Camera");
 	VertexShader* vs  = GetObj<VertexShader>("StVS");
@@ -407,7 +407,7 @@ void SceneBlank::DrawModelWorld(Model* m, const XMMATRIX& world, const XMFLOAT4&
 	m->Draw();
 }
 
-void SceneBlank::ApplyForgeTextures()
+void SceneStageEditor::ApplyForgeTextures()
 {
 	Model* forge = GetObj<Model>("StForge");
 	if (!forge || m_forgeTex.empty()) return;
@@ -419,7 +419,7 @@ void SceneBlank::ApplyForgeTextures()
 	}
 }
 
-void SceneBlank::DrawCoalBed()
+void SceneStageEditor::DrawCoalBed()
 {
 	if (!m_coalOn || !m_coalMesh || !m_coalTex) return;
 	CameraBase*   cam = GetObj<CameraBase>("Camera");
@@ -445,7 +445,7 @@ void SceneBlank::DrawCoalBed()
 }
 
 //--- water surface for the trough: procedural moving water (PS_Water), not a flat texture
-void SceneBlank::DrawWater()
+void SceneStageEditor::DrawWater()
 {
 	if (!m_waterOn || !m_coalMesh || !g_pPost) return;
 	CameraBase*   cam   = GetObj<CameraBase>("Camera");
@@ -490,7 +490,7 @@ void SceneBlank::DrawWater()
 	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
 }
 
-void SceneBlank::DrawScenery()
+void SceneStageEditor::DrawScenery()
 {
 	ApplyForgeTextures();
 	for (auto& p : m_props)
@@ -505,7 +505,7 @@ void SceneBlank::DrawScenery()
 }
 
 //--- project a world point to screen pixels (ImGui display space). false if behind camera.
-bool SceneBlank::WorldToScreen(const XMFLOAT3& world, float& sx, float& sy)
+bool SceneStageEditor::WorldToScreen(const XMFLOAT3& world, float& sx, float& sy)
 {
 	CameraBase* cam = GetObj<CameraBase>("Camera");
 	if (!cam) return false;
@@ -525,7 +525,7 @@ bool SceneBlank::WorldToScreen(const XMFLOAT3& world, float& sx, float& sy)
 }
 
 //--- world-space center of a prop (AABB center through its world matrix)
-static XMFLOAT3 PropCenter(SceneBlank* /*self*/, const XMMATRIX& world, const XMFLOAT3& mn, const XMFLOAT3& mx)
+static XMFLOAT3 PropCenter(SceneStageEditor* /*self*/, const XMMATRIX& world, const XMFLOAT3& mn, const XMFLOAT3& mx)
 {
 	XMFLOAT3 c((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f, (mn.z + mx.z) * 0.5f);
 	XMFLOAT3 out; XMStoreFloat3(&out, XMVector3TransformCoord(XMLoadFloat3(&c), world));
@@ -533,7 +533,7 @@ static XMFLOAT3 PropCenter(SceneBlank* /*self*/, const XMMATRIX& world, const XM
 }
 
 //--- pick the prop whose screen center is nearest the cursor (within a pixel radius)
-int SceneBlank::PickProp(float mx, float my)
+int SceneStageEditor::PickProp(float mx, float my)
 {
 	int best = -1; float bestD = 70.0f;	// selection radius in px
 	for (int i = 0; i < (int)m_props.size(); ++i)
@@ -561,7 +561,7 @@ static float DistPtSeg(float px, float py, float ax, float ay, float bx, float b
 }
 
 //--- gizmo origin (world center of the selected prop) and axis length (constant on screen)
-bool SceneBlank::GizmoFrame(XMFLOAT3& origin, float& axisLen)
+bool SceneStageEditor::GizmoFrame(XMFLOAT3& origin, float& axisLen)
 {
 	if (m_editSel < 0 || m_editSel >= (int)m_props.size()) return false;
 	Prop& p = m_props[m_editSel];
@@ -571,7 +571,7 @@ bool SceneBlank::GizmoFrame(XMFLOAT3& origin, float& axisLen)
 }
 
 //--- which gizmo arrow (X/Y/Z) is under the cursor
-int SceneBlank::PickGizmoAxis(float mx, float my)
+int SceneStageEditor::PickGizmoAxis(float mx, float my)
 {
 	XMFLOAT3 o; float len;
 	if (!GizmoFrame(o, len)) return -1;
@@ -589,7 +589,7 @@ int SceneBlank::PickGizmoAxis(float mx, float my)
 }
 
 //--- XYZ arrows on the selected prop (X red, Y green, Z blue; grabbed axis = yellow)
-void SceneBlank::DrawGizmo()
+void SceneStageEditor::DrawGizmo()
 {
 	XMFLOAT3 o; float len;
 	if (!GizmoFrame(o, len)) return;
@@ -611,7 +611,7 @@ void SceneBlank::DrawGizmo()
 }
 
 //--- yellow wireframe box around the selected prop (uses the reliable Geometory line path)
-void SceneBlank::DrawSelectionHighlight()
+void SceneStageEditor::DrawSelectionHighlight()
 {
 	if (m_editSel < 0 || m_editSel >= (int)m_props.size()) return;
 	CameraBase* cam = GetObj<CameraBase>("Camera");
@@ -639,7 +639,7 @@ void SceneBlank::DrawSelectionHighlight()
 }
 
 //--- Unity-like: click a prop to select it, then LMB-drag to move on the ground (ALT=camera)
-void SceneBlank::UpdateEditorDrag()
+void SceneStageEditor::UpdateEditorDrag()
 {
 	ImGuiIO& io = ImGui::GetIO();
 	bool overUI = io.WantCaptureMouse;
@@ -722,14 +722,14 @@ void SceneBlank::UpdateEditorDrag()
 	m_lmbPrev = lmb;
 }
 
-void SceneBlank::Update(float tick)
+void SceneStageEditor::Update(float tick)
 {
 	m_time += tick;
 	UpdateEditorDrag();
 	UpdateEmbers(tick);	// coal embers rise even while editing
 }
 
-void SceneBlank::Draw()
+void SceneStageEditor::Draw()
 {
 	DrawScenery();
 	DrawEmbers();				// coal embers rising from the forge
@@ -737,11 +737,11 @@ void SceneBlank::Draw()
 	DrawGizmo();				// XYZ move arrows on the selected prop
 }
 
-void SceneBlank::DrawUI()
+void SceneStageEditor::DrawUI()
 {
 	ImGui::SetNextWindowPos(ImVec2(12, 12), ImGuiCond_FirstUseEver);
 	ImGui::SetNextWindowSize(ImVec2(340, 420), ImGuiCond_FirstUseEver);
-	ImGui::Begin("Forge Stage Setting");
+	ImGui::Begin("Forge Stage Editor");
 	ImGui::TextDisabled("Free cam: ALT+LMB orbit / MMB pan / RMB zoom");
 
 	if (ImGui::BeginTabBar("tabs"))
