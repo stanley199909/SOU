@@ -13,6 +13,7 @@
 #include "Audio.h"
 #include "PostProcess.h"
 #include "AimSystem.h"
+#include "Lerp.h"
 #include "SceneForge/SceneForge_Internal.h"
 #include <cstdlib>
 #include <cmath>
@@ -51,6 +52,19 @@ float4 main(PIN i):SV_TARGET{
 }
 )EOT";
 
+//--- 目標ゴースト用PS: g_wpVSを流用し、氷のような半透明+輪郭(菲涅尔風)で「完成形」を薄く示す。
+//    氧化斑や強い陰影は入れない(実体と区別できる、クリーンな輪郭にする)。
+static const char* g_ghostPS = R"EOT(
+struct PIN{ float4 pos:SV_POSITION; float3 nrm:TEXCOORD0; float4 col:TEXCOORD1; float3 wp:TEXCOORD2; };
+float4 main(PIN i):SV_TARGET{
+  float3 n = normalize(i.nrm);
+  float d = 0.55 + 0.45*saturate(dot(n, normalize(float3(0.35,0.85,-0.4))));
+  float rim = pow(1.0 - saturate(abs(n.z)), 2.0);   // 縁を立てる安価な擬似フレネル
+  float a = i.col.a * (0.35 + 0.65*rim);            // 縁は濃く、面は薄く
+  return float4(i.col.rgb * d, a);
+}
+)EOT";
+
 // 水面の屈折用に、シーンのスナップショットを撮る PostProcess を参照する(Mainのグローバル)。
 extern std::shared_ptr<PostProcess> g_pPost;
 
@@ -75,8 +89,9 @@ float4 main(PIN i):SV_TARGET{ return i.col; }
 // 光る炭ベッド用シェーダーは Assets/Shader/VS_Coal.cso / PS_Coal.cso として
 // .hlsl から fxc でコンパイルし、Init で Load する(実行時Compileの文字列は廃止)。
 
-//--- 温度(0..1)を鋼の色(float4)に変換。冷たいときも暗い金属色で見える
-DirectX::XMFLOAT4 HeatRGB(float h, float dmg)
+//--- 温度(0..1)を鋼の色勾配(7ストップ)でサンプル。r,g,b は 0..1。
+//    HeatRGB(3D武器/鉄条)と HUD の HeatColor がこの1つの表を共有する(表の二重定義を避ける)。
+void HeatSampleRGB(float h, float& r, float& g, float& b)
 {
 	static const float sH[] = { 0.00f, 0.20f, 0.40f, 0.55f, 0.70f, 0.85f, 1.00f };
 	static const float sR[] = { 0.15f, 0.45f, 0.85f, 1.00f, 1.00f, 1.00f, 1.00f };
@@ -87,14 +102,22 @@ DirectX::XMFLOAT4 HeatRGB(float h, float dmg)
 	if (h > sH[N - 1]) h = sH[N - 1];
 	int i = 0; while (i < N - 1 && h > sH[i + 1]) ++i;
 	float t = (h - sH[i]) / (sH[i + 1] - sH[i]);
-	float r = sR[i] + (sR[i + 1] - sR[i]) * t;
-	float g = sG[i] + (sG[i + 1] - sG[i]) * t;
-	float b = sB[i] + (sB[i + 1] - sB[i]) * t;
-	// 冷たくても暗い金属として見えるよう下限を設ける
-	if (r < 0.22f) r = 0.22f;
-	if (g < 0.20f) g = 0.20f;
-	if (b < 0.20f) b = 0.20f;
-	float d = 1.0f - 0.7f * dmg;	// 損傷で暗くなる
+	r = sR[i] + (sR[i + 1] - sR[i]) * t;
+	g = sG[i] + (sG[i + 1] - sG[i]) * t;
+	b = sB[i] + (sB[i + 1] - sB[i]) * t;
+}
+
+//--- 温度(0..1)を鋼の色(float4)に変換。冷たいときも暗い金属色で見える
+DirectX::XMFLOAT4 HeatRGB(float h, float dmg)
+{
+	// 冷たくても暗い金属として見えるよう各成分に下限を設ける
+	constexpr float FLOOR_R = 0.22f, FLOOR_G = 0.20f, FLOOR_B = 0.20f;
+	constexpr float DMG_DARKEN = 0.7f;	// 損傷1.0で明るさを最大この割合だけ落とす
+	float r, g, b; HeatSampleRGB(h, r, g, b);
+	if (r < FLOOR_R) r = FLOOR_R;
+	if (g < FLOOR_G) g = FLOOR_G;
+	if (b < FLOOR_B) b = FLOOR_B;
+	float d = 1.0f - DMG_DARKEN * dmg;	// 損傷で暗くなる
 	return DirectX::XMFLOAT4(r * d, g * d, b * d, 1.0f);
 }
 
@@ -114,6 +137,7 @@ void GetMouseClient(float& mx, float& my, float& cw, float& ch)
 
 void SceneForge::Init()
 {
+	m_fade.StartCovered();	// 起動時は黒からタイトルへ淡入
 	m_sparks.reserve(MAX_SPARKS);
 	m_vtx.resize(MAX_SPARKS * 6);
 
@@ -173,6 +197,7 @@ void SceneForge::Init()
 	// --- 武器モーフ用シェーダー(pos/normal/col, 簡易ライティング) + FBX各段の読込 ---
 	VertexShader* wpvs = CreateObj<VertexShader>("VS_Wp"); wpvs->Compile(g_wpVS);
 	PixelShader*  wpps = CreateObj<PixelShader>("PS_Wp");  wpps->Compile(g_wpPS);
+	PixelShader*  gps  = CreateObj<PixelShader>("PS_Ghost"); gps->Compile(g_ghostPS);
 	LoadWeaponStages();
 
 	// 光る炭ベッド用シェーダー(pos/uv/col レイアウト + テクスチャ)。
@@ -455,7 +480,6 @@ void SceneForge::StartGame()
 {
 	Audio::Stop(Audio::SE_TITLE);	// タイトル専用ループを止める(BGMは継続)
 	m_state    = GAME_PLAY;
-	m_progress = 0.0f;
 	m_score    = 0;
 	m_heat     = 0.0f;
 	for (int i = 0; i < NL; ++i)
@@ -497,9 +521,9 @@ void SceneForge::GameOverGame()
 //--- タイトル: 雰囲気で自動的に火花を出しつつ、SPACEで開始
 void SceneForge::UpdateTitle(float /*tick*/)
 {
-	if (IsKeyTrigger(VK_SPACE))
+	if (IsKeyTrigger(VK_SPACE) && !m_fade.IsBusy())
 	{
-		StartGame();
+		m_fade.Transition([this] { StartGame(); });	// 黒転じでゲーム開始(淡入淡出)
 		return;		// 開始したフレームでは叩かない
 	}
 }
@@ -512,6 +536,7 @@ void SceneForge::UpdatePlay(float tick)
 
 	// Pキー: 瞄準区域の可視化トグル(デバッグ用。既定OFF=KCD式に「叩く場所」を示さない)
 	if (inputOn && IsKeyTrigger('P')) m_showAimHi = !m_showAimHi;
+	if (inputOn && IsKeyTrigger('G')) m_showGhost = !m_showGhost;	// 目標ゴースト表示切替
 
 	// --- 加熱: R長押しで炉で加熱 / 常にゆっくり自然冷却 ---
 	if (inputOn)
@@ -599,6 +624,18 @@ void SceneForge::UpdatePlay(float tick)
 		m_hammerLift += (HAMMER_REST_LIFT - m_hammerLift) * k;	// 待機高さへ緩やかに戻る
 	}
 
+	// --- ハンマーの横位置を平滑追従: 準心が格子単位で跳ぶのを Lerp::Damp で滑らかに ---
+	// 目標は現在の照準点(m_aimWorld)＋既定オフセット。Draw はこの m_hammerPos を読む。
+	{
+		DirectX::XMFLOAT3 tgt = {
+			m_aimWorld.x + m_hammerOff[0],
+			0.0f,							// y は使わない(高さは m_hammerLift のアニメで別途)
+			m_aimWorld.z + m_hammerOff[2],
+		};
+		if (!m_hammerPosInit) { m_hammerPos = tgt; m_hammerPosInit = true; }	// 起動時は瞬間セット
+		m_hammerPos = Lerp::Damp(m_hammerPos, tgt, HAMMER_FOLLOW_LAMBDA, tick);
+	}
+
 	// --- フィードバックの減衰 ---
 	if (m_shake > 0.0f)     { m_shake -= tick * 3.0f; if (m_shake < 0.0f) m_shake = 0.0f; }
 	if (m_popupLife > 0.0f) m_popupLife -= tick;
@@ -629,7 +666,7 @@ void SceneForge::DoStrike()
 	if (goodTempo) ++m_rhythmStreak;
 	else           m_rhythmStreak = 0;
 	bool inGroove = (m_rhythmStreak >= GROOVE_HITS);	// テンポが乗ると効率アップ
-	float grooveMult = inGroove ? 1.3f : 1.0f;			// 変形効率の上昇
+	float grooveMult = inGroove ? GROOVE_MULT : 1.0f;	// 変形効率の上昇
 
 	// 準心が板の上に無いなら空振り: 変形も評価もせず、鉄には当たっていないので打鉄音も出さない
 	// (冷打音は誤解のもと。清脆な打鉄音が鳴らないこと自体が「外した」合図になる)。
@@ -641,7 +678,7 @@ void SceneForge::DoStrike()
 	}
 
 	// 温度係数(冷たい→ほぼ効かない, 過熱→効くが品質悪, 適温→最大)
-	float heatFactor = cold ? 0.10f : (over ? 0.7f : 1.0f);
+	float heatFactor = cold ? HEAT_EFF_COLD : (over ? HEAT_EFF_OVER : 1.0f);
 	// 引导式流动(体積守恒 + 結果注定): 命中セルは「目標高さ」までしか下げない(削り過ぎない)。
 	// 押し出した料は「設計がより料を欲しがっている(=e が小さい)隣」へ多く流す。
 	//   e = 現在高 - 目標高 (>0=余り/削るべき, <0=不足/盛るべき)。料は e の高→低へ流れる。
@@ -681,7 +718,7 @@ void SceneForge::DoStrike()
 	}
 
 	// 冷打=割れ / 過熱打=焼け として、命中セルに損傷を刻む
-	float dmgAdd = cold ? 0.35f : (over ? 0.25f : 0.0f);
+	float dmgAdd = cold ? DMG_COLD_HIT : (over ? DMG_OVER_HIT : 0.0f);
 	if (dmgAdd > 0.0f)
 	{
 		m_dmgF[ci][cj] += dmgAdd;
@@ -728,12 +765,12 @@ void SceneForge::DoStrike()
 	else if (segDone) { label = (const char*)u8"ここはもう完成済みだ";         col = IM_COL32(255, 200,  90, 255); m_spoil += SPOIL_WASTE; }
 	else	// 適温 & 未完成の区域に命中 = 成功。得点のみ(廃件率は回復しない)
 	{
-		if      (power > 0.85f) { label = "PERFECT!"; col = IM_COL32(255, 220, 120, 255); quality = 1.0f; }
-		else if (power > 0.50f) { label = "GOOD";     col = IM_COL32(180, 255, 150, 255); quality = 0.7f; }
-		else                    { label = "WEAK";     col = IM_COL32(200, 200, 200, 255); quality = 0.4f; }
-		if (inGroove) { quality += 0.2f; Audio::Play(Audio::SE_WHISTLE, 0.5f); }	// テンポで口笛
+		if      (power > POWER_PERFECT) { label = "PERFECT!"; col = IM_COL32(255, 220, 120, 255); quality = QUALITY_PERFECT; }
+		else if (power > POWER_GOOD)    { label = "GOOD";     col = IM_COL32(180, 255, 150, 255); quality = QUALITY_GOOD; }
+		else                            { label = "WEAK";     col = IM_COL32(200, 200, 200, 255); quality = QUALITY_WEAK; }
+		if (inGroove) { quality += GROOVE_QUALITY_BONUS; Audio::Play(Audio::SE_WHISTLE, 0.5f); }	// テンポで口笛
 		m_qualitySum += quality;
-		m_score += (int)(quality * 100);
+		m_score += (int)(quality * SCORE_PER_QUALITY);
 	}
 	m_strikeCount++;
 	if (m_spoil > 1.0f) m_spoil = 1.0f;	// 上限のみ(下限クランプ不要=減らないので)
@@ -741,7 +778,7 @@ void SceneForge::DoStrike()
 	// ポップアップ表示
 	if (inGroove && quality > 0.0f) sprintf_s(m_popupText, sizeof(m_popupText), "%s  (in rhythm)", label);
 	else                            strcpy_s(m_popupText, sizeof(m_popupText), label);
-	m_popupLife = 0.8f;
+	m_popupLife = POPUP_LIFE;
 	m_popupCol  = col;
 
 	// 廃件槽が満ちたら失敗 → GameOver
@@ -751,26 +788,31 @@ void SceneForge::DoStrike()
 //--- 結果: SPACEでタイトルへ戻る
 void SceneForge::UpdateResult(float /*tick*/)
 {
-	if (IsKeyTrigger(VK_SPACE))
+	if (IsKeyTrigger(VK_SPACE) && !m_fade.IsBusy())
 	{
-		m_state = GAME_TITLE;
-		Audio::PlayLoop(Audio::SE_TITLE, 0.7f);	// タイトルへ戻ったので専用ループ再開
+		m_fade.Transition([this] {
+			m_state = GAME_TITLE;
+			Audio::PlayLoop(Audio::SE_TITLE, 0.7f);	// タイトルへ戻ったので専用ループ再開
+		});
 	}
 }
 
 //--- 廃件(失敗): SPACEでタイトルへ戻る(=もう一度挑戦)
 void SceneForge::UpdateGameOver(float /*tick*/)
 {
-	if (IsKeyTrigger(VK_SPACE))
+	if (IsKeyTrigger(VK_SPACE) && !m_fade.IsBusy())
 	{
-		m_state = GAME_TITLE;
-		Audio::PlayLoop(Audio::SE_TITLE, 0.7f);
+		m_fade.Transition([this] {
+			m_state = GAME_TITLE;
+			Audio::PlayLoop(Audio::SE_TITLE, 0.7f);
+		});
 	}
 }
 
 void SceneForge::Update(float tick)
 {
 	m_time += tick;
+	m_fade.Update(tick);	// 画面フェード(黒幕)を進める。遷移はTransitionの黒転じで実行される
 	// PLAY中かつF1非表示のときだけ、マウスをFPS式に視角へ累積(ApplyCameraより先に)。
 	if (m_state == GAME_PLAY && !DebugUI::IsVisible()) UpdateMouseLook();
 	// デバッグUI表示中はカメラ固定を外し、DCCの自由カメラ(ALT+ドラッグでオービット)を許可。
@@ -834,6 +876,7 @@ void SceneForge::Draw()
 	DrawModelsTest();	// 先に不透明な3Dモデル(金床)を描く
 	if (m_wpOk) DrawWeapon();	// Blender武器モデルを進捗でモーフ(あれば優先)
 	else        Draw3DBillet();	// 無ければ従来の高さ場メッシュ
+	if (m_wpOk) DrawGhostTarget();	// 実体の後に完成形の半透明ゴーストを重ねる
 	DrawWater();		// 水槽の水面(屈折。背後のシーンを撮ってから描く=不透明の後)
 	if (DebugUI::IsVisible()) DrawDebugBoxes();	// F1中はAABB/箱を線で表示
 

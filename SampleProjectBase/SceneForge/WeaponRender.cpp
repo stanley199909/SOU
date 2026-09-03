@@ -216,6 +216,13 @@ void SceneForge::LoadWeaponStages()
 	d.pIdx = m_wpIdx.data(); d.idxSize = sizeof(unsigned int); d.idxCount = (UINT)m_wpIdx.size();
 	d.isWrite = true; d.topology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 	m_wpMesh = std::make_shared<MeshBuffer>(d);
+
+	// 目標ゴースト用のメッシュ(同じインデックス・頂点数。中身は stage_final を毎フレーム書く)
+	m_ghostVtx.resize(m_wpN);
+	MeshBuffer::Description gd = d;
+	gd.pVtx = m_ghostVtx.data();
+	m_ghostMesh = std::make_shared<MeshBuffer>(gd);
+
 	m_wpOk = true;
 }
 
@@ -322,100 +329,52 @@ void SceneForge::DrawWeapon()
 	m_wpMesh->Draw();
 }
 
-#if 0	// 旧: 半透明ゴースト輪郭(P0の初期案)。KCD式「注定成形」に切替えたため未使用。
-//--- m_target[] から半透明ゴースト目標の頂点を生成(戻り値=頂点数)。
-//    実体の鉄条(BuildBarMesh)と同じ箱の作り方だが、太さは目標プロファイル、
-//    色は「逐段フィードバック」= まだ厚すぎる段は赤、合致した段は緑、削りすぎは青。
-//    見やすさのため目標より少しだけ膨らませて外殻の輪郭にする。
-int SceneForge::BuildGhostMesh()
+
+//--- 目標ゴースト: stage_final(最終形)の頂点を WeaponWorld で変換して m_ghostVtx を作る。
+//    形は不変なので進捗補間はしない。色は青白い氷色(alphaは基準値、縁強調はPSで行う)。
+void SceneForge::BuildGhostMesh()
 {
-	int v = 0;
-	const float half = m_barLen * 0.5f;
-	const float ax   = m_barAnchor.x;
-	const float az   = m_barAnchor.z;
-	const float cy   = m_barAnchor.y;
-	const float inflate = 1.04f;	// 目標をわずかに包む外殻
+	if (!m_wpOk || m_wpStage.empty()) return;
+	const WpStage& F = m_wpStage.back();		// stage_final = 完成形
+	XMMATRIX world = WeaponWorld();
+	XMMATRIX rot   = XMMatrixRotationRollPitchYaw(m_wpPitch, m_wpYaw, m_wpRoll);
+	const XMFLOAT4 tint = { 0.55f, 0.78f, 1.0f, 0.5f };	// 青白い半透明(a=基準)
 
-	auto tri = [&](const XMFLOAT3& a, const XMFLOAT3& b, const XMFLOAT3& c, const XMFLOAT4& col)
+	for (int i = 0; i < m_wpN; ++i)
 	{
-		m_ghostVtx[v++] = { a, XMFLOAT2(0,0), col };
-		m_ghostVtx[v++] = { b, XMFLOAT2(0,0), col };
-		m_ghostVtx[v++] = { c, XMFLOAT2(0,0), col };
-	};
-	auto quad = [&](const XMFLOAT3& a, const XMFLOAT3& b, const XMFLOAT3& c, const XMFLOAT3& d, const XMFLOAT4& col)
-	{
-		tri(a, b, c, col); tri(a, c, d, col);
-		tri(a, c, b, col); tri(a, d, c, col);
-	};
-
-	// 段ごとの誤差から色を決める(diff>0=まだ厚い/削りが足りない, diff<0=削りすぎ)
-	auto segColor = [&](int i) -> XMFLOAT4
-	{
-		float diff = m_th[i] - m_target[i];
-		const float tol = 0.06f;	// この範囲内なら合致とみなす
-		XMFLOAT4 c;
-		if (diff > tol)      c = XMFLOAT4(1.0f, 0.35f, 0.25f, 0.30f);	// 赤: もっと叩く
-		else if (diff < -tol)c = XMFLOAT4(0.35f, 0.55f, 1.0f, 0.30f);	// 青: 叩きすぎ
-		else                 c = XMFLOAT4(0.40f, 1.0f, 0.45f, 0.34f);	// 緑: OK
-		return c;
-	};
-
-	const float w = m_barWidth * inflate;
-	for (int i = 0; i < SEG - 1; ++i)
-	{
-		float z0 = az - half + m_barLen * (i       / (float)(SEG - 1));
-		float z1 = az - half + m_barLen * ((i + 1) / (float)(SEG - 1));
-		float y0 = m_barThick * m_target[i]     * inflate;
-		float y1 = m_barThick * m_target[i + 1] * inflate;
-		XMFLOAT4 col = segColor(i);
-
-		XMFLOAT3 a_tL = { ax - w, cy + y0, z0 }, a_tR = { ax + w, cy + y0, z0 };
-		XMFLOAT3 a_bL = { ax - w, cy - y0, z0 }, a_bR = { ax + w, cy - y0, z0 };
-		XMFLOAT3 b_tL = { ax - w, cy + y1, z1 }, b_tR = { ax + w, cy + y1, z1 };
-		XMFLOAT3 b_bL = { ax - w, cy - y1, z1 }, b_bR = { ax + w, cy - y1, z1 };
-
-		quad(a_tL, a_tR, b_tR, b_tL, col);
-		quad(a_bR, a_bL, b_bL, b_bR, col);
-		quad(a_tR, a_bR, b_bR, b_tR, col);
-		quad(a_bL, a_tL, b_tL, b_bL, col);
+		XMVECTOR p = XMVector3TransformCoord(XMLoadFloat3(&F.pos[i]), world);
+		XMVECTOR n = XMVector3Normalize(XMVector3TransformNormal(XMLoadFloat3(&F.nrm[i]), rot));
+		XMStoreFloat3(&m_ghostVtx[i].pos, p);
+		XMStoreFloat3(&m_ghostVtx[i].nrm, n);
+		m_ghostVtx[i].col = tint;
 	}
-	// 端の蓋
-	{
-		float y = m_barThick * m_target[0] * inflate; float zc = az - half; XMFLOAT4 c = segColor(0);
-		quad({ ax - w,cy + y,zc }, { ax + w,cy + y,zc }, { ax + w,cy - y,zc }, { ax - w,cy - y,zc }, c);
-	}
-	{
-		float y = m_barThick * m_target[SEG - 1] * inflate; float zc = az + half; XMFLOAT4 c = segColor(SEG - 1);
-		quad({ ax - w,cy + y,zc }, { ax + w,cy + y,zc }, { ax + w,cy - y,zc }, { ax - w,cy - y,zc }, c);
-	}
-	return v;
 }
 
-//--- 半透明の目標剣形を実体の鉄条に重ねて描く(P0)。
-//    深度テストOFF(DEPTH_DISABLE)でX線オーバーレイにし、太い実体の中に埋もれた
-//    目標も透けて見えるようにする。段ごとの色で厚すぎ/薄すぎが一目で分かる。
+//--- 完成形の輪郭を半透明で実体に重ねる。実体が到位した区域では重なって見えなくなる=
+//    進むほど自然に「埋まって」いく。深度テストは有効(金床に隠れる)だが書き込みはしない
+//    (透明が正しく合成され、後続の不透明描画を邪魔しない)。
 void SceneForge::DrawGhostTarget()
 {
+	if (!m_showGhost || !m_wpOk || !m_ghostMesh) return;
 	CameraBase*   cam = GetObj<CameraBase>("Camera");
-	VertexShader* vs  = GetObj<VertexShader>("VS_Bar");
-	PixelShader*  ps  = GetObj<PixelShader>("PS_Bar");
-	if (!cam || !vs || !ps || !m_ghostMesh) return;
+	VertexShader* vs  = GetObj<VertexShader>("VS_Wp");		// 頂点は武器と同じVSでよい
+	PixelShader*  ps  = GetObj<PixelShader>("PS_Ghost");
+	if (!cam || !vs || !ps) return;
 
 	XMFLOAT4X4 cb[2] = { cam->GetView(), cam->GetProj() };
 	vs->WriteBuffer(0, cb);
 
-	int n = BuildGhostMesh();
-	if (n <= 0) return;
+	BuildGhostMesh();
 	m_ghostMesh->Write(m_ghostVtx.data());
 
 	SetBlendMode(BLEND_ALPHA);
-	SetDepthTest(DEPTH_DISABLE);	// 実体に埋もれても透けて見えるX線オーバーレイ
+	SetDepthTest(DEPTH_ENABLE_TEST);	// テストのみ(書き込まない)=透明の重ね描き
 	vs->Bind();
 	ps->Bind();
-	m_ghostMesh->Draw(n);
-	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);	// 後続の描画のため元に戻す
+	m_ghostMesh->Draw();
+	SetBlendMode(BLEND_NONE);			// 後続の不透明描画のために既定へ戻す
+	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
 }
-#endif
 
 
 //--- 3Dハンマー: 打撃位置の真上に置き、蓄力で上がり打撃で振り下ろす
@@ -427,12 +386,13 @@ void SceneForge::DrawHammer3D()
 	// 準心が当たっているセルの真上にハンマーを置く。準心が板の外に出ても、m_aimWorld/m_aimI/J は
 	// 最後に有効だった位置を保持している(UpdateAimは無効時に値を更新しない)ので、そのまま使う=
 	// 中央にリセットせずハンマーは最後の位置に留まる(操作の異様感を無くす)。
-	float wx = m_aimWorld.x, wz = m_aimWorld.z;
+	// 横位置(XZ)は UpdatePlay で Lerp::Damp 済みの m_hammerPos を読む(格子跳びを吸収)。
+	// オフセットは平滑化の目標に既に含まれているので、ここでは足さない。
 	float barTop = m_barAnchor.y + m_h[m_aimI][m_aimJ];
 	XMFLOAT3 pos = {
-		wx + m_hammerOff[0],
+		m_hammerPos.x,
 		barTop + m_hammerLift + m_hammerOff[1],
-		wz + m_hammerOff[2],
+		m_hammerPos.z,
 	};
 
 	XMMATRIX world =

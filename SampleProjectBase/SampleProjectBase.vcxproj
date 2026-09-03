@@ -178,6 +178,8 @@
     <ClCompile Include="Enemy.cpp" />
     <ClCompile Include="PostProcess.cpp" />
     <ClCompile Include="GameLogic\AimSystem.cpp" />
+    <ClCompile Include="GameLogic\Lerp.cpp" />
+    <ClCompile Include="GameLogic\ScreenFade.cpp" />
     <ClCompile Include="SceneForge\SceneForge.cpp" />
     <ClCompile Include="SceneForge\WeaponRender.cpp" />
     <ClCompile Include="SceneForge\Scenery.cpp" />
@@ -222,6 +224,8 @@
     <ClInclude Include="Enemy.h" />
     <ClInclude Include="PostProcess.h" />
     <ClInclude Include="GameLogic\AimSystem.h" />
+    <ClInclude Include="GameLogic\Lerp.h" />
+    <ClInclude Include="GameLogic\ScreenFade.h" />
     <ClInclude Include="SceneForge\SceneForge.h" />
     <ClInclude Include="SceneForge\SceneForge_Internal.h" />
     <ClInclude Include="SceneWeaponEdit.h" />

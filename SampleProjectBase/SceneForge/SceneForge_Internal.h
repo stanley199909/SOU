@@ -12,6 +12,11 @@
 
 class PostProcess;
 
+// Sample the shared 7-stop steel-heat gradient at h(0..1) -> r,g,b(0..1).
+// Both HeatRGB (3D weapon/bar) and the HUD's HeatColor use this one table.
+// Defined in SceneForge.cpp.
+void HeatSampleRGB(float h, float& r, float& g, float& b);
+
 // Steel color from temperature (0..1). dmg darkens it. Defined in SceneForge.cpp.
 DirectX::XMFLOAT4 HeatRGB(float h, float dmg);
 

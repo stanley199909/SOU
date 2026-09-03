@@ -171,6 +171,12 @@
     <ClCompile Include="GameLogic\AimSystem.cpp">
       <Filter>ソース ファイル\App\GameLogic</Filter>
     </ClCompile>
+    <ClCompile Include="GameLogic\Lerp.cpp">
+      <Filter>ソース ファイル\App\GameLogic</Filter>
+    </ClCompile>
+    <ClCompile Include="GameLogic\ScreenFade.cpp">
+      <Filter>ソース ファイル\App\GameLogic</Filter>
+    </ClCompile>
     <ClCompile Include="DebugUI.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
@@ -285,6 +291,12 @@
       <Filter>ヘッダー ファイル\App\Scene\SceneForge</Filter>
     </ClInclude>
     <ClInclude Include="GameLogic\AimSystem.h">
+      <Filter>ヘッダー ファイル\App\GameLogic</Filter>
+    </ClInclude>
+    <ClInclude Include="GameLogic\Lerp.h">
+      <Filter>ヘッダー ファイル\App\GameLogic</Filter>
+    </ClInclude>
+    <ClInclude Include="GameLogic\ScreenFade.h">
       <Filter>ヘッダー ファイル\App\GameLogic</Filter>
     </ClInclude>
     <ClInclude Include="DebugUI.h">

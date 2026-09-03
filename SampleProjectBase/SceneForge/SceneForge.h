@@ -2,6 +2,7 @@
 #define __SCENE_FORGE_H__
 
 #include "SceneBase.hpp"
+#include "ScreenFade.h"	// 画面フェード(場面/状態遷移の黒幕。GameLogic)
 #include <DirectXMath.h>
 #include <memory>
 #include <vector>
@@ -128,8 +129,8 @@ private:
 
 	//--- ゲーム状態
 	GameState m_state    = GAME_TITLE;
-	float     m_progress = 0.0f;	// 鍛造進度 0..100 (段階4で本実装)
-	int       m_score    = 0;		// スコア    (段階4で本実装)
+	int       m_score    = 0;		// スコア
+	ScreenFade m_fade;				// 画面フェード(起動時の淡入・状態遷移の黒幕)
 
 	//--- 温度(0=冷たい 〜 1=白熱)
 	float m_heat = 0.0f;
@@ -156,11 +157,8 @@ private:
 	void  UpdateMouseLook();		// マウス移動を視角(yaw/pitch)へ累積(再センタリング方式)
 	void  UpdateAim();				// 準心射線を板と交差させ m_aimI/J/World を更新
 
-	//--- 3Dモデル配置の調整用(F1デバッグでスライダ操作)
+	//--- 3Dモデル描画のON/OFF(Scenery のガード)
 	bool  m_show3D  = true;
-	float m_mScale  = 0.02f;	// 素材パックは大きいことが多いので小さめから
-	float m_mPos[3] = { 0.0f, 0.0f, 0.0f };
-	float m_mYaw    = 0.0f;
 
 	//--- ゲーム用固定カメラ(KCD風の見下ろし)
 	float m_camPos[3]  = { 0.0f, 3.20f, -2.20f };	// KCD風の3/4斜視。厚薄が見え、照準も素直
@@ -171,8 +169,6 @@ private:
 	//--- 調整用パラメータ(F1デバッグでスライダ変更可)
 	float m_strikeCDMax = 1.25f;	// 打撃後クールダウン(秒)
 	float m_coolRate    = 0.03f;	// 自然冷却速度(/秒)
-	float m_aimTop      = 0.12f;	// 鉄条が画面に映る上端(高さ割合)。照準の対応範囲
-	float m_aimBottom   = 0.82f;	// 鉄条が画面に映る下端(高さ割合)
 
 	//--- 武器モーフ(Blenderで作った同拓扑の各段FBXを頂点補間して成形する) ---
 	struct WpVtx { DirectX::XMFLOAT3 pos; DirectX::XMFLOAT3 nrm; DirectX::XMFLOAT4 col; };
@@ -202,6 +198,13 @@ private:
 	DirectX::XMMATRIX WeaponWorld() const;		// 武器ローカル→ワールドのフィット変換(照準/描画で共用)
 	void  BuildWeaponMorph();					// m_forgeProgから補間頂点を作る
 	void  DrawWeapon();							// 武器を描画(発光+簡易ライティング)
+	//--- 目標ゴースト: stage_final の形を半透明で重ねて「完成形」を示す(KCD2には無い自作要素)。
+	//    実体が到位した区域では実体とゴーストが重なり見えなくなる=進むほど自然に「埋まる」。
+	std::vector<WpVtx>          m_ghostVtx;		// ゴースト頂点(stage_finalを変換して毎フレーム作る)
+	std::shared_ptr<MeshBuffer> m_ghostMesh;
+	bool  m_showGhost = false;					// 目標ゴースト表示(既定OFF。Gキーで切替。冗長なので任意)
+	void  BuildGhostMesh();						// stage_final を WeaponWorld で変換してm_ghostVtxへ
+	void  DrawGhostTarget();					// 半透明で完成形の輪郭を重ねる
 
 	//--- 3D鉄条メッシュ
 	std::vector<Vertex> m_barVtx;
@@ -274,6 +277,11 @@ private:
 	float m_hammerOff[3] = { 0.06f, 0.0f, 0.0f };		// 打撃点からの位置微調整
 	float m_hammerLift   = 0.40f;					// 頭の高さ(アニメで変化)
 	float m_strikeAnim   = 0.0f;					// 振り下ろしアニメ(1→0)
+	// 表示用の平滑化した横位置(XZ)。準心が格子単位で跳ぶのを Lerp::Damp で吸収する。
+	// Draw はこれを読む。y は m_hammerLift のアニメをそのまま使う。
+	DirectX::XMFLOAT3 m_hammerPos = { 0, 0, 0 };
+	bool m_hammerPosInit = false;					// 初回だけ瞬間セット(起動時に飛んでこない)
+	static constexpr float HAMMER_FOLLOW_LAMBDA = 18.0f;	// 追従の速さ(大=機敏)
 	static constexpr float HAMMER_REST_LIFT    = 0.40f;
 	static constexpr float HAMMER_CHARGE_RAISE = 0.55f;
 	static constexpr float STRIKE_ANIM_TIME    = 0.16f;
@@ -314,15 +322,28 @@ private:
 	//--- 打撃パラメータ
 	static constexpr float CHARGE_RATE = 1.6f;	// 蓄力速度(/秒, 満蓄力まで約0.6秒)
 	static constexpr float STRIKE_COOL = 0.08f;	// 1打ごとに下がる温度
-	static constexpr float DEFORM_MAX  = 0.22f;	// (旧)満蓄力・最適温度での最大変形量
 	static constexpr float FLOW_DROP = 0.095f;	// 満蓄力・最適温度で1打が命中セルから押し出す高さ量
 	static constexpr float FORGE_STEP = 0.055f;	// 満蓄力・最適温度で1打が進める成形進捗(武器モーフ用)
-	static constexpr float H_MIN     = 0.0f;	// セル高さの下限(これ以上は薄くできない)
 	static constexpr float COLD_LIMIT  = 0.35f;	// これ未満は冷たすぎ(ほぼ変形せず割れる)
 	static constexpr float CADENCE_MIN = 0.45f;	// 良い打撃間隔の下限(これより速いと駄目)
 	static constexpr float CADENCE_MAX = 1.00f;	// 良い打撃間隔の上限(これより遅いと駄目)
 	static constexpr int   GROOVE_HITS = 2;		// この回数だけ良いテンポが続くと効率アップ
 	static constexpr float BURN_RATE   = 0.18f;	// 過熱で放置したとき鋼が焼ける速度(/秒)
+
+	//--- 打撃品質・評価・フィードバックの調整値(旧: DoStrike にベタ書きだった係数群)
+	static constexpr float HEAT_EFF_COLD = 0.10f;	// 冷たい鋼での変形効率(ほぼ効かない)
+	static constexpr float HEAT_EFF_OVER = 0.70f;	// 過熱鋼での変形効率(効くが品質悪)
+	static constexpr float GROOVE_MULT   = 1.30f;	// リズムが乗ったときの変形効率倍率
+	static constexpr float DMG_COLD_HIT  = 0.35f;	// 冷打1回で命中セルに刻む割れ
+	static constexpr float DMG_OVER_HIT  = 0.25f;	// 過熱打1回で命中セルに刻む焼け
+	static constexpr float POWER_PERFECT = 0.85f;	// この蓄力以上でPERFECT判定
+	static constexpr float POWER_GOOD    = 0.50f;	// この蓄力以上でGOOD判定
+	static constexpr float QUALITY_PERFECT = 1.0f;	// PERFECT打の品質
+	static constexpr float QUALITY_GOOD    = 0.7f;	// GOOD打の品質
+	static constexpr float QUALITY_WEAK    = 0.4f;	// WEAK打の品質
+	static constexpr float GROOVE_QUALITY_BONUS = 0.20f;	// リズム時の品質ボーナス
+	static constexpr int   SCORE_PER_QUALITY = 100;	// 品質1.0あたりの得点
+	static constexpr float POPUP_LIFE = 0.8f;		// 打撃フィードバック文字の表示時間(秒)
 };
 
 #endif // __SCENE_FORGE_H__

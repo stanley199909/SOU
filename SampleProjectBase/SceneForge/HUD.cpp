@@ -47,22 +47,11 @@ static void CenterText(const char* text, float yRatio, float scale = 1.0f,
 	dl->AddText(ImGui::GetFont(), ImGui::GetFontSize() * scale, ImVec2(x, y), col, text);
 }
 
-//--- 温度(0..1)を鋼の色に変換する(暗赤→赤→橙→黄→白熱)
+//--- 温度(0..1)を鋼の色に変換する(暗赤→赤→橙→黄→白熱)。
+//    勾配表は HeatSampleRGB(SceneForge.cpp)と共有(HUDは金属下限を掛けず生の色を見せる)。
 static ImU32 HeatColor(float h, float alpha = 1.0f)
 {
-	static const float stopH[] = { 0.00f, 0.20f, 0.40f, 0.55f, 0.70f, 0.85f, 1.00f };
-	static const float stopR[] = { 0.15f, 0.45f, 0.85f, 1.00f, 1.00f, 1.00f, 1.00f };
-	static const float stopG[] = { 0.05f, 0.06f, 0.15f, 0.45f, 0.65f, 0.88f, 1.00f };
-	static const float stopB[] = { 0.05f, 0.02f, 0.02f, 0.05f, 0.15f, 0.45f, 0.92f };
-	const int N = 7;
-	if (h <= stopH[0])   h = stopH[0];
-	if (h >= stopH[N-1]) h = stopH[N-1];
-	int i = 0;
-	while (i < N - 1 && h > stopH[i + 1]) ++i;
-	float t = (h - stopH[i]) / (stopH[i + 1] - stopH[i]);
-	float r = stopR[i] + (stopR[i + 1] - stopR[i]) * t;
-	float g = stopG[i] + (stopG[i + 1] - stopG[i]) * t;
-	float b = stopB[i] + (stopB[i + 1] - stopB[i]) * t;
+	float r, g, b; HeatSampleRGB(h, r, g, b);
 	return IM_COL32((int)(r * 255), (int)(g * 255), (int)(b * 255), (int)(alpha * 255));
 }
 
@@ -94,13 +83,7 @@ void SceneForge::DrawHeatGauge()
 	// 枠
 	dl->AddRect(ImVec2(x0, y), ImVec2(x1, y + hgt), IM_COL32(200, 200, 200, 120), 4.0f);
 
-	// ラベルと状態
-	dl->AddText(ImVec2(x0, y - 22), IM_COL32(230, 230, 230, 255), "TEMPERATURE");
-	const char* st; ImU32 stc;
-	if      (m_heat < IDEAL_MIN) { st = "COLD - heat it up! (hold R)"; stc = IM_COL32(120, 170, 255, 255); }
-	else if (m_heat > OVERHEAT)  { st = "OVERHEAT!";                   stc = IM_COL32(255, 120, 120, 255); }
-	else                          { st = "GOOD HEAT";                   stc = IM_COL32(150, 255, 150, 255); }
-	dl->AddText(ImVec2(x1 - 220, y - 22), stc, st);
+	// KCD式: 温度は緑帯(適温)/赤帯(過熱)の視覚だけで示す。「加熱しろ」等の指示テキストは出さない。
 }
 
 void SceneForge::DrawTitleUI()
@@ -142,7 +125,7 @@ void SceneForge::DrawPlayUI()
 	// 打撃フィードバックのポップアップ(鉄条の上でフェード)
 	if (m_popupLife > 0.0f)
 	{
-		float a = m_popupLife / 0.8f;
+		float a = m_popupLife / POPUP_LIFE;
 		if (a > 1.0f) a = 1.0f;
 		unsigned int c = (m_popupCol & 0x00FFFFFF) | ((unsigned int)(a * 255) << 24);
 		CenterText(m_popupText, 0.36f, 2.0f, c);
@@ -247,5 +230,7 @@ void SceneForge::DrawUI()
 		ImGui::SliderFloat3("Cam Look", m_camLook, -5.0f, 6.0f, "%.2f");
 		ImGui::End();
 	}
+
+	m_fade.Draw();	// 最後に全画面の黒幕(前景層)を重ねる=遷移の淡入淡出
 }
 
