@@ -34,17 +34,37 @@ using namespace DirectX;
 //  UI (HUD)
 //====================================================================
 
-// 画面中央にウィンドウ枠なしのメッセージを出す小道具
+// 画面中央にウィンドウ枠なしのメッセージを出す小道具。
+//   font=nullptr なら既定フォント(メイリオ)。scale は各フォントの実寸への倍率。
+//   読みやすさのため暗い影を1枚下に敷く(3D背景の上でも文字が沈まない)。
 static void CenterText(const char* text, float yRatio, float scale = 1.0f,
-                       ImU32 col = IM_COL32(255, 255, 255, 255))
+                       ImU32 col = IM_COL32(255, 255, 255, 255), ImFont* font = nullptr)
 {
 	ImDrawList* dl = ImGui::GetForegroundDrawList();
 	ImVec2 disp = ImGui::GetIO().DisplaySize;	// 実際の画面サイズ(解像度非依存)
-	ImVec2 sz = ImGui::CalcTextSize(text);
-	sz.x *= scale; sz.y *= scale;
+	ImFont* f = font ? font : ImGui::GetFont();
+	float px = f->FontSize * scale;
+	ImVec2 sz = f->CalcTextSizeA(px, FLT_MAX, 0.0f, text);
 	float x = (disp.x - sz.x) * 0.5f;
 	float y =  disp.y * yRatio - sz.y * 0.5f;
-	dl->AddText(ImGui::GetFont(), ImGui::GetFontSize() * scale, ImVec2(x, y), col, text);
+	ImU32 shadow = IM_COL32(0, 0, 0, (int)(((col >> IM_COL32_A_SHIFT) & 0xFF) * 0.6f));
+	dl->AddText(f, px, ImVec2(x + 2.0f, y + 2.0f), shadow, text);	// 影
+	dl->AddText(f, px, ImVec2(x, y), col, text);					// 本体
+}
+
+//--- 羊皮紙パネルを画面中央に敷く(結果/失敗画面の下地)。yCenter/height は画面比。
+void SceneForge::DrawParchmentPanel(float yCenter, float heightRatio)
+{
+	if (!m_uiParchment || !m_uiParchment->GetResource()) return;
+	ImDrawList* dl = ImGui::GetBackgroundDrawList();	// 文字より奥に敷く
+	ImVec2 disp = ImGui::GetIO().DisplaySize;
+	float aspect = (float)m_uiParchment->GetWidth() / (float)m_uiParchment->GetHeight();
+	float h = disp.y * heightRatio;
+	float w = h * aspect;
+	if (w > disp.x * 0.92f) { w = disp.x * 0.92f; h = w / aspect; }	// 横がはみ出す時は幅で制限
+	float cx = disp.x * 0.5f, cy = disp.y * yCenter;
+	ImVec2 a(cx - w * 0.5f, cy - h * 0.5f), b(cx + w * 0.5f, cy + h * 0.5f);
+	dl->AddImage((ImTextureID)m_uiParchment->GetResource(), a, b);
 }
 
 //--- 温度(0..1)を鋼の色に変換する(暗赤→赤→橙→黄→白熱)。
@@ -88,9 +108,13 @@ void SceneForge::DrawHeatGauge()
 
 void SceneForge::DrawTitleUI()
 {
-	CenterText("- FORGE -",            0.34f, 3.0f, IM_COL32(255, 200, 120, 255));
-	CenterText("Timing Blacksmith",    0.44f, 1.4f, IM_COL32(255, 235, 210, 255));
-	CenterText("PRESS  SPACE  TO  START", 0.62f, 1.6f, IM_COL32(255, 255, 255, 255));
+	ImFont* title = DebugUI::FontTitle();
+	ImFont* body  = DebugUI::FontBody();
+	CenterText("FORGE",                0.32f, 1.5f, IM_COL32(255, 196, 110, 255), title);
+	CenterText("A  T I M I N G   B L A C K S M I T H", 0.44f, 0.9f, IM_COL32(230, 215, 195, 235), body);
+	// 開始プロンプトは緩やかに明滅させて「操作可能」を伝える
+	float p = 0.6f + 0.4f * sinf(m_time * 3.0f);
+	CenterText("PRESS  SPACE  TO  START", 0.66f, 1.15f, IM_COL32(255, 255, 255, (int)(255 * p)), body);
 }
 
 void SceneForge::DrawPlayUI()
@@ -165,25 +189,32 @@ void SceneForge::DrawPlayUI()
 
 void SceneForge::DrawResultUI()
 {
-	CenterText("FORGED!",              0.30f, 3.0f, IM_COL32(255, 220, 140, 255));
+	ImFont* title = DebugUI::FontTitle();
+	ImFont* body  = DebugUI::FontBody();
+	// 羊皮紙を下地に敷き、その上に成果を書く。文字色は羊皮紙に映える濃い焦茶。
+	DrawParchmentPanel(0.50f, 0.72f);
+	const ImU32 ink = IM_COL32(60, 34, 18, 255);
+	CenterText("FORGED!",              0.34f, 1.30f, IM_COL32(48, 24, 10, 255), title);	// 濃い鉄墨色=紙上で最も重い
 	char buf[64];
-	sprintf_s(buf, sizeof(buf), "SHAPE MATCH  %d%%", (int)(m_match * 100));
-	CenterText(buf,                    0.46f, 2.0f, IM_COL32(150, 220, 255, 255));
-	sprintf_s(buf, sizeof(buf), "SCORE  %d", m_score);
-	CenterText(buf,                    0.56f, 2.0f, IM_COL32(255, 255, 255, 255));
-	CenterText("PRESS  SPACE  TO  RETURN", 0.70f, 1.4f, IM_COL32(255, 255, 255, 220));
+	sprintf_s(buf, sizeof(buf), "SHAPE MATCH   %d%%", (int)(m_match * 100));
+	CenterText(buf,                    0.48f, 0.95f, ink, body);
+	sprintf_s(buf, sizeof(buf), "SCORE   %d", m_score);
+	CenterText(buf,                    0.56f, 0.95f, ink, body);
+	CenterText("PRESS  SPACE  TO  RETURN", 0.66f, 0.85f, IM_COL32(90, 55, 30, 255), body);
 }
 
 //--- 廃件(失敗)画面: 鋼を叩き損じて台無しにした。分数は出すが低評価。
 void SceneForge::DrawGameOverUI()
 {
+	ImFont* title = DebugUI::FontTitle();
+	ImFont* body  = DebugUI::FontBody();
 	float p = 0.5f + 0.5f * sinf(m_time * 6.0f);
-	CenterText("RUINED",               0.28f, 3.2f, IM_COL32(255, 80, 60, (int)(180 + p * 75)));
-	CenterText("You spoiled the steel", 0.44f, 1.6f, IM_COL32(255, 170, 150, 255));
+	CenterText("RUINED",               0.32f, 1.35f, IM_COL32(200, 50, 40, (int)(180 + p * 75)), title);
+	CenterText("You spoiled the steel", 0.46f, 0.95f, IM_COL32(230, 160, 150, 255), body);
 	char buf[64];
-	sprintf_s(buf, sizeof(buf), "SCORE  %d", m_score);
-	CenterText(buf,                    0.56f, 2.0f, IM_COL32(255, 255, 255, 255));
-	CenterText("PRESS  SPACE  TO  RETRY", 0.70f, 1.4f, IM_COL32(255, 255, 255, 220));
+	sprintf_s(buf, sizeof(buf), "SCORE   %d", m_score);
+	CenterText(buf,                    0.56f, 0.95f, IM_COL32(235, 235, 235, 255), body);
+	CenterText("PRESS  SPACE  TO  RETRY", 0.68f, 0.85f, IM_COL32(235, 235, 235, 220), body);
 }
 
 void SceneForge::DrawUI()

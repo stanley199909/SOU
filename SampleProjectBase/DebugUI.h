@@ -27,6 +27,12 @@ public:
 	// デバッグUI(Performance/Scene選択など)の表示切り替え。F1で使用
 	static bool IsVisible();
 	static void Toggle();
+
+	// ゲームHUD用の追加フォント(Init で読み込む)。読み込めなければ nullptr=既定フォントで代替。
+	//   Title = Cinzel-Black(中世ローマ体・見出し)、Body = EB Garamond(英文本文)。
+	//   日本語(主人公セリフ)は既定フォント(メイリオ)のまま。
+	static ImFont* FontTitle();		// 大見出し(FORGE / FORGED! など)
+	static ImFont* FontBody();		// 英文の本文・ボタン
 };
 
 #endif // __DEBUG_UI_H__

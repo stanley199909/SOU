@@ -237,6 +237,12 @@ void SceneForge::Init()
 			hammer->SetTexture(tex);
 	}
 
+	// UI: 羊皮紙パネル(結果/失敗画面の下地)。透明PNGを読み、ImGuiのAddImageで貼る。
+	{
+		auto p = std::make_shared<Texture>();
+		if (SUCCEEDED(p->Create("Assets/Ui/parchment.png"))) m_uiParchment = p;
+	}
+
 	// --- シーン装飾: 編集シーン(StageEditor)と同じ道具一式・同じキー(St...)で読み込む ---
 	//   キーを St... に統一したので Assets/stage_layout.txt を両シーンで共有できる。
 	//   ここは既定値。この後 LoadLayout() が保存済み配置で上書きする。

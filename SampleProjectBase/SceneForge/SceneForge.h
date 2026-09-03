@@ -70,6 +70,7 @@ private:
 	void DrawPlayUI();
 	void DrawResultUI();
 	void DrawGameOverUI();
+	void DrawParchmentPanel(float yCenter, float heightRatio);	// 結果/失敗の下地(羊皮紙)
 
 	//--- ゲーム進行
 	void StartGame();	// タイトル → 鍛造開始
@@ -121,6 +122,7 @@ private:
 	std::vector<Vertex> m_vtx;
 	std::shared_ptr<MeshBuffer> m_mesh;
 	std::shared_ptr<Texture>    m_glow;
+	std::shared_ptr<Texture>    m_uiParchment;	// UI: 羊皮紙パネル(結果/失敗画面の下地。抠いた透明PNG)
 
 	float m_time      = 0.0f;
 	float m_autoTimer = 0.0f;	// タイトルの雰囲気用に自動で火花を出す間隔

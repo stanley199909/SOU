@@ -5,6 +5,12 @@ static bool s_debugVisible = false;
 bool DebugUI::IsVisible() { return s_debugVisible; }
 void DebugUI::Toggle()    { s_debugVisible = !s_debugVisible; }
 
+//--- ゲームHUD用の追加フォント。Init で読み込み、ここに保持する
+static ImFont* s_fontTitle = nullptr;
+static ImFont* s_fontBody  = nullptr;
+ImFont* DebugUI::FontTitle() { return s_fontTitle; }
+ImFont* DebugUI::FontBody()  { return s_fontBody; }
+
 void DebugUI::Init(HWND hWnd, ID3D11Device* device, ID3D11DeviceContext* context)
 {
 	IMGUI_CHECKVERSION();
@@ -22,6 +28,15 @@ void DebugUI::Init(HWND hWnd, ID3D11Device* device, ID3D11DeviceContext* context
 	{
 		io.Fonts->AddFontDefault();
 	}
+
+	// ゲームHUD用の追加フォント(ラテン文字のみ。大きめの実寸で焼いて拡大ボケを防ぐ)。
+	// 見出しは大きく使うので実寸64px、本文は32pxで焼く。無ければ nullptr のまま=既定で代替。
+	ImFontConfig latin;
+	latin.OversampleH = 3;
+	latin.OversampleV = 2;
+	s_fontTitle = io.Fonts->AddFontFromFileTTF("Assets/Font/Cinzel-Black.ttf",       64.0f, &latin);
+	s_fontBody  = io.Fonts->AddFontFromFileTTF("Assets/Font/EBGaramond-Medium.ttf",  32.0f, &latin);
+
 	io.Fonts->Build();
 
 	// --- 見た目を整える(角丸・落ち着いた配色) ---
