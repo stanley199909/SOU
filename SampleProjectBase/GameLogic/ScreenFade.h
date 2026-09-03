@@ -33,7 +33,7 @@ public:
 	bool  IsBusy()  const { return m_busy; }	// true during a Transition
 	float Alpha()   const { return m_alpha; }
 
-	float m_halfTime = 0.35f;	// seconds for one half (fade-out or fade-in)
+	float m_halfTime = 1.0f;	// seconds for one half (fade-out or fade-in)
 
 private:
 	float m_alpha     = 1.0f;	// current opacity (starts covered)

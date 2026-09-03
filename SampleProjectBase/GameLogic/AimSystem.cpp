@@ -50,7 +50,7 @@ namespace AimSystem
 
 		// Bring the ray into weapon LOCAL space. The direction is transformed as a
 		// vector but NOT re-normalized, so the ray parameter t stays identical to
-		// world space (affine maps preserve the parameter along a ray).
+		// world space (affine maps preserve the parameter along a ray)
 		XMVECTOR det;
 		XMMATRIX inv = XMMatrixInverse(&det, world);
 		XMVECTOR o = XMVector3TransformCoord (XMLoadFloat3(&camPos), inv);

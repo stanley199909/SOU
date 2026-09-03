@@ -157,12 +157,28 @@ private:
 	void  UpdateMouseLook();		// マウス移動を視角(yaw/pitch)へ累積(再センタリング方式)
 	void  UpdateAim();				// 準心射線を板と交差させ m_aimI/J/World を更新
 
+	//--- F1調整値の永続化(Assets/forge_tuning.txt)。Initで読み, Uninit/Saveボタンで書く。
+	void  LoadTuning();
+	void  SaveTuning();
+
 	//--- 3Dモデル描画のON/OFF(Scenery のガード)
 	bool  m_show3D  = true;
 
 	//--- ゲーム用固定カメラ(KCD風の見下ろし)
-	float m_camPos[3]  = { 0.0f, 3.20f, -2.20f };	// KCD風の3/4斜視。厚薄が見え、照準も素直
-	float m_camLook[3] = { 0.0f, 1.85f,  0.15f };	// 砧面(工件)を斜め上から見る
+	// KCD2の一人称に寄せる: 目線の高さから砧・炉を見下ろし、工件と炉膛が視界を占める。
+	float m_camPos[3]  = { 0.0f, 2.30f, -0.95f };	// 低く・近く(鉄匠の頭の位置)
+	float m_camLook[3] = { 0.0f, 1.15f,  0.55f };	// 強めに見下ろす(砧・炉膛が画面に入る)
+	float m_camFov     = 0.8901f;					// 縦画角(rad)≒51°。KCDの画角に近い(狭すぎない)
+	// --- 刃の長手に沿った「狙い位置」追従カメラ(KCDの視角移動) ---
+	// マウス縦で m_aimRail(0=手前/near, 1=奥/far)を動かし、注視点とカメラをZ方向に寄せる。
+	// これで刃の下半段(手前)も準心に入り、視角と錘が一緒に付いてくる。
+	float m_aimRail       = 0.5f;					// 目標の狙い位置(0..1)。連続=ハンマー/打撃はこれ
+	float m_aimRailSmooth = 0.5f;					// 平滑後の「カメラ用」rail(3段の停位へ吸着)
+	static const int NVIEW = 3;						// KCDの固定カメラ段数(刃を3分割)
+	int   m_viewSeg       = 1;						// 現在のカメラ段(0=手前,1=中,2=奥)
+	float m_camFollowZ    = 0.55f;					// カメラ本体がZ追従する割合(0=注視点だけ動く)
+	float m_camPanGain    = 1.0f;					// 追従量の倍率(狙える範囲を微調整)
+	float m_camLerpRate   = 4.0f;					// 3段カメラ切替の速さ(小=ゆっくり重い,大=機敏)
 	float m_camSway    = 0.30f;					// マウスに応じた視点の揺れ幅
 	bool  m_cursorShown = true;					// OSカーソルの表示状態(PLAY中は隠す)
 
@@ -281,10 +297,19 @@ private:
 	// Draw はこれを読む。y は m_hammerLift のアニメをそのまま使う。
 	DirectX::XMFLOAT3 m_hammerPos = { 0, 0, 0 };
 	bool m_hammerPosInit = false;					// 初回だけ瞬間セット(起動時に飛んでこない)
-	static constexpr float HAMMER_FOLLOW_LAMBDA = 18.0f;	// 追従の速さ(大=機敏)
-	static constexpr float HAMMER_REST_LIFT    = 0.40f;
-	static constexpr float HAMMER_CHARGE_RAISE = 0.55f;
-	static constexpr float STRIKE_ANIM_TIME    = 0.16f;
+	float m_hammerFollow = 12.0f;	// 錘のXZ追従の速さ(小=遅れて重い, 大=機敏)。F1「Hammer follow」
+	float m_aimSens      = 0.0020f;	// 照準感度(小=重い/慎重, 大=軽快)。F1「Aim sens」
+	// ↓ ここから下は F1 の「Hammer」窓で実行時に調整できる値(constではなく変数)。
+	//   気に入った値が出たら、この初期値を書き換えて焼き込む。
+	float HAMMER_REST_LIFT    = 0.40f;	// 待機時の頭の高さ(砧面から)。下げると錘が低く構える
+	float HAMMER_CHARGE_RAISE = 0.55f;	// 蓄力で持ち上がる量
+	float STRIKE_ANIM_TIME    = 0.45f;	// 振り下ろし〜静止の所要時間(秒)。大=ゆっくり
+	// 反冲(後座): 銃の反動と同じく、打撃の反作用で錘が「上＋鉄匠側(手前)」へ弾かれて戻る。
+	// 縦(上)＋奥行(手前へ後退)＋錘頭の上翻り(回転)の3つで物理的な後座を作る。
+	float HAMMER_RECOIL_AMP   = 1.5f;	// 縦の跳ね(REST比)。上死点を越えて弾く(3.0→1.5=半分)
+	float HAMMER_RECOIL_BACK  = 0.60f;	// 手前(-Z)へ後退する量(world)
+	float HAMMER_RECOIL_TILT  = 1.30f;	// 錘頭が上へ翻る回転(rad, ~75°)
+	float CAM_SHAKE_AMP       = 0.055f;	// 打撃時のカメラ縦揺れ(反冲がプレイヤーに伝わる)
 
 	//--- 打撃(蓄力ハンマー)
 	bool  m_charging  = false;		// 蓄力中か

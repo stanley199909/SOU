@@ -28,6 +28,9 @@ public:
 	void SetLook(DirectX::XMFLOAT3 look);
 	void SetUp(DirectX::XMFLOAT3 up);
 
+	float GetFovY() { return m_fovy; }
+	void  SetFovY(float fovyRad) { m_fovy = fovyRad; }	// 縦画角(rad)。狭い=沈浸・寄り
+
 protected:
 	DirectX::XMFLOAT3 m_pos, m_look, m_up;
 	float m_fovy, m_aspect, m_near, m_far;

@@ -337,6 +337,7 @@ void SceneForge::Init()
 
 	// 編集シーンで作った配置(Assets/stage_layout.txt)を反映。無ければ上の既定のまま。
 	LoadLayout();
+	LoadTuning();	// F1で調整したハンマー/カメラ値(forge_tuning.txt)を復元
 
 	Strike();	// 開始直後から火花を出す
 	// ロード完了後にここで音を開始(起動途中でBGMが鳴らないように Main から移動)
@@ -346,6 +347,7 @@ void SceneForge::Init()
 
 void SceneForge::Uninit()
 {
+	SaveTuning();	// F1で調整したハンマー/カメラ値を書き出す(次回起動で復元)
 	DestroyObj("VS_Forge");
 	DestroyObj("PS_Forge");
 	DestroyObj("VS_ForgeObj");
@@ -531,8 +533,8 @@ void SceneForge::UpdateTitle(float /*tick*/)
 //--- 鍛造中
 void SceneForge::UpdatePlay(float tick)
 {
-	// F1(デバッグUI)を開いている間はゲーム入力を凍結する。閉じていれば通常通り。
-	bool inputOn = !DebugUI::IsVisible();
+	// F1(デバッグUI)を開いている間、および画面フェード(遷移)中はゲーム入力を凍結する。
+	bool inputOn = !DebugUI::IsVisible() && !m_fade.IsBusy();
 
 	// Pキー: 瞄準区域の可視化トグル(デバッグ用。既定OFF=KCD式に「叩く場所」を示さない)
 	if (inputOn && IsKeyTrigger('P')) m_showAimHi = !m_showAimHi;
@@ -612,7 +614,13 @@ void SceneForge::UpdatePlay(float tick)
 	{
 		m_strikeAnim -= tick / STRIKE_ANIM_TIME;
 		if (m_strikeAnim < 0.0f) m_strikeAnim = 0.0f;
-		m_hammerLift = HAMMER_REST_LIFT * (1.0f - m_strikeAnim);	// 1(接触=低い)→0(元の高さ)
+		// 反冲曲線: p=0(接触=砧面)→p=1(静止高)。接触直後に素早く離れ(rise)、
+		// さらに上死点を越えて跳ね(recoil のオーバーシュート)、末尾で静止高へ収束する。
+		// rise は ease-out で「離れる速さ」を演出、recoil は両端0の早期パルスで反発を演出。
+		float p = 1.0f - m_strikeAnim;
+		float rise   = 1.0f - (1.0f - p) * (1.0f - p);				// 砧面から素早く離れる
+		float recoil = sinf(3.14159f * powf(p, 0.55f)) * (1.0f - p);	// 早期に跳ね、末尾で0へ
+		m_hammerLift = HAMMER_REST_LIFT * (rise + HAMMER_RECOIL_AMP * recoil);
 	}
 	else if (m_charging)
 	{
@@ -633,7 +641,7 @@ void SceneForge::UpdatePlay(float tick)
 			m_aimWorld.z + m_hammerOff[2],
 		};
 		if (!m_hammerPosInit) { m_hammerPos = tgt; m_hammerPosInit = true; }	// 起動時は瞬間セット
-		m_hammerPos = Lerp::Damp(m_hammerPos, tgt, HAMMER_FOLLOW_LAMBDA, tick);
+		m_hammerPos = Lerp::Damp(m_hammerPos, tgt, m_hammerFollow, tick);
 	}
 
 	// --- フィードバックの減衰 ---
@@ -814,7 +822,17 @@ void SceneForge::Update(float tick)
 	m_time += tick;
 	m_fade.Update(tick);	// 画面フェード(黒幕)を進める。遷移はTransitionの黒転じで実行される
 	// PLAY中かつF1非表示のときだけ、マウスをFPS式に視角へ累積(ApplyCameraより先に)。
-	if (m_state == GAME_PLAY && !DebugUI::IsVisible()) UpdateMouseLook();
+	if (m_state == GAME_PLAY && !DebugUI::IsVisible() && !m_fade.IsBusy()) UpdateMouseLook();
+	// カメラは KCD式に3つの固定視角へ吸着する。狙い(m_aimRail)自体は連続でハンマーは全長を動くが、
+	// カメラ用の rail は現在の段(m_viewSeg)の中心へ寄せる → 視角は3段でカチッと切り替わる。
+	{
+		int vs = (int)(m_aimRail * NVIEW);
+		if (vs < 0) vs = 0; if (vs > NVIEW - 1) vs = NVIEW - 1;
+		m_viewSeg = vs;
+		float railCam = (m_viewSeg + 0.5f) / (float)NVIEW;	// 段の中心(1/6, 1/2, 5/6)
+		float k = tick * m_camLerpRate; if (k > 1.0f) k = 1.0f;	// 速さは F1「Cam lerp」で調整
+		m_aimRailSmooth += (railCam - m_aimRailSmooth) * k;	// 停位へ滑らかに切替(リアリティ)
+	}
 	// デバッグUI表示中はカメラ固定を外し、DCCの自由カメラ(ALT+ドラッグでオービット)を許可。
 	// 非表示時(=プレイ中)はKCD風の固定カメラに上書きする。
 	ApplyCamera();		// FPS式受限環視カメラ(編集は STAGESETTING シーンで行う)

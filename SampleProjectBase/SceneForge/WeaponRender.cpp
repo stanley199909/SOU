@@ -388,16 +388,29 @@ void SceneForge::DrawHammer3D()
 	// 中央にリセットせずハンマーは最後の位置に留まる(操作の異様感を無くす)。
 	// 横位置(XZ)は UpdatePlay で Lerp::Damp 済みの m_hammerPos を読む(格子跳びを吸収)。
 	// オフセットは平滑化の目標に既に含まれているので、ここでは足さない。
-	float barTop = m_barAnchor.y + m_h[m_aimI][m_aimJ];
+	// 反冲(後座)の位相 rp: 接触直後に立ち上がり末尾で0へ(縦の m_hammerLift と同じ p を使う)。
+	// これで縦の跳ね(lift 側)と、奥行き後退＋錘頭の上翻り(ここ)が同じタイミングで起きる。
+	float rp = 0.0f;
+	if (m_strikeAnim > 0.0f)
+	{
+		float p = 1.0f - m_strikeAnim;
+		rp = sinf(3.14159f * powf(p, 0.55f)) * (1.0f - p);
+	}
+
+	// ハンマーの高さは固定(砧面+平坦時の板厚)。旧2D高度場 m_h は DoStrike で叩いた格子だけ
+	// 凹むため、それを読むと「叩いた位置に戻ると錘が沈む」不具合になる。武器モーフの刃面は
+	// ほぼ平なので、位置に依らない一定の barTop にする(高さは回弾アニメ m_hammerLift のみで変える)。
+	float barTop = m_barAnchor.y + m_hStart;
 	XMFLOAT3 pos = {
 		m_hammerPos.x,
 		barTop + m_hammerLift + m_hammerOff[1],
-		m_hammerPos.z,
+		m_hammerPos.z - HAMMER_RECOIL_BACK * rp,		// 反作用で鉄匠側(-Z)へ後退
 	};
 
 	XMMATRIX world =
 		XMMatrixScaling(m_hammerScale, m_hammerScale, m_hammerScale) *
-		XMMatrixRotationRollPitchYaw(m_hammerRot[0], m_hammerRot[1], m_hammerRot[2]) *
+		XMMatrixRotationRollPitchYaw(m_hammerRot[0] - HAMMER_RECOIL_TILT * rp,	// 錘頭が上へ翻る
+			m_hammerRot[1], m_hammerRot[2]) *
 		XMMatrixTranslation(pos.x, pos.y, pos.z);
 	world = hammer->GetScaleBaseMatrix() * world;
 	DrawModelWorld(hammer, world);

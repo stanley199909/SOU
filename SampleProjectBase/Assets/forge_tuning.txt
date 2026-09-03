@@ -1,0 +1,23 @@
+restlift 0.07700
+hscale 0.02000
+hrot 3.14000 -0.20000 -1.58000
+hoff 0.06000 0.00000 0.00000
+animtime 0.45000
+recoilup 1.50000
+recoilback 0.60000
+recoiltilt 1.30000
+chargeraise 0.55000
+camshake 0.14900
+aimsens 0.001100
+hfollow 12.00000
+campos 0.00000 2.30000 -0.95000
+camlook 0.00000 1.15000 0.55000
+camfov 0.89012
+followz 0.55000
+pangain 1.00000
+camlerp 1.50000
+wpyaw 1.57080
+wppitch 0.00000
+wproll 0.00000
+wpscale 1.00000
+wpoff 0.00000 0.00000 0.00000

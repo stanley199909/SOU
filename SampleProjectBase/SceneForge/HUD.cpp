@@ -100,20 +100,8 @@ void SceneForge::DrawPlayUI()
 	// 温度ゲージ
 	DrawHeatGauge();
 
-	// FPS準心: 画面中心に十字。鉄の上(照準有効)なら橙で光り、外れていれば暗い白。
-	{
-		ImDrawList* dl = ImGui::GetForegroundDrawList();
-		ImVec2 disp = ImGui::GetIO().DisplaySize;
-		float cx = disp.x * 0.5f, cy = disp.y * 0.5f;
-		float r = 12.0f, g = 4.0f;	// 半径と中央の隙間
-		ImU32 col = m_aimValid ? IM_COL32(255, 180, 70, 255) : IM_COL32(220, 220, 220, 130);
-		float th = m_aimValid ? 3.0f : 2.0f;
-		dl->AddLine(ImVec2(cx - r, cy), ImVec2(cx - g, cy), col, th);
-		dl->AddLine(ImVec2(cx + g, cy), ImVec2(cx + r, cy), col, th);
-		dl->AddLine(ImVec2(cx, cy - r), ImVec2(cx, cy - g), col, th);
-		dl->AddLine(ImVec2(cx, cy + g), ImVec2(cx, cy + r), col, th);
-		if (m_aimValid) dl->AddCircle(ImVec2(cx, cy), r + 3.0f, col, 0, 1.5f);
-	}
+	// ※KCD2式: 画面中心の準心は「置かない」。第一人称に固定十字は不自然で、しかも屏幕中央に
+	//   死んでいて動かせない。狙いの提示は「動くハンマー＋刃の高亮段」で行う(下の WeaponRender)。
 
 	// 過熱の警告(点滅)
 	if (m_heat > OVERHEAT)
@@ -211,23 +199,75 @@ void SceneForge::DrawUI()
 	case GAME_OVER:   DrawGameOverUI(); break;
 	}
 
-	// F1中: 武器モデルの向き/大きさ/位置を砧面に合わせる調整パネル(合ったら数値を焼き込む)
-	if (DebugUI::IsVisible() && m_wpOk)
+	// F1中: 調整パネルは「職責ごとに1窓」で分ける。
+	//   Weapon = 工件モデルの姿勢 / Camera = 視点と追従 / Hammer = 鎚の姿勢と反冲 / Aim = 照準の手触り。
+	//   合った値は SceneForge.h の初期値へ焼き込む。ここで混ぜない(相機は相機窓だけ、鎚は鎚窓だけ)。
+	if (DebugUI::IsVisible())
 	{
-		ImGui::Begin("Weapon Align (F1)");
-		ImGui::Text("stages loaded: %d,  verts: %d", (int)m_wpStage.size(), m_wpN);
-		ImGui::SliderFloat("Forge progress", &m_forgeProg, 0.0f, 1.0f, "%.2f");
-		ImGui::SliderFloat("Yaw",   &m_wpYaw,   -3.1416f, 3.1416f, "%.3f");
-		ImGui::SliderFloat("Pitch", &m_wpPitch, -3.1416f, 3.1416f, "%.3f");
-		ImGui::SliderFloat("Roll",  &m_wpRoll,  -3.1416f, 3.1416f, "%.3f");
-		ImGui::SliderFloat("Scale", &m_wpScale, 0.2f, 3.0f, "%.2f");
-		ImGui::SliderFloat("Off X", &m_wpOff[0], -1.0f, 1.0f, "%.3f");
-		ImGui::SliderFloat("Off Y", &m_wpOff[1], -1.0f, 1.0f, "%.3f");
-		ImGui::SliderFloat("Off Z", &m_wpOff[2], -1.0f, 1.0f, "%.3f");
-		ImGui::Separator();
-		ImGui::TextDisabled("Camera (3/4 forge view)");
+		// --- Weapon: 工件モデルを砧面に合わせる(FBXが読めた時だけ) ---
+		if (m_wpOk)
+		{
+			ImGui::Begin("Weapon (F1)");
+			ImGui::Text("stages loaded: %d,  verts: %d", (int)m_wpStage.size(), m_wpN);
+			ImGui::SliderFloat("Forge progress", &m_forgeProg, 0.0f, 1.0f, "%.2f");
+			ImGui::Separator();
+			ImGui::TextDisabled("-- Orientation --");
+			ImGui::SliderFloat("Yaw",   &m_wpYaw,   -3.1416f, 3.1416f, "%.3f");
+			ImGui::SliderFloat("Pitch", &m_wpPitch, -3.1416f, 3.1416f, "%.3f");
+			ImGui::SliderFloat("Roll",  &m_wpRoll,  -3.1416f, 3.1416f, "%.3f");
+			ImGui::Separator();
+			ImGui::TextDisabled("-- Scale / Position --");
+			ImGui::SliderFloat("Scale", &m_wpScale, 0.2f, 3.0f, "%.2f");
+			ImGui::SliderFloat("Off X", &m_wpOff[0], -1.0f, 1.0f, "%.3f");
+			ImGui::SliderFloat("Off Y", &m_wpOff[1], -1.0f, 1.0f, "%.3f");
+			ImGui::SliderFloat("Off Z", &m_wpOff[2], -1.0f, 1.0f, "%.3f");
+			ImGui::End();
+		}
+
+		// --- Camera: 視点・画角・追従・打撃の揺れ(相機に属するものは全部ここ) ---
+		ImGui::Begin("Camera (F1)");
+		ImGui::TextDisabled("-- View (3/4 forge) --");
 		ImGui::SliderFloat3("Cam Pos",  m_camPos,  -5.0f, 6.0f, "%.2f");
 		ImGui::SliderFloat3("Cam Look", m_camLook, -5.0f, 6.0f, "%.2f");
+		{
+			float fovDeg = m_camFov * 57.29578f;			// rad→deg で見せる
+			if (ImGui::SliderFloat("Cam FOV", &fovDeg, 25.0f, 70.0f, "%.0f deg"))
+				m_camFov = fovDeg * 0.01745329f;			// deg→rad へ戻す
+		}
+		ImGui::Separator();
+		ImGui::TextDisabled("-- Follow (aim along blade) --");
+		ImGui::SliderFloat("Rail (aim)",  &m_aimRail,     0.0f, 1.0f, "%.2f");	// 手前0..奥1(手動確認用)
+		ImGui::SliderFloat("Follow Z",    &m_camFollowZ,  0.0f, 1.0f, "%.2f");	// カメラ本体のZ追従割合
+		ImGui::SliderFloat("Pan gain",    &m_camPanGain,  0.0f, 2.0f, "%.2f");	// 追従量の倍率
+		ImGui::SliderFloat("Cam lerp",    &m_camLerpRate, 0.5f, 12.0f, "%.1f");	// 3段切替の速さ(小=重い)
+		ImGui::Separator();
+		ImGui::TextDisabled("-- Impact shake --");
+		ImGui::SliderFloat("Cam shake",   &CAM_SHAKE_AMP,  0.0f, 0.2f, "%.3f");	// 打撃のカメラ揺れ
+		ImGui::End();
+
+		// --- Hammer: 鎚モデルの姿勢と反冲だけ(相機・照準はここに置かない) ---
+		ImGui::Begin("Hammer (F1)");
+		ImGui::TextDisabled("-- Position / Rotation / Scale --");
+		ImGui::SliderFloat("Rest lift",   &HAMMER_REST_LIFT,    0.0f, 1.2f, "%.3f");	// 待機の高さ(下げる=低く構える)
+		ImGui::SliderFloat("Scale",       &m_hammerScale,       0.005f, 0.06f, "%.4f");
+		ImGui::SliderFloat3("Rot(rad)",   m_hammerRot,          -3.1416f, 3.1416f, "%.3f");
+		ImGui::SliderFloat3("Offset",     m_hammerOff,          -0.5f, 0.5f, "%.3f");	// Y=高さ微調整
+		ImGui::Separator();
+		ImGui::TextDisabled("-- Recoil (kickback) --");
+		ImGui::SliderFloat("Anim time",   &STRIKE_ANIM_TIME,    0.10f, 0.80f, "%.3f s");
+		ImGui::SliderFloat("Recoil up",   &HAMMER_RECOIL_AMP,   0.0f, 3.0f, "%.2f");	// 縦の跳ね
+		ImGui::SliderFloat("Recoil back", &HAMMER_RECOIL_BACK,  0.0f, 1.0f, "%.3f");	// 手前へ後退
+		ImGui::SliderFloat("Recoil tilt", &HAMMER_RECOIL_TILT,  0.0f, 2.0f, "%.3f");	// 錘頭の上翻り
+		ImGui::SliderFloat("Charge raise",&HAMMER_CHARGE_RAISE, 0.0f, 1.5f, "%.3f");	// 蓄力で上がる量
+		ImGui::End();
+
+		// --- Aim & Feel: 照準の重さ / 鎚が照準へ追いつく速さ ---
+		ImGui::Begin("Aim & Feel (F1)");
+		ImGui::SliderFloat("Aim sens",     &m_aimSens,      0.0006f, 0.0050f, "%.4f");	// 低=重い
+		ImGui::SliderFloat("Hammer follow",&m_hammerFollow, 3.0f, 24.0f, "%.1f");		// 低=遅れて重い
+		ImGui::Separator();
+		// 手動保存。退出時にも自動保存されるが、確認したい時のボタン(全窓の値をまとめて保存)。
+		if (ImGui::Button("Save tuning (forge_tuning.txt)")) SaveTuning();
 		ImGui::End();
 	}
 
