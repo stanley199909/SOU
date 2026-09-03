@@ -314,8 +314,10 @@ void SceneForge::SaveTuning()
 	fprintf(fp, "hscale %.5f\n",     m_hammerScale);
 	fprintf(fp, "hrot %.5f %.5f %.5f\n", m_hammerRot[0], m_hammerRot[1], m_hammerRot[2]);
 	fprintf(fp, "hoff %.5f %.5f %.5f\n", m_hammerOff[0], m_hammerOff[1], m_hammerOff[2]);
-	fprintf(fp, "animtime %.5f\n",   STRIKE_ANIM_TIME);
-	fprintf(fp, "recoilup %.5f\n",   HAMMER_RECOIL_AMP);
+	fprintf(fp, "stiffness %.5f\n",  HAMMER_STIFFNESS);
+	fprintf(fp, "damping %.5f\n",    HAMMER_DAMPING);
+	fprintf(fp, "mass %.5f\n",       HAMMER_MASS);
+	fprintf(fp, "impulse %.5f\n",    HAMMER_IMPULSE);
 	fprintf(fp, "recoilback %.5f\n", HAMMER_RECOIL_BACK);
 	fprintf(fp, "recoiltilt %.5f\n", HAMMER_RECOIL_TILT);
 	fprintf(fp, "chargeraise %.5f\n",HAMMER_CHARGE_RAISE);
@@ -355,8 +357,10 @@ void SceneForge::LoadTuning()
 		else if (strcmp(key, "hscale")     == 0) sscanf_s(v, "%f", &m_hammerScale);
 		else if (strcmp(key, "hrot")       == 0) sscanf_s(v, "%f %f %f", &m_hammerRot[0], &m_hammerRot[1], &m_hammerRot[2]);
 		else if (strcmp(key, "hoff")       == 0) sscanf_s(v, "%f %f %f", &m_hammerOff[0], &m_hammerOff[1], &m_hammerOff[2]);
-		else if (strcmp(key, "animtime")   == 0) sscanf_s(v, "%f", &STRIKE_ANIM_TIME);
-		else if (strcmp(key, "recoilup")   == 0) sscanf_s(v, "%f", &HAMMER_RECOIL_AMP);
+		else if (strcmp(key, "stiffness")  == 0) sscanf_s(v, "%f", &HAMMER_STIFFNESS);
+		else if (strcmp(key, "damping")    == 0) sscanf_s(v, "%f", &HAMMER_DAMPING);
+		else if (strcmp(key, "mass")       == 0) sscanf_s(v, "%f", &HAMMER_MASS);
+		else if (strcmp(key, "impulse")    == 0) sscanf_s(v, "%f", &HAMMER_IMPULSE);
 		else if (strcmp(key, "recoilback") == 0) sscanf_s(v, "%f", &HAMMER_RECOIL_BACK);
 		else if (strcmp(key, "recoiltilt") == 0) sscanf_s(v, "%f", &HAMMER_RECOIL_TILT);
 		else if (strcmp(key, "chargeraise")== 0) sscanf_s(v, "%f", &HAMMER_CHARGE_RAISE);

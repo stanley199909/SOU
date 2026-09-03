@@ -253,11 +253,13 @@ void SceneForge::DrawUI()
 		ImGui::SliderFloat3("Rot(rad)",   m_hammerRot,          -3.1416f, 3.1416f, "%.3f");
 		ImGui::SliderFloat3("Offset",     m_hammerOff,          -0.5f, 0.5f, "%.3f");	// Y=高さ微調整
 		ImGui::Separator();
-		ImGui::TextDisabled("-- Recoil (kickback) --");
-		ImGui::SliderFloat("Anim time",   &STRIKE_ANIM_TIME,    0.10f, 0.80f, "%.3f s");
-		ImGui::SliderFloat("Recoil up",   &HAMMER_RECOIL_AMP,   0.0f, 3.0f, "%.2f");	// 縦の跳ね
-		ImGui::SliderFloat("Recoil back", &HAMMER_RECOIL_BACK,  0.0f, 1.0f, "%.3f");	// 手前へ後退
-		ImGui::SliderFloat("Recoil tilt", &HAMMER_RECOIL_TILT,  0.0f, 2.0f, "%.3f");	// 錘頭の上翻り
+		ImGui::TextDisabled("-- Spring-damper (recoil physics) --");
+		ImGui::SliderFloat("Stiffness k", &HAMMER_STIFFNESS,    20.0f, 600.0f, "%.0f");	// 刚度=硬さ/速さ
+		ImGui::SliderFloat("Damping c",   &HAMMER_DAMPING,      0.0f, 40.0f, "%.2f");	// 阻尼=収まり(小=よく跳ねる)
+		ImGui::SliderFloat("Mass m",      &HAMMER_MASS,         0.2f, 4.0f, "%.2f");	// 質量=重さ/鈍さ
+		ImGui::SliderFloat("Impulse J",   &HAMMER_IMPULSE,      0.0f, 8.0f, "%.2f");	// 打撃の上向き冲量(初速=J/m)
+		ImGui::SliderFloat("Recoil back", &HAMMER_RECOIL_BACK,  0.0f, 1.0f, "%.3f");	// 手前へ後退(見た目)
+		ImGui::SliderFloat("Recoil tilt", &HAMMER_RECOIL_TILT,  0.0f, 2.0f, "%.3f");	// 錘頭の上翻り(見た目)
 		ImGui::SliderFloat("Charge raise",&HAMMER_CHARGE_RAISE, 0.0f, 1.5f, "%.3f");	// 蓄力で上がる量
 		ImGui::End();
 

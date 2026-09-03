@@ -291,8 +291,8 @@ private:
 	float m_hammerScale  = 0.02f;
 	float m_hammerRot[3] = { 3.14f, -0.20f, -1.58f };	// 向き(ラジアン)。調整済み既定
 	float m_hammerOff[3] = { 0.06f, 0.0f, 0.0f };		// 打撃点からの位置微調整
-	float m_hammerLift   = 0.40f;					// 頭の高さ(アニメで変化)
-	float m_strikeAnim   = 0.0f;					// 振り下ろしアニメ(1→0)
+	float m_hammerLift   = 0.40f;					// 頭の高さ(弾簧-阻尼で変化)=バネの位置
+	float m_hammerVel    = 0.0f;					// 頭の縦速度(弾簧-阻尼の状態)
 	// 表示用の平滑化した横位置(XZ)。準心が格子単位で跳ぶのを Lerp::Damp で吸収する。
 	// Draw はこれを読む。y は m_hammerLift のアニメをそのまま使う。
 	DirectX::XMFLOAT3 m_hammerPos = { 0, 0, 0 };
@@ -301,12 +301,17 @@ private:
 	float m_aimSens      = 0.0020f;	// 照準感度(小=重い/慎重, 大=軽快)。F1「Aim sens」
 	// ↓ ここから下は F1 の「Hammer」窓で実行時に調整できる値(constではなく変数)。
 	//   気に入った値が出たら、この初期値を書き換えて焼き込む。
-	float HAMMER_REST_LIFT    = 0.40f;	// 待機時の頭の高さ(砧面から)。下げると錘が低く構える
+	float HAMMER_REST_LIFT    = 0.40f;	// バネの自然長=静止高(砧面から)。ここへ収束する。下げ=低く構える
 	float HAMMER_CHARGE_RAISE = 0.55f;	// 蓄力で持ち上がる量
-	float STRIKE_ANIM_TIME    = 0.45f;	// 振り下ろし〜静止の所要時間(秒)。大=ゆっくり
-	// 反冲(後座): 銃の反動と同じく、打撃の反作用で錘が「上＋鉄匠側(手前)」へ弾かれて戻る。
-	// 縦(上)＋奥行(手前へ後退)＋錘頭の上翻り(回転)の3つで物理的な後座を作る。
-	float HAMMER_RECOIL_AMP   = 1.5f;	// 縦の跳ね(REST比)。上死点を越えて弾く(3.0→1.5=半分)
+	// 弾簧-阻尼(spring-damper)の物理係数。老師の SceneSpring と同じ模型で、値に物理的意味がある。
+	//   刚度 k 大 → 硬いバネ=速く戻る/振動が速い。 阻尼 c 大 → 早く収まる(小=長く跳ねる)。
+	//   質量 m 大 → 重くて鈍い。 過冲(上死点越え)と収束は k/c/m から自動で出る(手描き曲線を廃止)。
+	float HAMMER_STIFFNESS    = 220.0f;	// 刚度 k (N/m 相当)
+	float HAMMER_DAMPING      = 8.0f;	// 阻尼 c (速度比例の抵抗)。臨界=2*sqrt(k*m)≈29.7、今は低め=よく跳ねる
+	float HAMMER_MASS         = 1.0f;	// 質量 m
+	float HAMMER_IMPULSE      = 2.2f;	// 打撃で与える上向き冲量 J。初速 v0 = J/m。大=高く跳ねる
+	// 反冲(後座)の見た目: 打撃の反作用で錘が「奥行き(手前へ後退)＋錘頭の上翻り」する。
+	// 位相 rp は上記バネの縦速度から直接求める(接触直後=最大→上昇で減衰)=物理と一致。
 	float HAMMER_RECOIL_BACK  = 0.60f;	// 手前(-Z)へ後退する量(world)
 	float HAMMER_RECOIL_TILT  = 1.30f;	// 錘頭が上へ翻る回転(rad, ~75°)
 	float CAM_SHAKE_AMP       = 0.055f;	// 打撃時のカメラ縦揺れ(反冲がプレイヤーに伝わる)

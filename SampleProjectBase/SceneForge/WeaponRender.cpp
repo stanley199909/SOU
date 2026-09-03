@@ -388,13 +388,15 @@ void SceneForge::DrawHammer3D()
 	// 中央にリセットせずハンマーは最後の位置に留まる(操作の異様感を無くす)。
 	// 横位置(XZ)は UpdatePlay で Lerp::Damp 済みの m_hammerPos を読む(格子跳びを吸収)。
 	// オフセットは平滑化の目標に既に含まれているので、ここでは足さない。
-	// 反冲(後座)の位相 rp: 接触直後に立ち上がり末尾で0へ(縦の m_hammerLift と同じ p を使う)。
-	// これで縦の跳ね(lift 側)と、奥行き後退＋錘頭の上翻り(ここ)が同じタイミングで起きる。
+	// 反冲(後座)の位相 rp: 奥行き後退＋錘頭の上翻り。バネの縦速度から直接求める=物理と一致。
+	// 打撃直後は上向き速度が最大(=接触の反作用が最も強い)→ rp=1、上昇するにつれ減衰→頂点で0。
+	// これで縦の跳ね(m_hammerLift 側)と、後退＋上翻り(ここ)が同じ物理タイミングで起きる。
 	float rp = 0.0f;
-	if (m_strikeAnim > 0.0f)
+	float vLaunch = (HAMMER_MASS > 0.0001f) ? (HAMMER_IMPULSE / HAMMER_MASS) : 0.0f;	// 打撃直後の初速
+	if (vLaunch > 0.0001f && m_hammerVel > 0.0f)
 	{
-		float p = 1.0f - m_strikeAnim;
-		rp = sinf(3.14159f * powf(p, 0.55f)) * (1.0f - p);
+		rp = m_hammerVel / vLaunch;		// 0..1 に正規化(速度で駆動)
+		if (rp > 1.0f) rp = 1.0f;
 	}
 
 	// ハンマーの高さは固定(砧面+平坦時の板厚)。旧2D高度場 m_h は DoStrike で叩いた格子だけ

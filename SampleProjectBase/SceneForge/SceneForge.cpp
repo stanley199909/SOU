@@ -494,7 +494,7 @@ void SceneForge::StartGame()
 	m_charging    = false;
 	m_charge      = 0.0f;
 	m_strikeCD    = 0.0f;
-	m_strikeAnim  = 0.0f;
+	m_hammerVel   = 0.0f;
 	m_hammerLift  = HAMMER_REST_LIFT;
 	m_aimI = NL / 2; m_aimJ = NW / 2; m_aimSeg = 0; m_aimValid = false;
 	m_aimWorld = m_barAnchor;	// 最初の有効照準までのハンマー既定位置(板中心)
@@ -609,27 +609,28 @@ void SceneForge::UpdatePlay(float tick)
 	}
 	else m_match = ShapeMatch();
 
-	// --- ハンマーの上下: 蓄力で上がる / 打撃で振り下ろして戻る ---
-	if (m_strikeAnim > 0.0f)
+	// --- ハンマーの上下: 真の弾簧-阻尼(spring-damper)物理 ---
+	// 自然長 HAMMER_REST_LIFT のバネに質量 m の錘が付く模型(老師の SceneSpring と同じ流儀)。
+	// 打撃(DoStrike)の瞬間に錘を接触位置(lift=0)まで沈め、上向きの初速 v0=J/m を与える。
+	// 以後は毎フレーム、老師の手順どおりに合力→加速度→速度→位置を積分するだけ:
+	//   ・張力(復元力) = -k * (現在位置 - 自然長)      … フックの法則
+	//   ・抵抗力(阻尼) = -c * 速度                       … 速度比例の減衰
+	//   ・合力 = 張力 + 抵抗力  (重力は静止高に折込み済みなので単列しない)
+	// 上死点を越える過冲(overshoot)も静止高への収束も、係数 k/c/m から自動的に生まれる
+	// =手描きの sin 曲線を廃止。蓄力中だけは手で保持する(離した後にバネが働く)。
+	if (m_charging)
 	{
-		m_strikeAnim -= tick / STRIKE_ANIM_TIME;
-		if (m_strikeAnim < 0.0f) m_strikeAnim = 0.0f;
-		// 反冲曲線: p=0(接触=砧面)→p=1(静止高)。接触直後に素早く離れ(rise)、
-		// さらに上死点を越えて跳ね(recoil のオーバーシュート)、末尾で静止高へ収束する。
-		// rise は ease-out で「離れる速さ」を演出、recoil は両端0の早期パルスで反発を演出。
-		float p = 1.0f - m_strikeAnim;
-		float rise   = 1.0f - (1.0f - p) * (1.0f - p);				// 砧面から素早く離れる
-		float recoil = sinf(3.14159f * powf(p, 0.55f)) * (1.0f - p);	// 早期に跳ね、末尾で0へ
-		m_hammerLift = HAMMER_REST_LIFT * (rise + HAMMER_RECOIL_AMP * recoil);
-	}
-	else if (m_charging)
-	{
-		m_hammerLift = HAMMER_REST_LIFT + m_charge * HAMMER_CHARGE_RAISE;	// 蓄力で持ち上がる
+		m_hammerLift = HAMMER_REST_LIFT + m_charge * HAMMER_CHARGE_RAISE;
+		m_hammerVel  = 0.0f;	// 手で保持=速度ゼロ
 	}
 	else
 	{
-		float k = tick * 8.0f; if (k > 1.0f) k = 1.0f;
-		m_hammerLift += (HAMMER_REST_LIFT - m_hammerLift) * k;	// 待機高さへ緩やかに戻る
+		float dt = tick; if (dt > 0.033f) dt = 0.033f;	// 大コマ落ち時の発散防止(上限クランプ)
+		float tension    = -HAMMER_STIFFNESS * (m_hammerLift - HAMMER_REST_LIFT);	// 張力(復元)
+		float resistance = -HAMMER_DAMPING   *  m_hammerVel;						// 抵抗力(阻尼)
+		float accel      = (tension + resistance) / HAMMER_MASS;					// 合力→加速度
+		m_hammerVel  += accel * dt;			// 速度に加速度を加える(セミ暗黙オイラー=安定)
+		m_hammerLift += m_hammerVel * dt;	// 速度から位置を移動
 	}
 
 	// --- ハンマーの横位置を平滑追従: 準心が格子単位で跳ぶのを Lerp::Damp で滑らかに ---
@@ -680,7 +681,9 @@ void SceneForge::DoStrike()
 	// (冷打音は誤解のもと。清脆な打鉄音が鳴らないこと自体が「外した」合図になる)。
 	if (!m_aimValid)
 	{
-		m_strikeAnim = 1.0f;			// 空振りのモーションだけ
+		// 空振りでも錘は砧へ振り下ろされ弾む(鉄は変形しないだけ)=バネに接触＋初速を与える
+		m_hammerLift = 0.0f;
+		m_hammerVel  = HAMMER_IMPULSE / HAMMER_MASS;
 		Audio::Play(Audio::SE_SWING, 0.7f);	// 空を切る「ヒュッ」(鉄に当たっていない合図。文字は出さない)
 		return;
 	}
@@ -762,7 +765,9 @@ void SceneForge::DoStrike()
 	}
 	// 冷打は「ガツン」と大きく揺れる(手応えが悪い=衝撃だけ大きい)
 	m_shake = cold ? (0.6f + power * 0.6f) : (0.3f + power * 0.7f);
-	m_strikeAnim = 1.0f;	// ハンマーを振り下ろすアニメ開始
+	// 打撃=錘を接触位置(lift=0)まで沈め、反発の上向き初速をバネに与える(以後は物理で跳ね返る)
+	m_hammerLift = 0.0f;
+	m_hammerVel  = HAMMER_IMPULSE / HAMMER_MASS;
 
 	// 評価 & 廃件率: KCD式に「指示せず、誤りだけ知らせる」。負向フィードバックは日本語(主人公の独白)。
 	//   廃件率は不可逆(減らない)。過熱/冷打/完成済みの区域を叩く=誤り→廃件率↑。
