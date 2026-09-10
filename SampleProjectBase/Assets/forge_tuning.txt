@@ -12,7 +12,7 @@ chargeraise 0.55000
 camshake 0.14900
 breathamp 0.01800
 breathspd 0.70000
-tremoramp 0.00010
+tremoramp 0.00020
 tremorspd 34.00000
 tremorramp 3.00000
 looknoise 0.45000
@@ -24,7 +24,7 @@ camfov 0.89012
 followz 0.55000
 pangain 1.00000
 camlerp 1.50000
-wpyaw 1.57080
+wpyaw 0.00000
 wppitch 0.00000
 wproll 0.00000
 wpscale 1.00000

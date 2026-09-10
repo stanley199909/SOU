@@ -2,7 +2,7 @@
 #include "DirectXTex/TextureLoad.h"
 
 /// <summary>
-/// ƒeƒNƒXƒ`ƒƒ
+/// ï¿½eï¿½Nï¿½Xï¿½`ï¿½ï¿½
 /// </summary>
 Texture::Texture()
 	: m_width(0), m_height(0)
@@ -19,12 +19,12 @@ HRESULT Texture::Create(const char* fileName)
 {
 	HRESULT hr = S_OK;
 
-	// •¶š•ÏŠ·
+	// ï¿½ï¿½ï¿½ï¿½ï¿½ÏŠï¿½
 	wchar_t wPath[MAX_PATH];
 	size_t wLen = 0;
 	MultiByteToWideChar(0, 0, fileName, -1, wPath, MAX_PATH);
 
-	// ƒtƒ@ƒCƒ‹•Ê“Ç‚İ‚İ
+	// ï¿½tï¿½@ï¿½Cï¿½ï¿½ï¿½Ê“Ç‚İï¿½ï¿½ï¿½
 	DirectX::TexMetadata mdata;
 	DirectX::ScratchImage image;
 	if (strstr(fileName, ".tga"))
@@ -35,8 +35,19 @@ HRESULT Texture::Create(const char* fileName)
 		return E_FAIL;
 	}
 
-	// ƒVƒF[ƒ_ƒŠƒ\[ƒX¶¬
-	hr = CreateShaderResourceView(GetDevice(), image.GetImages(), image.GetImageCount(), mdata, &m_pSRV);
+	// mipmap(å¤šç´šæ¸é ç´‹ç†)ã‚’ç”Ÿæˆã™ã‚‹ã€‚ç„¡ã„ã¨é ã/æ–œã‚(æ å°„è§’)ã§ç”»ç´ ãŒç´‹ç´ ã‚’é£›ã°ã—ã¦
+	// ã‚µãƒ³ãƒ—ãƒ«ã—ã€ã‚«ãƒ¡ãƒ©ç§»å‹•ã§ãƒãƒ©ã¤ã/ãƒ¢ã‚¢ãƒ¬(ç ´å›³)ã«ãªã‚‹ã€‚levels=0=ãƒ•ãƒ«mipé–ã€‚
+	// å¤±æ•—æ™‚(åœ§ç¸®ãƒ•ã‚©ãƒ¼ãƒãƒƒãƒˆç­‰)ã¯å…ƒç”»åƒ(mipç„¡ã—)ã§ä½œã‚‹=ãƒ•ã‚©ãƒ¼ãƒ«ãƒãƒƒã‚¯ã€‚
+	DirectX::ScratchImage mipChain;
+	HRESULT mipHr = DirectX::GenerateMipMaps(
+		image.GetImages(), image.GetImageCount(), mdata,
+		DirectX::TEX_FILTER_DEFAULT, 0, mipChain);
+
+	if (SUCCEEDED(mipHr))
+		hr = CreateShaderResourceView(GetDevice(), mipChain.GetImages(), mipChain.GetImageCount(), mipChain.GetMetadata(), &m_pSRV);
+	else
+		hr = CreateShaderResourceView(GetDevice(), image.GetImages(), image.GetImageCount(), mdata, &m_pSRV);
+
 	if (SUCCEEDED(hr))
 	{
 		m_width = (UINT)mdata.width;
@@ -80,14 +91,14 @@ HRESULT Texture::CreateResource(D3D11_TEXTURE2D_DESC& desc, const void* pData)
 {
 	HRESULT hr = E_FAIL;
 
-	// ƒeƒNƒXƒ`ƒƒì¬
+	// ï¿½eï¿½Nï¿½Xï¿½`ï¿½ï¿½ï¿½ì¬
 	D3D11_SUBRESOURCE_DATA data = {};
 	data.pSysMem = pData;
 	data.SysMemPitch = desc.Width * 4;
 	hr = GetDevice()->CreateTexture2D(&desc, pData ? &data : nullptr, &m_pTex);
 	if (FAILED(hr)) { return hr; }
 
-	// İ’è
+	// ï¿½İ’ï¿½
 	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 	switch (desc.Format)
 	{
@@ -96,7 +107,7 @@ HRESULT Texture::CreateResource(D3D11_TEXTURE2D_DESC& desc, const void* pData)
 	}
 	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
 	srvDesc.Texture2D.MipLevels = 1;
-	// ¶¬
+	// ï¿½ï¿½ï¿½ï¿½
 	hr = GetDevice()->CreateShaderResourceView(m_pTex, &srvDesc, &m_pSRV);
 	if (SUCCEEDED(hr))
 	{
@@ -107,7 +118,7 @@ HRESULT Texture::CreateResource(D3D11_TEXTURE2D_DESC& desc, const void* pData)
 }
 
 /// <summary>
-/// ƒŒƒ“ƒ_[ƒ^[ƒQƒbƒg
+/// ï¿½ï¿½ï¿½ï¿½ï¿½_ï¿½[ï¿½^ï¿½[ï¿½Qï¿½bï¿½g
 /// </summary>
 RenderTarget::RenderTarget()
 	: m_pRTV(nullptr)
@@ -136,12 +147,12 @@ HRESULT RenderTarget::CreateFromScreen()
 {
 	HRESULT hr;
 
-	// ƒoƒbƒNƒoƒbƒtƒ@‚Ìƒ|ƒCƒ“ƒ^‚ğæ“¾
+	// ï¿½oï¿½bï¿½Nï¿½oï¿½bï¿½tï¿½@ï¿½Ìƒ|ï¿½Cï¿½ï¿½ï¿½^ï¿½ï¿½ï¿½æ“¾
 	ID3D11Texture2D* pBackBuffer = NULL;
 	hr = GetSwapChain()->GetBuffer(0, __uuidof(ID3D11Texture2D), (LPVOID*)&m_pTex);
 	if (FAILED(hr)) { return hr; }
 
-	// ƒoƒbƒNƒoƒbƒtƒ@‚Ö‚Ìƒ|ƒCƒ“ƒ^‚ğw’è‚µ‚ÄƒŒƒ“ƒ_[ƒ^[ƒQƒbƒgƒrƒ…[‚ğì¬
+	// ï¿½oï¿½bï¿½Nï¿½oï¿½bï¿½tï¿½@ï¿½Ö‚Ìƒ|ï¿½Cï¿½ï¿½ï¿½^ï¿½ï¿½ï¿½wï¿½è‚µï¿½Äƒï¿½ï¿½ï¿½ï¿½_ï¿½[ï¿½^ï¿½[ï¿½Qï¿½bï¿½gï¿½rï¿½ï¿½ï¿½[ï¿½ï¿½ï¿½ì¬
 	D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
 	rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
 	rtvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
@@ -162,21 +173,21 @@ ID3D11RenderTargetView* RenderTarget::GetView() const
 }
 HRESULT RenderTarget::CreateResource(D3D11_TEXTURE2D_DESC& desc, const void* pData)
 {
-	// ƒeƒNƒXƒ`ƒƒƒŠƒ\[ƒXì¬
+	// ï¿½eï¿½Nï¿½Xï¿½`ï¿½ï¿½ï¿½ï¿½ï¿½\ï¿½[ï¿½Xï¿½ì¬
 	HRESULT hr = Texture::CreateResource(desc, nullptr);
 	if (FAILED(hr)) { return hr; }
 
-	// İ’è
+	// ï¿½İ’ï¿½
 	D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
 	rtvDesc.Format = desc.Format;
 	rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
 
-	// ¶¬
+	// ï¿½ï¿½ï¿½ï¿½
 	return GetDevice()->CreateRenderTargetView(m_pTex, &rtvDesc, &m_pRTV);
 }
 
 /// <summary>
-/// [“xƒeƒNƒXƒ`ƒƒ
+/// ï¿½[ï¿½xï¿½eï¿½Nï¿½Xï¿½`ï¿½ï¿½
 /// </summary>
 DepthStencil::DepthStencil()
 	: m_pDSV(nullptr)
@@ -203,19 +214,19 @@ ID3D11DepthStencilView* DepthStencil::GetView() const
 }
 HRESULT DepthStencil::CreateResource(D3D11_TEXTURE2D_DESC& desc, const void* pData)
 {
-	// ƒXƒeƒ“ƒVƒ‹g—p”»’è
+	// ï¿½Xï¿½eï¿½ï¿½ï¿½Vï¿½ï¿½ï¿½gï¿½pï¿½ï¿½ï¿½ï¿½
 	bool useStencil = (desc.Format == DXGI_FORMAT_R24G8_TYPELESS);
 
-	// ƒŠƒ\[ƒX¶¬
+	// ï¿½ï¿½ï¿½\ï¿½[ï¿½Xï¿½ï¿½ï¿½ï¿½
 	desc.BindFlags |= D3D11_BIND_DEPTH_STENCIL;
 	HRESULT hr = Texture::CreateResource(desc, nullptr);
 	if (FAILED(hr)) { return hr; }
 
-	// İ’è
+	// ï¿½İ’ï¿½
 	D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
 	dsvDesc.Format = useStencil ? DXGI_FORMAT_D24_UNORM_S8_UINT : DXGI_FORMAT_D32_FLOAT;
 	dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
 
-	// ¶¬
+	// ï¿½ï¿½ï¿½ï¿½
 	return GetDevice()->CreateDepthStencilView(m_pTex, &dsvDesc, &m_pDSV);
 }

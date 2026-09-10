@@ -1,7 +1,7 @@
 #include "DirectX.h"
 #include "Texture.h"
 
-//--- ƒOƒ[ƒoƒ‹•Ï”
+//--- ï¿½Oï¿½ï¿½ï¿½[ï¿½oï¿½ï¿½ï¿½Ïï¿½
 ID3D11Device *g_pDevice;
 ID3D11DeviceContext *g_pContext;
 IDXGISwapChain *g_pSwapChain;
@@ -27,41 +27,41 @@ HRESULT InitDirectX(HWND hWnd, UINT width, UINT height, bool fullscreen)
 {
 	HRESULT	hr = E_FAIL;
 	DXGI_SWAP_CHAIN_DESC sd;
-	ZeroMemory(&sd, sizeof(sd));						// ƒ[ƒƒNƒŠƒA
-	sd.BufferDesc.Width = width;						// ƒoƒbƒNƒoƒbƒtƒ@‚Ì•
-	sd.BufferDesc.Height = height;						// ƒoƒbƒNƒoƒbƒtƒ@‚Ì‚‚³
-	sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;	// ƒoƒbƒNƒoƒbƒtƒ@ƒtƒH[ƒ}ƒbƒg(R,G,B,A)
-	sd.SampleDesc.Count = 1;							// ƒ}ƒ‹ƒ`ƒTƒ“ƒvƒ‹‚Ì”
+	ZeroMemory(&sd, sizeof(sd));						// ï¿½[ï¿½ï¿½ï¿½Nï¿½ï¿½ï¿½A
+	sd.BufferDesc.Width = width;						// ï¿½oï¿½bï¿½Nï¿½oï¿½bï¿½tï¿½@ï¿½Ì•ï¿½
+	sd.BufferDesc.Height = height;						// ï¿½oï¿½bï¿½Nï¿½oï¿½bï¿½tï¿½@ï¿½Ìï¿½ï¿½ï¿½
+	sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;	// ï¿½oï¿½bï¿½Nï¿½oï¿½bï¿½tï¿½@ï¿½tï¿½Hï¿½[ï¿½}ï¿½bï¿½g(R,G,B,A)
+	sd.SampleDesc.Count = 1;							// ï¿½}ï¿½ï¿½ï¿½`ï¿½Tï¿½ï¿½ï¿½vï¿½ï¿½ï¿½Ìï¿½
 	sd.BufferDesc.RefreshRate.Numerator = 1000;
 	sd.BufferDesc.RefreshRate.Denominator = 1;
-	sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;	// ƒoƒbƒNƒoƒbƒtƒ@‚Ìg—p•û–@
-	sd.BufferCount = 1;									// ƒoƒbƒNƒoƒbƒtƒ@‚Ì”
-	sd.OutputWindow = hWnd;								// ŠÖ˜A•t‚¯‚éƒEƒCƒ“ƒhƒE
+	sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;	// ï¿½oï¿½bï¿½Nï¿½oï¿½bï¿½tï¿½@ï¿½Ìgï¿½pï¿½ï¿½ï¿½@
+	sd.BufferCount = 1;									// ï¿½oï¿½bï¿½Nï¿½oï¿½bï¿½tï¿½@ï¿½Ìï¿½
+	sd.OutputWindow = hWnd;								// ï¿½Ö˜Aï¿½tï¿½ï¿½ï¿½ï¿½Eï¿½Cï¿½ï¿½ï¿½hï¿½E
 	sd.Windowed = fullscreen ? FALSE : TRUE;
 	sd.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
 
-	// ƒhƒ‰ƒCƒo‚Ìí—Ş
+	// ï¿½hï¿½ï¿½ï¿½Cï¿½oï¿½Ìï¿½ï¿½
 	D3D_DRIVER_TYPE driverTypes[] =
 	{
-		D3D_DRIVER_TYPE_HARDWARE,	// GPU‚Å•`‰æ
-		D3D_DRIVER_TYPE_WARP,		// ‚¸“x(’á‘¬
-		D3D_DRIVER_TYPE_REFERENCE,	// CPU‚Å•`‰æ
+		D3D_DRIVER_TYPE_HARDWARE,	// GPUï¿½Å•`ï¿½ï¿½
+		D3D_DRIVER_TYPE_WARP,		// ï¿½ï¿½ï¿½ï¿½ï¿½x(ï¿½á‘¬
+		D3D_DRIVER_TYPE_REFERENCE,	// CPUï¿½Å•`ï¿½ï¿½
 	};
 	UINT numDriverTypes = ARRAYSIZE(driverTypes);
 
 	UINT createDeviceFlags = 0;
 	createDeviceFlags |= D3D11_CREATE_DEVICE_DEBUG;
 
-	// ‹@”\ƒŒƒxƒ‹
+	// ï¿½@ï¿½\ï¿½ï¿½ï¿½xï¿½ï¿½
 	D3D_FEATURE_LEVEL featureLevels[] =
 	{
-		D3D_FEATURE_LEVEL_11_1,		// DirectX11.1‘Î‰GPUƒŒƒxƒ‹
-		D3D_FEATURE_LEVEL_11_0,		// DirectX11‘Î‰GPUƒŒƒxƒ‹
-		D3D_FEATURE_LEVEL_10_1,		// DirectX10.1‘Î‰GPUƒŒƒxƒ‹
-		D3D_FEATURE_LEVEL_10_0,		// DirectX10‘Î‰GPUƒŒƒxƒ‹
-		D3D_FEATURE_LEVEL_9_3,		// DirectX9.3‘Î‰GPUƒŒƒxƒ‹
-		D3D_FEATURE_LEVEL_9_2,		// DirectX9.2‘Î‰GPUƒŒƒxƒ‹
-		D3D_FEATURE_LEVEL_9_1		// Direct9.1‘Î‰GPUƒŒƒxƒ‹
+		D3D_FEATURE_LEVEL_11_1,		// DirectX11.1ï¿½Î‰ï¿½GPUï¿½ï¿½ï¿½xï¿½ï¿½
+		D3D_FEATURE_LEVEL_11_0,		// DirectX11ï¿½Î‰ï¿½GPUï¿½ï¿½ï¿½xï¿½ï¿½
+		D3D_FEATURE_LEVEL_10_1,		// DirectX10.1ï¿½Î‰ï¿½GPUï¿½ï¿½ï¿½xï¿½ï¿½
+		D3D_FEATURE_LEVEL_10_0,		// DirectX10ï¿½Î‰ï¿½GPUï¿½ï¿½ï¿½xï¿½ï¿½
+		D3D_FEATURE_LEVEL_9_3,		// DirectX9.3ï¿½Î‰ï¿½GPUï¿½ï¿½ï¿½xï¿½ï¿½
+		D3D_FEATURE_LEVEL_9_2,		// DirectX9.2ï¿½Î‰ï¿½GPUï¿½ï¿½ï¿½xï¿½ï¿½
+		D3D_FEATURE_LEVEL_9_1		// Direct9.1ï¿½Î‰ï¿½GPUï¿½ï¿½ï¿½xï¿½ï¿½
 	};
 	UINT numFeatureLevels = ARRAYSIZE(featureLevels);
 
@@ -72,18 +72,18 @@ HRESULT InitDirectX(HWND hWnd, UINT width, UINT height, bool fullscreen)
 	{
 		driverType = driverTypes[driverTypeIndex];
 		hr = D3D11CreateDeviceAndSwapChain(
-			NULL,					// ƒfƒBƒXƒvƒŒƒCƒfƒoƒCƒX‚ÌƒAƒ_ƒvƒ^iNULL‚Ìê‡Å‰‚ÉŒ©‚Â‚©‚Á‚½ƒAƒ_ƒvƒ^j
-			driverType,				// ƒfƒoƒCƒXƒhƒ‰ƒCƒo‚Ìƒ^ƒCƒv
-			NULL,					// ƒ\ƒtƒgƒEƒFƒAƒ‰ƒXƒ^ƒ‰ƒCƒU‚ğg—p‚·‚éê‡‚Éw’è‚·‚é
-			createDeviceFlags,		// ƒfƒoƒCƒXƒtƒ‰ƒO
-			featureLevels,			// ‹@”\ƒŒƒxƒ‹
-			numFeatureLevels,		// ‹@”\ƒŒƒxƒ‹”
+			NULL,					// ï¿½fï¿½Bï¿½Xï¿½vï¿½ï¿½ï¿½Cï¿½fï¿½oï¿½Cï¿½Xï¿½ÌƒAï¿½_ï¿½vï¿½^ï¿½iNULLï¿½Ìê‡ï¿½Åï¿½ï¿½ÉŒï¿½ï¿½Â‚ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Aï¿½_ï¿½vï¿½^ï¿½j
+			driverType,				// ï¿½fï¿½oï¿½Cï¿½Xï¿½hï¿½ï¿½ï¿½Cï¿½oï¿½Ìƒ^ï¿½Cï¿½v
+			NULL,					// ï¿½\ï¿½tï¿½gï¿½Eï¿½Fï¿½Aï¿½ï¿½ï¿½Xï¿½^ï¿½ï¿½ï¿½Cï¿½Uï¿½ï¿½ï¿½gï¿½pï¿½ï¿½ï¿½ï¿½ê‡ï¿½Éwï¿½è‚·ï¿½ï¿½
+			createDeviceFlags,		// ï¿½fï¿½oï¿½Cï¿½Xï¿½tï¿½ï¿½ï¿½O
+			featureLevels,			// ï¿½@ï¿½\ï¿½ï¿½ï¿½xï¿½ï¿½
+			numFeatureLevels,		// ï¿½@ï¿½\ï¿½ï¿½ï¿½xï¿½ï¿½ï¿½ï¿½
 			D3D11_SDK_VERSION,		// 
-			&sd,					// ƒXƒƒbƒvƒ`ƒFƒCƒ“‚Ìİ’è
-			&g_pSwapChain,			// IDXGIDwapChainƒCƒ“ƒ^ƒtƒF[ƒX	
-			&g_pDevice,				// ID3D11DeviceƒCƒ“ƒ^ƒtƒF[ƒX
-			&featureLevel,		// ƒTƒ|[ƒg‚³‚ê‚Ä‚¢‚é‹@”\ƒŒƒxƒ‹
-			&g_pContext);		// ƒfƒoƒCƒXƒRƒ“ƒeƒLƒXƒg
+			&sd,					// ï¿½Xï¿½ï¿½ï¿½bï¿½vï¿½`ï¿½Fï¿½Cï¿½ï¿½ï¿½Ìİ’ï¿½
+			&g_pSwapChain,			// IDXGIDwapChainï¿½Cï¿½ï¿½ï¿½^ï¿½tï¿½Fï¿½[ï¿½X	
+			&g_pDevice,				// ID3D11Deviceï¿½Cï¿½ï¿½ï¿½^ï¿½tï¿½Fï¿½[ï¿½X
+			&featureLevel,		// ï¿½Tï¿½|ï¿½[ï¿½gï¿½ï¿½ï¿½ï¿½Ä‚ï¿½ï¿½ï¿½@ï¿½\ï¿½ï¿½ï¿½xï¿½ï¿½
+			&g_pContext);		// ï¿½fï¿½oï¿½Cï¿½Xï¿½Rï¿½ï¿½ï¿½eï¿½Lï¿½Xï¿½g
 		if (SUCCEEDED(hr)) {
 			break;
 		}
@@ -93,7 +93,7 @@ HRESULT InitDirectX(HWND hWnd, UINT width, UINT height, bool fullscreen)
 	}
 
 
-	//--- ƒJƒŠƒ“ƒOİ’è
+	//--- ï¿½Jï¿½ï¿½ï¿½ï¿½ï¿½Oï¿½İ’ï¿½
 	D3D11_RASTERIZER_DESC rasterizer = {};
 	D3D11_CULL_MODE cull[] = {
 		D3D11_CULL_NONE,
@@ -110,7 +110,7 @@ HRESULT InitDirectX(HWND hWnd, UINT width, UINT height, bool fullscreen)
 	}
 	SetCullingMode(D3D11_CULL_NONE);
 
-	//--- [“xƒeƒXƒg
+	//--- ï¿½[ï¿½xï¿½eï¿½Xï¿½g
 	// https://tositeru.github.io/ImasaraDX11/part/ZBuffer-and-depth-stencil
 	D3D11_DEPTH_STENCIL_DESC dsDesc = {};
 	dsDesc.DepthEnable = true;
@@ -139,7 +139,7 @@ HRESULT InitDirectX(HWND hWnd, UINT width, UINT height, bool fullscreen)
 	}
 	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
 
-	//--- ƒAƒ‹ƒtƒ@ƒuƒŒƒ“ƒfƒBƒ“ƒO
+	//--- ï¿½Aï¿½ï¿½ï¿½tï¿½@ï¿½uï¿½ï¿½ï¿½ï¿½ï¿½fï¿½Bï¿½ï¿½ï¿½O
 	// https://pgming-ctrl.com/directx11/blend/
 	D3D11_BLEND_DESC blendDesc = {};
 	blendDesc.AlphaToCoverageEnable = FALSE;
@@ -167,15 +167,21 @@ HRESULT InitDirectX(HWND hWnd, UINT width, UINT height, bool fullscreen)
 	}
 	SetBlendMode(BLEND_ALPHA);
 
-	// ƒTƒ“ƒvƒ‰[
+	// ï¿½Tï¿½ï¿½ï¿½vï¿½ï¿½ï¿½[
 	D3D11_SAMPLER_DESC samplerDesc = {};
+	// å„å‘ç•°æ€§(æ å°„è§’ã®åºŠã§mipã ã‘ã§ã¯æ®‹ã‚‹ãƒœã‚±/ãƒãƒ©ã¤ãã‚’å¤§å¹…ã«è»½æ¸›)ã€‚æ ¸æ˜¾å‘ã‘ã«8xã€‚
+	static const UINT ANISO_MAX = 8;
 	D3D11_FILTER filter[] = {
-		D3D11_FILTER_MIN_MAG_MIP_LINEAR,
+		D3D11_FILTER_ANISOTROPIC,			// SAMPLER_LINEAR: å„å‘ç•°æ€§ãƒ•ã‚£ãƒ«ã‚¿
 		D3D11_FILTER_MIN_MAG_MIP_POINT,
 	};
 	samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
 	samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_WRAP;
 	samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
+	samplerDesc.MaxAnisotropy = ANISO_MAX;
+	// â˜…é‡è¦: æ—¢å®šã® {} ã¯ MaxLOD=0 ã§ mip0 ã«å›ºå®šã•ã‚Œã‚‹=mipmapãŒåŠ¹ã‹ãªã„ã€‚å…¨mipé–ã‚’è¨±å¯ã™ã‚‹ã€‚
+	samplerDesc.MinLOD = 0.0f;
+	samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
 	for (int i = 0; i < SAMPLER_MAX; ++i)
 	{
 		samplerDesc.Filter = filter[i];
@@ -221,7 +227,7 @@ void SetRenderTargets(UINT num, RenderTarget** ppViews, DepthStencil* pView)
 		rtvs[i] = ppViews[i]->GetView();
 	g_pContext->OMSetRenderTargets(num, rtvs, pView ? pView->GetView() : nullptr);
 
-	// ƒrƒ…[ƒ|[ƒg‚Ìİ’è
+	// ï¿½rï¿½ï¿½ï¿½[ï¿½|ï¿½[ï¿½gï¿½Ìİ’ï¿½
 	D3D11_VIEWPORT vp;
 	vp.TopLeftX = 0.0f;
 	vp.TopLeftY = 0.0f;

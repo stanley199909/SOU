@@ -152,19 +152,24 @@ void SceneForge::LoadWeaponStages()
 	const char* dir = "Assets/Model/weapon/";
 	for (int s = 0; s < 8; ++s)
 	{
-		char path[256];
-		if (s == 0) sprintf_s(path, sizeof(path), "%sstage_0.fbx", dir);
-		else        sprintf_s(path, sizeof(path), "%sstage_%d.fbx", dir, s);
-		// stage_final.fbx を最終段として許容(stage_1.fbx が無ければ探す)
-		FILE* fp = nullptr;
-		if (fopen_s(&fp, path, "rb") != 0 || !fp)
+		// stage_<n> を探す。拡張子は .obj / .fbx の両方を許容(Blenderからobjで出せる)。
+		// s>=1 で stage_<s> が無ければ stage_final を最終段として許容する。
+		auto exists = [](const char* p) { FILE* f = nullptr; if (fopen_s(&f, p, "rb") == 0 && f) { fclose(f); return true; } return false; };
+		auto findStage = [&](const char* stem, char* out) -> bool
 		{
-			if (s >= 1) { sprintf_s(path, sizeof(path), "%sstage_final.fbx", dir);
-			              if (fopen_s(&fp, path, "rb") == 0 && fp) { fclose(fp); }
-			              else break; }
+			sprintf_s(out, 256, "%s%s.obj", dir, stem); if (exists(out)) return true;
+			sprintf_s(out, 256, "%s%s.fbx", dir, stem); if (exists(out)) return true;
+			return false;
+		};
+		char path[256];
+		char stem[32];
+		if (s == 0) strcpy_s(stem, "stage_0");
+		else        sprintf_s(stem, sizeof(stem), "stage_%d", s);
+		if (!findStage(stem, path))
+		{
+			if (s >= 1 && findStage("stage_final", path)) {}	// 最終段
 			else break;
 		}
-		else fclose(fp);
 
 		Assimp::Importer imp;
 		unsigned int flag = aiProcess_Triangulate | aiProcess_ConvertToLeftHanded | aiProcess_PreTransformVertices;
@@ -183,6 +188,9 @@ void SceneForge::LoadWeaponStages()
 				aiVector3D n = me->HasNormals() ? me->mNormals[j] : aiVector3D(0, 1, 0);
 				st.pos.push_back(XMFLOAT3(p.x, p.y, p.z));
 				st.nrm.push_back(XMFLOAT3(n.x, n.y, n.z));
+				// UV(真の鋼テクスチャ採样用)。morphでUVは不変なので各段が持つが stage0 のみ使う。
+				aiVector3D uv = me->HasTextureCoords(0) ? me->mTextureCoords[0][j] : aiVector3D(0, 0, 0);
+				st.uv.push_back(XMFLOAT2(uv.x, uv.y));
 			}
 			if (s == 0)	// インデックスは全段共通なので最初の段だけ作る
 			{
@@ -292,6 +300,7 @@ void SceneForge::BuildWeaponMorph()
 		XMVECTOR n = XMVector3Normalize(XMVector3TransformNormal(XMVectorLerp(na, nb, t), rot));
 		XMStoreFloat3(&m_wpVtx[i].pos, pp);
 		XMStoreFloat3(&m_wpVtx[i].nrm, n);
+		m_wpVtx[i].uv = m_wpStage[0].uv[i];		// UVは全段共通(morphで不変)
 
 		// 既定は熱色のみ(KCD式=「叩く場所」を示さない)。Pキーでデバッグ可視化ONの時だけ
 		// 「今照準している区域」を青緑で薄く塗る(叩く指示ではなく開発用)。
@@ -303,6 +312,7 @@ void SceneForge::BuildWeaponMorph()
 			col.y = col.y + (1.0f - col.y) * b;
 			col.z = col.z + (1.0f - col.z) * b;
 		}
+		col.w = m_heat;			// PSへ温度スカラーを渡す(冷→熱のブレンドに使う)
 		m_wpVtx[i].col = col;
 	}
 }
@@ -322,10 +332,31 @@ void SceneForge::DrawWeapon()
 	BuildWeaponMorph();
 	m_wpMesh->Write(m_wpVtx.data());
 
+	// 金属質感パラメータをPS(b0)へ。HLSLの cbuffer Mtl とレイアウト一致(各float4境界)。
+	struct MtlCB {
+		XMFLOAT3 camPos;  float rough;
+		XMFLOAT3 lightDir;float metal;
+		XMFLOAT3 skyCol;  float specK;
+		XMFLOAT3 grdCol;  float envK;
+		float    fresK;   XMFLOAT3 pad;
+	} mtl;
+	mtl.camPos   = cam->GetPos();
+	mtl.rough    = m_wpRough;
+	mtl.lightDir = { 0.35f, 0.85f, -0.4f };			// 既存のライト方向(固定)
+	mtl.metal    = m_wpMetal;
+	mtl.skyCol   = { m_wpSky[0], m_wpSky[1], m_wpSky[2] };
+	mtl.specK    = m_wpSpec;
+	mtl.grdCol   = { m_wpGround[0], m_wpGround[1], m_wpGround[2] };
+	mtl.envK     = m_wpEnv;
+	mtl.fresK    = m_wpFresnel;
+	mtl.pad      = { 0,0,0 };
+
 	SetBlendMode(BLEND_NONE);
 	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
 	vs->Bind();
 	ps->Bind();
+	ps->WriteBuffer(0, &mtl);						// b0 = 金属質感パラメータ
+	if (m_wpTex) ps->SetTexture(0, m_wpTex.get());	// t0 = 鋼テクスチャ(BaseColor)
 	m_wpMesh->Draw();
 }
 

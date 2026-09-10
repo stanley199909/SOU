@@ -1,0 +1,14 @@
+Medieval Sword Blade
+Length: 850 mm
+Maximum width: 52.0 mm
+Maximum thickness: 8.2 mm
+Vertices: 1760
+Triangles after triangulation: 3488
+UV maps: 1 (UVMap)
+Textures: 2048x2048 PNG
+Normal convention: OpenGL tangent-space
+Metallic: 1.0
+Roughness: mid-low (~0.32 base material)
+Axis: +Z, tip +Z
+Origin: geometric center
+No animation / armature / baked lighting

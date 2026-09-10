@@ -189,12 +189,15 @@ private:
 	float m_coolRate    = 0.03f;	// 自然冷却速度(/秒)
 
 	//--- 武器モーフ(Blenderで作った同拓扑の各段FBXを頂点補間して成形する) ---
-	struct WpVtx { DirectX::XMFLOAT3 pos; DirectX::XMFLOAT3 nrm; DirectX::XMFLOAT4 col; };
-	struct WpStage { std::vector<DirectX::XMFLOAT3> pos, nrm; };	// 1段分の生頂点(ローカル)
+	// uv は真の鋼テクスチャ採样用。morphでUVは不変なので stage0 の値を全段で使う。
+	// フィールド順は VS_Wp の VIN 宣言順(pos→nrm→uv→col)と一致させること(入力レイアウトが宣言順で焼かれる)。
+	struct WpVtx { DirectX::XMFLOAT3 pos; DirectX::XMFLOAT3 nrm; DirectX::XMFLOAT2 uv; DirectX::XMFLOAT4 col; };
+	struct WpStage { std::vector<DirectX::XMFLOAT3> pos, nrm; std::vector<DirectX::XMFLOAT2> uv; };	// 1段分の生頂点(ローカル)
 	std::vector<WpStage>        m_wpStage;		// stage_0 .. stage_final
 	std::vector<unsigned int>   m_wpIdx;		// インデックス(全段共通)
 	std::vector<WpVtx>          m_wpVtx;		// 補間後の頂点(毎フレーム再構築)
 	std::shared_ptr<MeshBuffer> m_wpMesh;
+	std::shared_ptr<Texture>    m_wpTex;		// 真の鋼テクスチャ(BaseColor=冷鋼の地色)。発光は m_heat 駆動
 	int   m_wpN = 0;							// 1段の頂点数
 	bool  m_wpOk = false;						// 読み込み成功&段間で頂点数一致
 	float m_forgeProg = 0.0f;					// 全体進捗 0..1(=各区域の平均。F1のプレビュー用)
@@ -210,8 +213,17 @@ private:
 	DirectX::XMFLOAT3 m_wpMin = { 0,0,0 }, m_wpMax = { 0,0,0 };	// stage0のローカルAABB(配置用)
 	//--- 配置調整(F1スライダ。向き/大きさをここで合わせて焼き込む)
 	float m_wpScale = 1.0f;						// 追加スケール倍率(AABBフィットにさらに掛ける)
-	float m_wpYaw = 1.5708f, m_wpPitch = 0.0f, m_wpRoll = 0.0f;	// 向き
+	float m_wpYaw = 0.0f, m_wpPitch = 0.0f, m_wpRoll = 0.0f;	// 向き(0=前後/屏幕奥行き。90°で左右横向き)
 	float m_wpOff[3] = { 0.0f, 0.0f, 0.0f };	// 砧面アンカーからの微調整
+	//--- 金属の質感パラメータ(PS_Wpへ渡す。廉価IBL=高光+環境反射+菲涅尔。核显向けにGPU負荷は低く抑える)
+	//    UE5のPBR質感の主因は「環境反射」。HDRIを読まず、反射向きで空/地の2色を補間する擬似環境で代用する。
+	float m_wpRough   = 0.35f;					// 粗さ0..1(小=鏡面的で高光が鋭い/大=拡散的)
+	float m_wpMetal   = 0.85f;					// 金属度0..1(大=反射が地色に色付き、拡散が弱まる=金属らしく)
+	float m_wpSpec    = 0.6f;					// 直接光の高光(鏡面ハイライト)の強さ
+	float m_wpEnv     = 0.5f;					// 擬似環境反射の強さ(金属が「周囲を映す」度合い)
+	float m_wpFresnel = 1.0f;					// 縁の反射増強(菲涅尔)の強さ
+	float m_wpSky[3]    = { 0.55f, 0.62f, 0.75f };	// 擬似環境の上方向(空)の色
+	float m_wpGround[3] = { 0.18f, 0.15f, 0.12f };	// 擬似環境の下方向(地面/炉床)の色
 	void  LoadWeaponStages();					// Assets/Model/weapon/stage_*.fbx を読む
 	DirectX::XMMATRIX WeaponWorld() const;		// 武器ローカル→ワールドのフィット変換(照準/描画で共用)
 	void  BuildWeaponMorph();					// m_forgeProgから補間頂点を作る

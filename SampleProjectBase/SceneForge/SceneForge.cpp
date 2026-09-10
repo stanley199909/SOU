@@ -30,25 +30,54 @@ using namespace DirectX;
 //    KCD風: 熱い鋼の表面に黒い酸化皮(スケール)の斑が乗る。UV不要=世界座標の値ノイズで生成(核显向け)。
 static const char* g_wpVS = R"EOT(
 cbuffer Cam : register(b0){ float4x4 view; float4x4 proj; };
-struct VIN  { float3 pos:POSITION0; float3 nrm:NORMAL0; float4 col:TEXCOORD1; };
-struct VOUT { float4 pos:SV_POSITION; float3 nrm:TEXCOORD0; float4 col:TEXCOORD1; float3 wp:TEXCOORD2; };
-VOUT main(VIN v){ VOUT o; o.pos=mul(float4(v.pos,1),view); o.pos=mul(o.pos,proj); o.nrm=v.nrm; o.col=v.col; o.wp=v.pos; return o; }
+struct VIN  { float3 pos:POSITION0; float3 nrm:NORMAL0; float2 uv:TEXCOORD0; float4 col:TEXCOORD1; };
+struct VOUT { float4 pos:SV_POSITION; float3 nrm:TEXCOORD0; float2 uv:TEXCOORD3; float4 col:TEXCOORD1; float3 wp:TEXCOORD2; };
+VOUT main(VIN v){ VOUT o; o.pos=mul(float4(v.pos,1),view); o.pos=mul(o.pos,proj); o.nrm=v.nrm; o.uv=v.uv; o.col=v.col; o.wp=v.pos; return o; }
 )EOT";
+//--- 武器PS: 真の鋼テクスチャ(BaseColor)を地色にし、発光はゲームの実時温度 m_heat で駆動する。
+//    col.rgb = 温度勾配色(HeatRGB)、col.a = 温度スカラー m_heat。
+//    冷たい時=鋼テクスチャをライティングした金属色。熱い時=温度色で発光(テクスチャの陰影は残す)。
 static const char* g_wpPS = R"EOT(
-struct PIN{ float4 pos:SV_POSITION; float3 nrm:TEXCOORD0; float4 col:TEXCOORD1; float3 wp:TEXCOORD2; };
-float  h21(float2 p){ return frac(sin(dot(p,float2(41.3,289.1)))*43758.5453); }
-float  vnoise(float2 p){ float2 i=floor(p),f=frac(p); f=f*f*(3.0-2.0*f);
-  float a=h21(i),b=h21(i+float2(1,0)),c=h21(i+float2(0,1)),d=h21(i+float2(1,1));
-  return lerp(lerp(a,b,f.x),lerp(c,d,f.x),f.y); }
+Texture2D    tex  : register(t0);
+SamplerState samp : register(s0);
+// 金属質感パラメータ(CPUの m_wp* から供給)。UE5風の質感の要=環境反射を擬似環境で安価に再現する。
+cbuffer Mtl : register(b0){
+  float3 camPos;  float rough;     // 相機位置 / 粗さ
+  float3 lightDir;float metal;     // 光方向 / 金属度
+  float3 skyCol;  float specK;     // 擬似環境の空色 / 直接光高光強度
+  float3 grdCol;  float envK;      // 擬似環境の地色 / 環境反射強度
+  float  fresK;   float3 _pad;     // 菲涅尔強度
+};
+struct PIN{ float4 pos:SV_POSITION; float3 nrm:TEXCOORD0; float2 uv:TEXCOORD3; float4 col:TEXCOORD1; float3 wp:TEXCOORD2; };
 float4 main(PIN i):SV_TARGET{
-  float3 n = normalize(i.nrm);
-  float3 l = normalize(float3(0.35,0.85,-0.4));
-  float d = 0.5 + 0.5*saturate(dot(n,l));                 // 発光ベース+ライトで立体感
-  // 黒い酸化スケール: 刃長(z)方向に伸ばした斑。2オクターブの安価な値ノイズ。
-  float2 uv = float2(i.wp.z*6.0, i.wp.x*11.0);
-  float s = vnoise(uv)*0.6 + vnoise(uv*3.1 + 7.0)*0.4;
-  float scale = lerp(0.28, 1.0, smoothstep(0.34, 0.72, s)); // 暗い酸化斑
-  return float4(i.col.rgb * d * scale, i.col.a);
+  float3 N = normalize(i.nrm);
+  float3 L = normalize(lightDir);
+  float3 V = normalize(camPos - i.wp);                     // 視線(鋼→相機)
+  float3 H = normalize(L + V);
+  float  nl = saturate(dot(N,L));
+  float  nv = saturate(dot(N,V));
+  float  nh = saturate(dot(N,H));
+  float3 steel = tex.Sample(samp, i.uv).rgb;               // 冷鋼の地色(真のテクスチャ)
+
+  // 拡散(金属は拡散が弱い=metalで減衰)。環境の底上げ(ambient)で真っ黒を防ぐ。
+  float3 diff = steel * (0.25 + 0.75*nl) * (1.0 - 0.85*metal);
+
+  // 直接光の鏡面高光(Blinn-Phong。粗さ→光沢指数。核显向けに安価)。
+  float  shin = lerp(128.0, 8.0, rough);                   // 小rough=鋭い/大rough=広い
+  float3 specTint = lerp((float3)1.0, steel, metal);       // 金属は高光が地色に色付く
+  float3 spec = specTint * pow(nh, shin) * specK * nl;
+
+  // 擬似環境反射(HDRI無し): 反射向きの上下で空色↔地色を補間=「周囲を映す」金属感の主因。
+  float3 R   = reflect(-V, N);
+  float3 env = lerp(grdCol, skyCol, saturate(R.y*0.5+0.5));
+  float  fre = fresK * pow(1.0 - nv, 5.0);                 // 縁で反射が強まる(菲涅尔)
+  float3 refl = env * (envK + fre) * lerp(0.15, 1.0, metal) * steel;
+
+  float3 cold = diff + spec + refl;                        // 冷: 金属らしくライティング
+  float3 hot  = i.col.rgb * (0.35 + 0.65*steel) + spec;    // 熱: 温度色で発光+高光は残す
+  float  k    = smoothstep(0.06, 0.45, i.col.a);           // 温度(col.a)で冷→熱をブレンド
+  float3 col  = lerp(cold, hot, k);
+  return float4(col, 1.0);
 }
 )EOT";
 
@@ -199,6 +228,13 @@ void SceneForge::Init()
 	PixelShader*  wpps = CreateObj<PixelShader>("PS_Wp");  wpps->Compile(g_wpPS);
 	PixelShader*  gps  = CreateObj<PixelShader>("PS_Ghost"); gps->Compile(g_ghostPS);
 	LoadWeaponStages();
+
+	// 武器の鋼テクスチャ(BaseColor=冷鋼の地色)。発光は m_heat で駆動するので Emissive は直貼りしない。
+	{
+		auto wt = std::make_shared<Texture>();
+		if (SUCCEEDED(wt->Create("Assets/MM_Blacksmith_Pack/Medieval_Sword_Blade/Blade_BaseColor.png")))
+			m_wpTex = wt;
+	}
 
 	// 光る炭ベッド用シェーダー(pos/uv/col レイアウト + テクスチャ)。
 	// 実行時Compileではなく、正規に .hlsl → fxc → .cso をLoadする(VS_Object等と同じ流儀)。
