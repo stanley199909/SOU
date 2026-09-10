@@ -31,6 +31,28 @@
 using namespace DirectX;
 
 //--- ゲーム用の固定カメラを毎フレーム適用(ドラッグで動かされても上書きして固定する)
+// 非周期に見える有機ノイズ: 無理数比に近い3本の正弦を重ねる。単一sin(=固定周期=工整)を
+// 避けつつ、乱数(白色ノイズ)のようにガクつかず滑らかに漂う。範囲おおよそ ±(合計の重み)。
+namespace {
+	// 3本の倍音(周波数比・振幅重み・位相ずらし)。マジックナンバー回避のため名前付き表に。
+	struct NoiseHarmonic { float freq, weight, phase; };
+	constexpr NoiseHarmonic kNoiseHarmonics[] = {
+		{ 1.00f, 0.60f, 1.0f },	// 基音(一番ゆっくり・一番強い)
+		{ 2.30f, 0.30f, 1.7f },	// 第2倍音
+		{ 3.70f, 0.18f, 2.9f },	// 第3倍音(一番速い・一番弱い)
+	};
+	// 3軸を独立に揺らすための seed(値そのものに意味は無い。互いに十分離れていればよい)。
+	constexpr float kNoiseSeedBreath[3] = { 11.0f, 27.0f, 43.0f };	// 呼吸用(X,Y,Z)
+	constexpr float kNoiseSeedTremor[3] = {  5.0f, 15.0f, 31.0f };	// 微顫用(X,Y,Z)
+}
+static float OrganicNoise(float t, float seed)
+{
+	float s = 0.0f;
+	for (const NoiseHarmonic& h : kNoiseHarmonics)
+		s += h.weight * sinf(t * h.freq + seed * h.phase);
+	return s;
+}
+
 void SceneForge::ApplyCamera()
 {
 	CameraBase* cam = GetObj<CameraBase>("Camera");
@@ -65,18 +87,33 @@ void SceneForge::ApplyCamera()
 	// 打撃の反冲をカメラに伝える。m_shake(打撃で~0.9→0へ減衰)を振幅に、その値自身で
 	// 位相を回して減衰振動を作る(sin(shake*K))=別のタイマ不要で「ガッ」と一発揺れて収まる。
 	// pos と look を同じ量だけ縦に動かす→視線方向(m_camFwd=照準)は不変。framing だけ揺れる。
-	float sh = m_shake;
-	if (sh > 0.0f)
+	// === 手持ち感の三層(すべて極小振幅) =================================
+	// 第3層(既存): 落錘の冲撃。m_shake(打撃で~0.9→0へ減衰)で「ガッ」と一発縦揺れして収まる。
+	// SHAKE_OSC_FREQ = 減衰振動の速さ(大=細かく振れて速く収まる)。
+	constexpr float SHAKE_OSC_FREQ = 42.0f;
+	float dy = (m_shake > 0.0f) ? (CAM_SHAKE_AMP * m_shake * sinf(m_shake * SHAKE_OSC_FREQ)) : 0.0f;
+
+	// 第1層: 呼吸(常駐)。低頻ノイズで機位を三軸ともゆっくり漂わせる=「据えてるが生きてる」。
+	float bt = m_time * m_camBreathSpeed;
+	float ox = OrganicNoise(bt, kNoiseSeedBreath[0]) * m_camBreathAmp;
+	float oy = OrganicNoise(bt, kNoiseSeedBreath[1]) * m_camBreathAmp;
+	float oz = OrganicNoise(bt, kNoiseSeedBreath[2]) * m_camBreathAmp;
+
+	// 第2層: 蓄力の微顫。高頻ノイズを charge^rate で効かせる=満蓄近くで手が最も震える(張力)。
+	// m_camTremorRamp が大きいほど「満蓄直前まで殆ど震えず、最後に効く」= 立ち上がりが遅い。
+	float cAmp = m_camTremorAmp * powf(m_charge, m_camTremorRamp);
+	if (cAmp > 0.0f)
 	{
-		float dy = CAM_SHAKE_AMP * sh * sinf(sh * 42.0f);	// 減衰する縦揺れ
-		cam->SetPos (XMFLOAT3(m_camPos[0], m_camPos[1] + dy, m_camPos[2]));
-		cam->SetLook(XMFLOAT3(lf.x, lf.y + dy, lf.z));
+		float ct = m_time * m_camTremorSpeed;
+		ox += OrganicNoise(ct, kNoiseSeedTremor[0]) * cAmp;
+		oy += OrganicNoise(ct, kNoiseSeedTremor[1]) * cAmp;
+		oz += OrganicNoise(ct, kNoiseSeedTremor[2]) * cAmp;
 	}
-	else
-	{
-		cam->SetPos (XMFLOAT3(m_camPos[0], m_camPos[1], m_camPos[2]));
-		cam->SetLook(lf);
-	}
+
+	// 機位は全量、注視点は m_camLookNoise 倍(=視線は概ね工件に残しつつ少しだけ飄る)。冲撃dyは framing。
+	const float LN = m_camLookNoise;
+	cam->SetPos (XMFLOAT3(m_camPos[0] + ox, m_camPos[1] + oy + dy, m_camPos[2] + oz));
+	cam->SetLook(XMFLOAT3(lf.x + ox * LN,   lf.y + oy * LN + dy,   lf.z + oz * LN));
 	cam->SetUp  (XMFLOAT3(0.0f, 1.0f, 0.0f));
 }
 
@@ -322,6 +359,12 @@ void SceneForge::SaveTuning()
 	fprintf(fp, "recoiltilt %.5f\n", HAMMER_RECOIL_TILT);
 	fprintf(fp, "chargeraise %.5f\n",HAMMER_CHARGE_RAISE);
 	fprintf(fp, "camshake %.5f\n",   CAM_SHAKE_AMP);
+	fprintf(fp, "breathamp %.5f\n",   m_camBreathAmp);
+	fprintf(fp, "breathspd %.5f\n",   m_camBreathSpeed);
+	fprintf(fp, "tremoramp %.5f\n",   m_camTremorAmp);
+	fprintf(fp, "tremorspd %.5f\n",   m_camTremorSpeed);
+	fprintf(fp, "tremorramp %.5f\n",  m_camTremorRamp);
+	fprintf(fp, "looknoise %.5f\n",   m_camLookNoise);
 	fprintf(fp, "aimsens %.6f\n",    m_aimSens);
 	fprintf(fp, "hfollow %.5f\n",    m_hammerFollow);
 	// -- カメラ --
@@ -365,6 +408,12 @@ void SceneForge::LoadTuning()
 		else if (strcmp(key, "recoiltilt") == 0) sscanf_s(v, "%f", &HAMMER_RECOIL_TILT);
 		else if (strcmp(key, "chargeraise")== 0) sscanf_s(v, "%f", &HAMMER_CHARGE_RAISE);
 		else if (strcmp(key, "camshake")   == 0) sscanf_s(v, "%f", &CAM_SHAKE_AMP);
+		else if (strcmp(key, "breathamp")  == 0) sscanf_s(v, "%f", &m_camBreathAmp);
+		else if (strcmp(key, "breathspd")  == 0) sscanf_s(v, "%f", &m_camBreathSpeed);
+		else if (strcmp(key, "tremoramp")  == 0) sscanf_s(v, "%f", &m_camTremorAmp);
+		else if (strcmp(key, "tremorspd")  == 0) sscanf_s(v, "%f", &m_camTremorSpeed);
+		else if (strcmp(key, "tremorramp") == 0) sscanf_s(v, "%f", &m_camTremorRamp);
+		else if (strcmp(key, "looknoise")  == 0) sscanf_s(v, "%f", &m_camLookNoise);
 		else if (strcmp(key, "aimsens")    == 0) sscanf_s(v, "%f", &m_aimSens);
 		else if (strcmp(key, "hfollow")    == 0) sscanf_s(v, "%f", &m_hammerFollow);
 		else if (strcmp(key, "campos")     == 0) sscanf_s(v, "%f %f %f", &m_camPos[0],  &m_camPos[1],  &m_camPos[2]);

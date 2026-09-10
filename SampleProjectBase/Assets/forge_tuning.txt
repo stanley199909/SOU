@@ -10,6 +10,12 @@ recoilback 0.60000
 recoiltilt 1.30000
 chargeraise 0.55000
 camshake 0.14900
+breathamp 0.01800
+breathspd 0.70000
+tremoramp 0.00010
+tremorspd 34.00000
+tremorramp 3.00000
+looknoise 0.45000
 aimsens 0.001100
 hfollow 12.00000
 campos 0.00000 2.30000 -0.95000

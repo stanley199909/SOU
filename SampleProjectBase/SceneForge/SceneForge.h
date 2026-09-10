@@ -317,6 +317,14 @@ private:
 	float HAMMER_RECOIL_BACK  = 0.60f;	// 手前(-Z)へ後退する量(world)
 	float HAMMER_RECOIL_TILT  = 1.30f;	// 錘頭が上へ翻る回転(rad, ~75°)
 	float CAM_SHAKE_AMP       = 0.055f;	// 打撃時のカメラ縦揺れ(反冲がプレイヤーに伝わる)
+	// 手持ち感(有機な運鏡): 正弦一本=工整に見えるので、無理数比の正弦を重ねた非周期ノイズで
+	// 「呼吸(常駐の微漂移)」と「蓄力の微顫」をカメラに乗せる。振幅は極小=気付かないが手応えが出る。
+	float m_camBreathAmp   = 0.018f;	// 呼吸の振幅(機位のゆっくりした漂移)
+	float m_camBreathSpeed = 0.70f;	// 呼吸の速さ(低頻)
+	float m_camTremorAmp   = 0.0f;		// 蓄力の微顫: 既定OFF(ユーザー判断で不要)。滑块で試せるが常用は0
+	float m_camTremorSpeed = 22.0f;	// 微顫の速さ(高頻)
+	float m_camTremorRamp  = 3.0f;		// 微顫の立ち上がり指数(charge^rate)。大=満蓄直前まで殆ど震えない
+	float m_camLookNoise   = 0.45f;	// 注視点への伝達(機位より小さく揺れる=視線は概ね工件に残る)
 
 	//--- 打撃(蓄力ハンマー)
 	bool  m_charging  = false;		// 蓄力中か

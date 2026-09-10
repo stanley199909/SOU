@@ -176,6 +176,7 @@
     <ClCompile Include="Box.cpp" />
     <ClCompile Include="Player.cpp" />
     <ClCompile Include="Enemy.cpp" />
+    <ClCompile Include="Deferred.cpp" />
     <ClCompile Include="PostProcess.cpp" />
     <ClCompile Include="GameLogic\AimSystem.cpp" />
     <ClCompile Include="GameLogic\Lerp.cpp" />
@@ -222,6 +223,7 @@
     <ClInclude Include="Box.h" />
     <ClInclude Include="Player.h" />
     <ClInclude Include="Enemy.h" />
+    <ClInclude Include="Deferred.h" />
     <ClInclude Include="PostProcess.h" />
     <ClInclude Include="GameLogic\AimSystem.h" />
     <ClInclude Include="GameLogic\Lerp.h" />
