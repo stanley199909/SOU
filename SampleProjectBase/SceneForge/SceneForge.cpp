@@ -383,8 +383,8 @@ void SceneForge::Init()
 
 	Strike();	// 開始直後から火花を出す
 	// ロード完了後にここで音を開始(起動途中でBGMが鳴らないように Main から移動)
-	Audio::PlayLoop(Audio::BGM_MAIN, 0.40f);	// BGMは常時ループ
-	Audio::PlayLoop(Audio::SE_TITLE, 0.7f);		// 起動時はタイトル状態なので専用ループ
+	// 起動はタイトル状態 → タイトル専用ループのみ。BGM_PLAY/BGM_MAIN(底噪)はゲーム開始時に鳴らす。
+	Audio::PlayLoop(Audio::SE_TITLE, 0.7f);
 }
 
 void SceneForge::Uninit()
@@ -522,7 +522,10 @@ float SceneForge::ShapeMatch() const
 //====================================================================
 void SceneForge::StartGame()
 {
-	Audio::Stop(Audio::SE_TITLE);	// タイトル専用ループを止める(BGMは継続)
+	Audio::Stop(Audio::SE_TITLE);				// タイトル専用ループを止める
+	Audio::PlayLoop(Audio::BGM_PLAY, 0.45f);	// ゲーム中BGM
+	Audio::PlayLoop(Audio::BGM_MAIN, 0.20f);	// 工場の環境音(炉火/機械)を低音量の底噪として重ねる
+	m_heatSndOn = false;						// 加熱持続音の状態をリセット
 	m_state    = GAME_PLAY;
 	m_score    = 0;
 	m_heat     = 0.0f;
@@ -554,12 +557,24 @@ void SceneForge::StartGame()
 
 void SceneForge::FinishGame()
 {
+	// PLAY中のBGM/環境音/加熱音を止め、淬火→成功音→結果BGMへ切り替える
+	Audio::Stop(Audio::BGM_PLAY);
+	Audio::Stop(Audio::BGM_MAIN);
+	if (m_heatSndOn) { Audio::Stop(Audio::SE_FORGE_LOOP); m_heatSndOn = false; }
+	Audio::Play(Audio::SE_QUENCH, 0.9f);		// 水に入れる「ジュワ〜」(仕上げの淬火)
+	Audio::Play(Audio::SE_SUCCESS, 0.8f);		// 完成の合図
+	Audio::PlayLoop(Audio::BGM_RESULT, 0.5f);	// 結果画面BGM
 	m_state = GAME_RESULT;
 }
 
 void SceneForge::GameOverGame()
 {
-	m_state = GAME_OVER;		// 廃件(失敗)。分数はそのまま結果画面で見せる
+	// PLAY中の音を全て止め、廃件の合図を一回。以後は静寂で失敗を際立たせる。
+	Audio::Stop(Audio::BGM_PLAY);
+	Audio::Stop(Audio::BGM_MAIN);
+	if (m_heatSndOn) { Audio::Stop(Audio::SE_FORGE_LOOP); m_heatSndOn = false; }
+	Audio::Play(Audio::SE_FAIL, 0.9f);	// 廃件(失敗)の合図
+	m_state = GAME_OVER;				// 分数はそのまま結果画面で見せる
 }
 
 //--- タイトル: 雰囲気で自動的に火花を出しつつ、SPACEで開始
@@ -583,13 +598,17 @@ void SceneForge::UpdatePlay(float tick)
 	if (inputOn && IsKeyTrigger('G')) m_showGhost = !m_showGhost;	// 目標ゴースト表示切替
 
 	// --- 加熱: R長押しで炉で加熱 / 常にゆっくり自然冷却 ---
+	bool heating = inputOn && IsKeyPress('R');
 	if (inputOn)
 	{
-		if (IsKeyPress('R')) m_heat += HEAT_RATE * tick;
+		if (heating) m_heat += HEAT_RATE * tick;
 		m_heat -= m_coolRate * tick;
 		if (m_heat < 0.0f) m_heat = 0.0f;
 		if (m_heat > 1.0f) m_heat = 1.0f;
 	}
+	// 加熱中は炉火/風箱の持続音をループ。離した(またはF1/遷移で入力停止)瞬間に停止。
+	if (heating && !m_heatSndOn)      { Audio::PlayLoop(Audio::SE_FORGE_LOOP, 0.5f); m_heatSndOn = true; }
+	else if (!heating && m_heatSndOn) { Audio::Stop(Audio::SE_FORGE_LOOP);           m_heatSndOn = false; }
 
 	// --- 過熱で放置すると鋼全体が焼けていく(損傷が蓄積)＋ジュー音 ---
 	if (m_heat > OVERHEAT)
@@ -847,6 +866,7 @@ void SceneForge::UpdateResult(float /*tick*/)
 	{
 		m_fade.Transition([this] {
 			m_state = GAME_TITLE;
+			Audio::Stop(Audio::BGM_RESULT);			// 結果BGMを止める
 			Audio::PlayLoop(Audio::SE_TITLE, 0.7f);	// タイトルへ戻ったので専用ループ再開
 		});
 	}

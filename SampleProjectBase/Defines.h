@@ -8,11 +8,11 @@
 
 #define APP_TITLE "SP31 Shader "
 
-// ‰æ–ÊƒTƒCƒY
+// ï¿½ï¿½ÊƒTï¿½Cï¿½Y
 #define SCREEN_WIDTH (1280)
 #define SCREEN_HEIGHT (720)
 
-// ƒŠƒ\[ƒXƒpƒX
+// ï¿½ï¿½ï¿½\ï¿½[ï¿½Xï¿½pï¿½X
 #define ASSET(path)	"Assets/"path
 
 

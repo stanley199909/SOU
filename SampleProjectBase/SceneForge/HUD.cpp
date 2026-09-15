@@ -187,6 +187,27 @@ void SceneForge::DrawPlayUI()
 		0.93f, 1.0f, IM_COL32(255, 255, 255, 170));
 }
 
+//--- 出来栄え 0..1: 形の一致度と打撃品質の平均を重み合成し、廃件率を罰として引く。
+float SceneForge::GradeScore() const
+{
+	// 打撃品質の平均(1打も打たずに淬火した場合は0扱い=除算回避)。
+	float qAvg = (m_strikeCount > 0) ? (m_qualitySum / (float)m_strikeCount) : 0.0f;
+	float s = GRADE_W_MATCH * m_match + GRADE_W_QUALITY * qAvg - GRADE_SPOIL_PEN * m_spoil;
+	if (s < 0.0f) s = 0.0f;
+	if (s > 1.0f) s = 1.0f;
+	return s;
+}
+
+//--- 出来栄えを S/A/B/C に量子化(閾値は header の GRADE_*)。
+char SceneForge::GradeLetter() const
+{
+	float s = GradeScore();
+	if (s >= GRADE_S) return 'S';
+	if (s >= GRADE_A) return 'A';
+	if (s >= GRADE_B) return 'B';
+	return 'C';
+}
+
 void SceneForge::DrawResultUI()
 {
 	ImFont* title = DebugUI::FontTitle();
@@ -194,13 +215,27 @@ void SceneForge::DrawResultUI()
 	// 羊皮紙を下地に敷き、その上に成果を書く。文字色は羊皮紙に映える濃い焦茶。
 	DrawParchmentPanel(0.50f, 0.72f);
 	const ImU32 ink = IM_COL32(60, 34, 18, 255);
-	CenterText("FORGED!",              0.34f, 1.30f, IM_COL32(48, 24, 10, 255), title);	// 濃い鉄墨色=紙上で最も重い
+	CenterText("FORGED!",              0.30f, 1.30f, IM_COL32(48, 24, 10, 255), title);	// 濃い鉄墨色=紙上で最も重い
+
+	// --- 等級(S/A/B/C): 一番大きく、等級ごとに色を変えて主役にする ---
+	char g = GradeLetter();
+	ImU32 gcol;
+	switch (g)
+	{
+	case 'S': gcol = IM_COL32(212, 160,  40, 255); break;	// 金
+	case 'A': gcol = IM_COL32(150, 110,  60, 255); break;	// 焦茶(紙上で映える)
+	case 'B': gcol = IM_COL32( 90,  70,  45, 255); break;
+	default:  gcol = IM_COL32(110,  60,  40, 255); break;	// C
+	}
+	char gbuf[8]; sprintf_s(gbuf, sizeof(gbuf), "%c", g);
+	CenterText(gbuf,                   0.46f, 2.6f, gcol, title);	// 等級=最大サイズ
+
 	char buf[64];
 	sprintf_s(buf, sizeof(buf), "SHAPE MATCH   %d%%", (int)(m_match * 100));
-	CenterText(buf,                    0.48f, 0.95f, ink, body);
+	CenterText(buf,                    0.62f, 0.85f, ink, body);
 	sprintf_s(buf, sizeof(buf), "SCORE   %d", m_score);
-	CenterText(buf,                    0.56f, 0.95f, ink, body);
-	CenterText("PRESS  SPACE  TO  RETURN", 0.66f, 0.85f, IM_COL32(90, 55, 30, 255), body);
+	CenterText(buf,                    0.68f, 0.85f, ink, body);
+	CenterText("PRESS  SPACE  TO  RETURN", 0.76f, 0.80f, IM_COL32(90, 55, 30, 255), body);
 }
 
 //--- 廃件(失敗)画面: 鋼を叩き損じて台無しにした。分数は出すが低評価。

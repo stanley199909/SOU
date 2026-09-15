@@ -171,6 +171,82 @@ namespace
 			}
 			break;
 		}
+		case Audio::SE_QUENCH:
+		{
+			// 淬火: 熱鋼を水に入れた「ジュワ〜」。高周波ノイズを一次ローパスで蒸気っぽくし、急峻に立ち上げ緩やかに減衰。
+			const float DUR      = 0.70f;	// 長さ(秒)
+			const float RISE     = 120.0f;	// 立ち上がりの速さ(大=速い)
+			const float DECAY    = 5.5f;	// 減衰の速さ
+			const float LP_COEF  = 0.55f;	// ローパス係数(0..1, 大=こもる=蒸気感)
+			const float LEVEL    = 0.35f;	// 音量
+			int n = (int)(sr * DUR);
+			w.resize(n);
+			float lp = 0.0f;
+			for (int i = 0; i < n; ++i)
+			{
+				float t   = (float)i / sr;
+				lp += LP_COEF * (noise() - lp);	// 一次ローパス(ホワイト→ピンク寄り)
+				float env = (1.0f - expf(-t * RISE)) * expf(-t * DECAY);
+				w[i] = lp * env * LEVEL;
+			}
+			break;
+		}
+		case Audio::SE_FORGE_LOOP:
+		{
+			// 加熱の持続音(炉火/風箱): 低周波のこもったノイズ+緩い揺らぎ。無縫ループ向けに定常で作る。
+			const float DUR      = 1.00f;	// 1秒(ループ単位)
+			const float LP_COEF  = 0.10f;	// 強めのローパス(低い唸り)
+			const float SWELL_HZ = 2.5f;	// 風箱の揺らぎ周期(Hz)
+			const float SWELL    = 0.35f;	// 揺らぎの深さ
+			const float LEVEL    = 0.28f;	// 音量
+			int n = (int)(sr * DUR);
+			w.resize(n);
+			float lp = 0.0f;
+			for (int i = 0; i < n; ++i)
+			{
+				float t = (float)i / sr;
+				lp += LP_COEF * (noise() - lp);
+				float swell = 1.0f - SWELL + SWELL * (0.5f + 0.5f * sinf(6.2832f * SWELL_HZ * t));
+				w[i] = lp * swell * LEVEL;
+			}
+			break;
+		}
+		case Audio::SE_SUCCESS:
+		{
+			// 完成の合図: 上行する3音のアルペジオ(明るい)。
+			const float NOTE[3] = { 523.25f, 659.25f, 783.99f };	// C5-E5-G5(長三和音)
+			const float NOTE_DUR = 0.16f;	// 1音の長さ
+			const float LEVEL    = 0.28f;
+			int per = (int)(sr * NOTE_DUR);
+			w.resize(per * 3);
+			for (int k = 0; k < 3; ++k)
+			for (int i = 0; i < per; ++i)
+			{
+				float t   = (float)i / sr;
+				float env = (1.0f - expf(-t * 60.0f)) * expf(-t * 4.0f);
+				w[k * per + i] = sinf(6.2832f * NOTE[k] * t) * env * LEVEL;
+			}
+			break;
+		}
+		case Audio::SE_FAIL:
+		{
+			// 廃件の合図: 下行する2音(沈んだ)。
+			const float NOTE[2] = { 330.0f, 220.0f };	// E4→A3(下降)
+			const float NOTE_DUR = 0.28f;
+			const float LEVEL    = 0.30f;
+			int per = (int)(sr * NOTE_DUR);
+			w.resize(per * 2);
+			for (int k = 0; k < 2; ++k)
+			for (int i = 0; i < per; ++i)
+			{
+				float t   = (float)i / sr;
+				float env = (1.0f - expf(-t * 40.0f)) * expf(-t * 3.0f);
+				float v   = sinf(6.2832f * NOTE[k] * t);
+				v += 0.5f * sinf(6.2832f * NOTE[k] * 0.5f * t);	// 一オクターブ下=重み
+				w[k * per + i] = v * env * LEVEL;
+			}
+			break;
+		}
 		default: break;
 		}
 		ToPCM16(w, s.data);
@@ -203,8 +279,14 @@ namespace Audio
 			"Assets/Sound/swing.wav",			// SE_SWING(無ければ合成音)
 			"Assets/Sound/SE/anvil_hit_1.wav",	// SE_ANVIL1
 			"Assets/Sound/SE/anvil_hit_2.wav",	// SE_ANVIL2
-			"Assets/Sound/BGM/Factory.wav",		// BGM_MAIN
+			"Assets/Sound/BGM/Factory.wav",		// BGM_MAIN(工場環境音=底噪)
 			"Assets/Sound/SE/Title/title_bgm.wav",	// SE_TITLE
+			"Assets/Sound/SE/quench.wav",		// SE_QUENCH(無ければ合成音)
+			"Assets/Sound/SE/forge_loop.wav",	// SE_FORGE_LOOP(無ければ合成音)
+			"Assets/Sound/SE/success.wav",		// SE_SUCCESS(無ければ合成音)
+			"Assets/Sound/SE/fail.wav",			// SE_FAIL(無ければ合成音)
+			"Assets/Sound/BGM/play_bgm.wav",	// BGM_PLAY(無ければ無音)
+			"Assets/Sound/BGM/result_bgm.wav",	// BGM_RESULT(無ければ無音)
 		};
 		for (int i = 0; i < SE_MAX; ++i)
 		{

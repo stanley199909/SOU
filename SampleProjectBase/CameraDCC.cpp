@@ -2,6 +2,8 @@
 #include "Input.h"
 
 
+
+
 enum CameraDCCKind
 {
 	CAM_DCC_NONE,

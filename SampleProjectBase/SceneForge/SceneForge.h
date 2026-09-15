@@ -344,6 +344,7 @@ private:
 	float m_strikeCD  = 0.0f;		// 打撃後のクールダウン残り(連打防止)
 	bool  m_canStrike = false;		// 開始直後の誤爆防止(SPACEを一度離すまで無効)
 	bool  m_hammerAlt = false;		// 金床打撃音の交互再生(false→SE_ANVIL1, true→SE_ANVIL2)
+	bool  m_heatSndOn = false;		// 加熱(R長押し)の持続音が鳴っているか(ループ開始/停止の管理用)
 	float m_shake     = 0.0f;		// 打撃時の揺れ
 
 	//--- 打撃フィードバック(ポップアップ文字)
@@ -396,6 +397,17 @@ private:
 	static constexpr float GROOVE_QUALITY_BONUS = 0.20f;	// リズム時の品質ボーナス
 	static constexpr int   SCORE_PER_QUALITY = 100;	// 品質1.0あたりの得点
 	static constexpr float POPUP_LIFE = 0.8f;		// 打撃フィードバック文字の表示時間(秒)
+
+	//--- 結果評価(S/A/B/C): 完成度・打撃品質・廃件率を1本の「出来栄え」0..1へ合成し、閾値で等級化。
+	//    「注定成形」ゲームなので形は必ず完成に近づく→評価は「どれだけ綺麗に打てたか」を主にする。
+	float GradeScore() const;		// 出来栄え 0..1(=形の一致・打撃品質・廃件率の合成)
+	char  GradeLetter() const;		// GradeScore を S/A/B/C に量子化
+	static constexpr float GRADE_W_MATCH   = 0.45f;	// 出来栄えに占める「形の一致度」の重み
+	static constexpr float GRADE_W_QUALITY = 0.55f;	// 同「打撃品質の平均」の重み(綺麗な打鉄を主に評価)
+	static constexpr float GRADE_SPOIL_PEN = 0.60f;	// 廃件率1.0あたりで出来栄えから差し引く量(罰)
+	static constexpr float GRADE_S = 0.90f;	// この出来栄え以上で S
+	static constexpr float GRADE_A = 0.75f;	// 〃 A
+	static constexpr float GRADE_B = 0.55f;	// 〃 B (未満は C)
 };
 
 #endif // __SCENE_FORGE_H__
