@@ -138,6 +138,13 @@ SamplerState samp : register(s0);
 cbuffer FXAA : register(b0) { float2 rcpFrame; float2 _pad; };
 struct PIN { float4 pos:SV_POSITION; float2 uv:TEXCOORD0; float4 color:TEXCOORD1; };
 float FxLuma(float3 c){ return dot(c, float3(0.299,0.587,0.114)); }
+
+//公式 Narkowicz ACES
+float3 ACESFilm(float3 x){
+    float a=2.51, b=0.03, c=2.43, d=0.59, e=0.14;
+    return saturate((x*(a*x+b))/(x*(c*x+d)+e));
+}
+
 float4 main(PIN i):SV_TARGET
 {
 	float2 uv=i.uv;
@@ -149,7 +156,7 @@ float4 main(PIN i):SV_TARGET
 	float lm=FxLuma(m),lnw=FxLuma(nw),lne=FxLuma(ne),lsw=FxLuma(sw),lse=FxLuma(se);
 	float lmin=min(lm,min(min(lnw,lne),min(lsw,lse)));
 	float lmax=max(lm,max(max(lnw,lne),max(lsw,lse)));
-	if((lmax-lmin) < max(0.0625, lmax*0.125)) return float4(m,1.0);
+	if((lmax-lmin) < max(0.0625, lmax*0.125)) return float4(ACESFilm(m),1.0);
 	float2 dir;
 	dir.x=-((lnw+lne)-(lsw+lse));
 	dir.y= ((lnw+lsw)-(lne+lse));
@@ -159,8 +166,8 @@ float4 main(PIN i):SV_TARGET
 	float3 a=0.5*(tex.Sample(samp,uv+dir*(1.0/3.0-0.5)).rgb+tex.Sample(samp,uv+dir*(2.0/3.0-0.5)).rgb);
 	float3 b=a*0.5+0.25*(tex.Sample(samp,uv+dir*-0.5).rgb+tex.Sample(samp,uv+dir*0.5).rgb);
 	float lb=FxLuma(b);
-	if(lb<lmin||lb>lmax) return float4(a,1.0);
-	return float4(b,1.0);
+	if(lb<lmin||lb>lmax) return float4(ACESFilm(a),1.0);
+	return float4(ACESFilm(b),1.0);
 }
 )EOT";
 
@@ -172,7 +179,7 @@ void PostProcess::Init(UINT width, UINT height)
 	// シーン描画用のオフスクリーンRTを作成(SSAA: 画面のSSAA_SCALE倍で描き、合成時に縮小)
 	m_sceneRT.Create(DXGI_FORMAT_R16G16B16A16_FLOAT, width * SSAA_SCALE, height * SSAA_SCALE);
 	// water refraction snapshot (sceneRTと同解像度でコピー)
-	m_refractRT.Create(DXGI_FORMAT_R8G8B8A8_UNORM, width * SSAA_SCALE, height * SSAA_SCALE);
+	m_refractRT.Create(DXGI_FORMAT_R16G16B16A16_FLOAT, width * SSAA_SCALE, height * SSAA_SCALE);
 	// ブルーム用は半解像度(軽くて柔らかくなる)
 	m_brightRT.Create(DXGI_FORMAT_R8G8B8A8_UNORM, width / 2, height / 2);
 	m_blurRT.Create(DXGI_FORMAT_R8G8B8A8_UNORM, width / 2, height / 2);
