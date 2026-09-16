@@ -53,6 +53,7 @@ private:
 	void DrawEffect(int effect, float ox, float oy, float sx, float sy, float intensity);
 	// ブルーム合成
 	void DrawBloom(int mode, Texture* src, float threshold, float dx, float dy, float tx, float ty);
+	void DrawFXAA(Texture* src);	// エッジ抗鋸歯(幾何の輪郭のチラつき)
 	void DrawFull(Texture* src, Shader* ps, DirectX::XMFLOAT4 color);
 
 private:
@@ -73,6 +74,7 @@ private:
 	RenderTarget                 m_blurRT;		// ブルーム用(横ぼかし)
 	std::shared_ptr<PixelShader> m_ppPS;	// 6種効果用ピクセルシェーダー
 	std::shared_ptr<PixelShader> m_bloomPS;	// ブルーム用ピクセルシェーダー
+	std::shared_ptr<PixelShader> m_fxaaPS;	// FXAA(エッジ抗鋸歯)
 	UINT  m_width  = 0;
 	UINT  m_height = 0;
 
@@ -83,6 +85,7 @@ private:
 	float m_time    = 0.0f;
 	float m_bloomThreshold = 0.55f;	// ブルームの高輝度しきい値
 	float m_bloomStrength  = 1.4f;	// ブルームの強さ
+	bool  m_fxaa    = true;			// FXAA(エッジ抗鋸歯) ON/OFF
 
 public:
 	static const int EFFECT_MAX   = 7;	// 効果総数(単体切り替え用)

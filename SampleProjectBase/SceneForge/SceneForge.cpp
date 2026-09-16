@@ -383,8 +383,8 @@ void SceneForge::Init()
 
 	Strike();	// 開始直後から火花を出す
 	// ロード完了後にここで音を開始(起動途中でBGMが鳴らないように Main から移動)
-	// 起動はタイトル状態 → タイトル専用ループのみ。BGM_PLAY/BGM_MAIN(底噪)はゲーム開始時に鳴らす。
-	Audio::PlayLoop(Audio::SE_TITLE, 0.7f);
+	// 起動はタイトル状態 → タイトルBGM(工場環境音)をループ。
+	Audio::PlayLoop(Audio::BGM_TITLE, 0.40f);
 }
 
 void SceneForge::Uninit()
@@ -409,7 +409,7 @@ void SceneForge::Uninit()
 	m_glow.reset();
 	m_sparks.clear();
 	m_embers.clear();
-	Audio::Stop(Audio::SE_TITLE);	// ゲームシーンを離れるときタイトルループを止める(BGMは継続)
+	Audio::Stop(Audio::BGM_TITLE);	// ゲームシーンを離れるときタイトルループを止める(BGMは継続)
 	if (!m_cursorShown) { ShowCursor(TRUE); m_cursorShown = true; }	// カーソルを戻す
 }
 
@@ -522,9 +522,8 @@ float SceneForge::ShapeMatch() const
 //====================================================================
 void SceneForge::StartGame()
 {
-	Audio::Stop(Audio::SE_TITLE);				// タイトル専用ループを止める
-	Audio::PlayLoop(Audio::BGM_PLAY, 0.45f);	// ゲーム中BGM
-	Audio::PlayLoop(Audio::BGM_MAIN, 0.20f);	// 工場の環境音(炉火/機械)を低音量の底噪として重ねる
+	Audio::Stop(Audio::BGM_TITLE);				// タイトルBGMを止める
+	Audio::PlayLoop(Audio::BGM_PLAY, 0.45f);	// ゲーム中BGM(medieval)
 	m_heatSndOn = false;						// 加熱持続音の状態をリセット
 	m_state    = GAME_PLAY;
 	m_score    = 0;
@@ -557,9 +556,8 @@ void SceneForge::StartGame()
 
 void SceneForge::FinishGame()
 {
-	// PLAY中のBGM/環境音/加熱音を止め、淬火→成功音→結果BGMへ切り替える
-	Audio::Stop(Audio::BGM_PLAY);
-	Audio::Stop(Audio::BGM_MAIN);
+	// PLAY中のBGM/加熱音を止め、淬火→成功音→結果BGMへ切り替える
+	Audio::Stop(Audio::BGM_PLAY);				// ゲーム中BGMを止める
 	if (m_heatSndOn) { Audio::Stop(Audio::SE_FORGE_LOOP); m_heatSndOn = false; }
 	Audio::Play(Audio::SE_QUENCH, 0.9f);		// 水に入れる「ジュワ〜」(仕上げの淬火)
 	Audio::Play(Audio::SE_SUCCESS, 0.8f);		// 完成の合図
@@ -570,8 +568,7 @@ void SceneForge::FinishGame()
 void SceneForge::GameOverGame()
 {
 	// PLAY中の音を全て止め、廃件の合図を一回。以後は静寂で失敗を際立たせる。
-	Audio::Stop(Audio::BGM_PLAY);
-	Audio::Stop(Audio::BGM_MAIN);
+	Audio::Stop(Audio::BGM_PLAY);		// ゲーム中BGMを止める
 	if (m_heatSndOn) { Audio::Stop(Audio::SE_FORGE_LOOP); m_heatSndOn = false; }
 	Audio::Play(Audio::SE_FAIL, 0.9f);	// 廃件(失敗)の合図
 	m_state = GAME_OVER;				// 分数はそのまま結果画面で見せる
@@ -596,6 +593,7 @@ void SceneForge::UpdatePlay(float tick)
 	// Pキー: 瞄準区域の可視化トグル(デバッグ用。既定OFF=KCD式に「叩く場所」を示さない)
 	if (inputOn && IsKeyTrigger('P')) m_showAimHi = !m_showAimHi;
 	if (inputOn && IsKeyTrigger('G')) m_showGhost = !m_showGhost;	// 目標ゴースト表示切替
+	if (inputOn && IsKeyTrigger('K')) m_hideCoalTest = !m_hideCoalTest;	// 【診断】炭床の表示/非表示(炉の跳動切り分け)
 
 	// --- 加熱: R長押しで炉で加熱 / 常にゆっくり自然冷却 ---
 	bool heating = inputOn && IsKeyPress('R');
@@ -866,8 +864,8 @@ void SceneForge::UpdateResult(float /*tick*/)
 	{
 		m_fade.Transition([this] {
 			m_state = GAME_TITLE;
-			Audio::Stop(Audio::BGM_RESULT);			// 結果BGMを止める
-			Audio::PlayLoop(Audio::SE_TITLE, 0.7f);	// タイトルへ戻ったので専用ループ再開
+			Audio::Stop(Audio::BGM_RESULT);				// 結果BGMを止める
+			Audio::PlayLoop(Audio::BGM_TITLE, 0.40f);	// タイトルBGMを再開
 		});
 	}
 }
@@ -879,7 +877,7 @@ void SceneForge::UpdateGameOver(float /*tick*/)
 	{
 		m_fade.Transition([this] {
 			m_state = GAME_TITLE;
-			Audio::PlayLoop(Audio::SE_TITLE, 0.7f);
+			Audio::PlayLoop(Audio::BGM_TITLE, 0.40f);	// タイトルBGMを再開
 		});
 	}
 }

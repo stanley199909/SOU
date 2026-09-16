@@ -169,8 +169,12 @@ HRESULT InitDirectX(HWND hWnd, UINT width, UINT height, bool fullscreen)
 
 	// �T���v���[
 	D3D11_SAMPLER_DESC samplerDesc = {};
-	// 各向異性(掠射角の床でmipだけでは残るボケ/チラつきを大幅に軽減)。核显向けに8x。
-	static const UINT ANISO_MAX = 8;
+	// 各向異性(掠射角の床でmipだけでは残るボケ/チラつきを大幅に軽減)。16x。
+	static const UINT ANISO_MAX = 16;
+	// ★mip LODバイアス(正=一段ぼかす)。写真/石畳のような高対比・高頻テクスチャは、
+	// カメラ移動時に細部が「跳ねる」(混叠)。少しだけ高いmipを選ばせると sparkle が消える。
+	// 大=よりチラつかないがボケる。跳ねとボケのトレードオフの調整つまみ。
+	static const float MIP_LOD_BIAS = 1.0f;
 	D3D11_FILTER filter[] = {
 		D3D11_FILTER_ANISOTROPIC,			// SAMPLER_LINEAR: 各向異性フィルタ
 		D3D11_FILTER_MIN_MAG_MIP_POINT,
@@ -179,6 +183,7 @@ HRESULT InitDirectX(HWND hWnd, UINT width, UINT height, bool fullscreen)
 	samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_WRAP;
 	samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
 	samplerDesc.MaxAnisotropy = ANISO_MAX;
+	samplerDesc.MipLODBias = MIP_LOD_BIAS;
 	// ★重要: 既定の {} は MaxLOD=0 で mip0 に固定される=mipmapが効かない。全mip鎖を許可する。
 	samplerDesc.MinLOD = 0.0f;
 	samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;

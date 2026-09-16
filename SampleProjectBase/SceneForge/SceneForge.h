@@ -233,6 +233,7 @@ private:
 	std::vector<WpVtx>          m_ghostVtx;		// ゴースト頂点(stage_finalを変換して毎フレーム作る)
 	std::shared_ptr<MeshBuffer> m_ghostMesh;
 	bool  m_showGhost = false;					// 目標ゴースト表示(既定OFF。Gキーで切替。冗長なので任意)
+	bool  m_hideCoalTest = false;				// 【診断】Kキーで炭床を隠す。炉のtexture跳動が炭のz-fighting由来か切り分ける用
 	void  BuildGhostMesh();						// stage_final を WeaponWorld で変換してm_ghostVtxへ
 	void  DrawGhostTarget();					// 半透明で完成形の輪郭を重ねる
 

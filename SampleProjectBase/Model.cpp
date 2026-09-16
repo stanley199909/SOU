@@ -295,6 +295,14 @@ size_t Model::GetMaterialCount() const
 	return m_materials.size();
 }
 
+// FBX自身がテクスチャを読み込めたか(1つでもあればtrue)。Quaternius等のtrim sheetは
+// マテリアルごとに違う貼图を参照するので、これがtrueならSetTextureで上書きしない。
+bool Model::HasAnyTexture() const
+{
+	for (auto& m : m_materials) if (m.texture) return true;
+	return false;
+}
+
 const char* Model::GetMaterialName(size_t index) const
 {
 	return (index < m_materials.size()) ? m_materials[index].name.c_str() : "";

@@ -201,6 +201,7 @@ void SceneForge::DrawScenery()
 //--- 自作の光る炭ベッド。合成炭テクスチャを明るく描き、時間で明滅させる(Bloomで光る)
 void SceneForge::DrawCoalBed()
 {
+	if (m_hideCoalTest) return;	// 【診断】Kキーで炭を隠して炉のtexture跳動を切り分ける
 	if (!m_coalOn || !m_coalMesh || !m_coalTex) return;
 	CameraBase*   cam = GetObj<CameraBase>("Camera");
 	VertexShader* vs  = GetObj<VertexShader>("VS_Coal");

@@ -3,6 +3,7 @@
 #include "Sprite.h"
 #include "Input.h"
 #include "DebugUI.h"
+#include "Defines.h"	// SSAA_SCALE
 #include <math.h>
 
 using namespace DirectX;
@@ -128,15 +129,50 @@ float4 main(PIN i) : SV_TARGET
 }
 )EOT";
 
+// FXAA (Fast Approximate Anti-Aliasing, Lottes/NVIDIA, 簡略版)。テクスチャ混叠はmipで
+// 解決済みなので、ここが受け持つのは「幾何のエッジ(石の輪郭/稜線)がカメラ移動で階段状に
+// 這うチラつき」。輝度でエッジを検出しエッジ沿いに混ぜて均す。1パスで軽い(核显向け)。
+static const char* g_fxaaShaderCode = R"EOT(
+Texture2D    tex  : register(t0);
+SamplerState samp : register(s0);
+cbuffer FXAA : register(b0) { float2 rcpFrame; float2 _pad; };
+struct PIN { float4 pos:SV_POSITION; float2 uv:TEXCOORD0; float4 color:TEXCOORD1; };
+float FxLuma(float3 c){ return dot(c, float3(0.299,0.587,0.114)); }
+float4 main(PIN i):SV_TARGET
+{
+	float2 uv=i.uv;
+	float3 m =tex.Sample(samp,uv).rgb;
+	float3 nw=tex.Sample(samp,uv+float2(-1,-1)*rcpFrame).rgb;
+	float3 ne=tex.Sample(samp,uv+float2( 1,-1)*rcpFrame).rgb;
+	float3 sw=tex.Sample(samp,uv+float2(-1, 1)*rcpFrame).rgb;
+	float3 se=tex.Sample(samp,uv+float2( 1, 1)*rcpFrame).rgb;
+	float lm=FxLuma(m),lnw=FxLuma(nw),lne=FxLuma(ne),lsw=FxLuma(sw),lse=FxLuma(se);
+	float lmin=min(lm,min(min(lnw,lne),min(lsw,lse)));
+	float lmax=max(lm,max(max(lnw,lne),max(lsw,lse)));
+	if((lmax-lmin) < max(0.0625, lmax*0.125)) return float4(m,1.0);
+	float2 dir;
+	dir.x=-((lnw+lne)-(lsw+lse));
+	dir.y= ((lnw+lsw)-(lne+lse));
+	float red=max((lnw+lne+lsw+lse)*0.25*(1.0/8.0),1.0/128.0);
+	float rcp=1.0/(min(abs(dir.x),abs(dir.y))+red);
+	dir=clamp(dir*rcp,float2(-8,-8),float2(8,8))*rcpFrame;
+	float3 a=0.5*(tex.Sample(samp,uv+dir*(1.0/3.0-0.5)).rgb+tex.Sample(samp,uv+dir*(2.0/3.0-0.5)).rgb);
+	float3 b=a*0.5+0.25*(tex.Sample(samp,uv+dir*-0.5).rgb+tex.Sample(samp,uv+dir*0.5).rgb);
+	float lb=FxLuma(b);
+	if(lb<lmin||lb>lmax) return float4(a,1.0);
+	return float4(b,1.0);
+}
+)EOT";
+
 void PostProcess::Init(UINT width, UINT height)
 {
 	m_width  = width;
 	m_height = height;
 
-	// シーン描画用のオフスクリーンRTを作成
-	m_sceneRT.Create(DXGI_FORMAT_R8G8B8A8_UNORM, width, height);
-	// water refraction snapshot (full res copy of the scene behind the water)
-	m_refractRT.Create(DXGI_FORMAT_R8G8B8A8_UNORM, width, height);
+	// シーン描画用のオフスクリーンRTを作成(SSAA: 画面のSSAA_SCALE倍で描き、合成時に縮小)
+	m_sceneRT.Create(DXGI_FORMAT_R16G16B16A16_FLOAT, width * SSAA_SCALE, height * SSAA_SCALE);
+	// water refraction snapshot (sceneRTと同解像度でコピー)
+	m_refractRT.Create(DXGI_FORMAT_R8G8B8A8_UNORM, width * SSAA_SCALE, height * SSAA_SCALE);
 	// ブルーム用は半解像度(軽くて柔らかくなる)
 	m_brightRT.Create(DXGI_FORMAT_R8G8B8A8_UNORM, width / 2, height / 2);
 	m_blurRT.Create(DXGI_FORMAT_R8G8B8A8_UNORM, width / 2, height / 2);
@@ -146,10 +182,13 @@ void PostProcess::Init(UINT width, UINT height)
 	m_ppPS->Compile(g_ppShaderCode);
 	m_bloomPS = std::make_shared<PixelShader>();
 	m_bloomPS->Compile(g_bloomShaderCode);
+	m_fxaaPS = std::make_shared<PixelShader>();
+	m_fxaaPS->Compile(g_fxaaShaderCode);
 }
 
 void PostProcess::Uninit()
 {
+	m_fxaaPS.reset();
 	m_ppPS.reset();
 	m_bloomPS.reset();
 }
@@ -181,6 +220,10 @@ void PostProcess::DrawUI()
 	ImGui::SetNextWindowSize(ImVec2(300, 0), ImGuiCond_FirstUseEver);
 	ImGui::Begin("Post Process");
 
+	// SSAA確認用: 実際の離屏描画解像度(sceneRT)。1280x720でなく2560x1440等ならSSAA有効。
+	ImGui::Text("Render res (SSAA): %u x %u", m_width * SSAA_SCALE, m_height * SSAA_SCALE);
+	ImGui::Separator();
+
 	ImGui::RadioButton("Bloom", &m_mode, MODE_BLOOM);
 	ImGui::SameLine();
 	ImGui::RadioButton("Effects Demo", &m_mode, MODE_DEMO);
@@ -188,6 +231,7 @@ void PostProcess::DrawUI()
 
 	if (m_mode == MODE_BLOOM)
 	{
+		ImGui::Checkbox("FXAA (edge anti-alias)", &m_fxaa);
 		ImGui::SliderFloat("Threshold", &m_bloomThreshold, 0.0f, 0.95f);
 		ImGui::SliderFloat("Strength", &m_bloomStrength, 0.0f, 3.0f);
 	}
@@ -264,7 +308,8 @@ void PostProcess::End(RenderTarget* pScreen)
 		// 4) 合成: 画面 = sceneRT + brightRT(加算)
 		SetRenderTargets(1, &pScreen, nullptr);
 		SetBlendMode(BLEND_NONE);
-		DrawFull(&m_sceneRT, nullptr, XMFLOAT4(1, 1, 1, 1));		// 元の絵
+		if (m_fxaa) DrawFXAA(&m_sceneRT);						// 元の絵(エッジを均す)
+		else        DrawFull(&m_sceneRT, nullptr, XMFLOAT4(1, 1, 1, 1));
 		SetBlendMode(BLEND_ADD);
 		float b = m_bloomStrength * intensity;
 		DrawFull(&m_brightRT, nullptr, XMFLOAT4(b, b, b, 1));	// にじむ光を加算
@@ -337,6 +382,16 @@ void PostProcess::DrawEffect(int effect, float ox, float oy, float sx, float sy,
 	Sprite::SetTexture(&m_sceneRT);
 	Sprite::SetPixelShader(m_ppPS.get());
 	Sprite::Draw();
+}
+
+// FXAAの1パス(全画面)。rcpFrame=1テクセル。エッジ(幾何の輪郭)のチラつきを均す。
+void PostProcess::DrawFXAA(Texture* src)
+{
+	struct FParam { float rcp[2]; float _pad[2]; } p = {};
+	p.rcp[0] = 1.0f / (float)(m_width  * SSAA_SCALE);
+	p.rcp[1] = 1.0f / (float)(m_height * SSAA_SCALE);
+	m_fxaaPS->WriteBuffer(0, &p);
+	DrawFull(src, m_fxaaPS.get(), XMFLOAT4(1, 1, 1, 1));
 }
 
 // ブルームの1パス(全画面)を描画

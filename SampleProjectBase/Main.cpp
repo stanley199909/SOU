@@ -33,7 +33,8 @@ HRESULT Init(HWND hWnd, UINT width, UINT height)
 	auto rtv = g_pScene->CreateObj<RenderTarget>("RTV");
 	rtv->CreateFromScreen();
 	auto dsv = g_pScene->CreateObj<DepthStencil>("DSV");
-	hr = dsv->Create(width, height, false);
+	// 深度も超采样解像度(離屏シーンRTと寸法一致=SetRenderTargetsが同じ視口を張る)。
+	hr = dsv->Create(width * SSAA_SCALE, height * SSAA_SCALE, false);
 
 	SetRenderTargets(1, &rtv, dsv);
 

@@ -279,13 +279,12 @@ namespace Audio
 			"Assets/Sound/swing.wav",			// SE_SWING(無ければ合成音)
 			"Assets/Sound/SE/anvil_hit_1.wav",	// SE_ANVIL1
 			"Assets/Sound/SE/anvil_hit_2.wav",	// SE_ANVIL2
-			"Assets/Sound/BGM/Factory.wav",		// BGM_MAIN(工場環境音=底噪)
-			"Assets/Sound/SE/Title/title_bgm.wav",	// SE_TITLE
 			"Assets/Sound/SE/quench.wav",		// SE_QUENCH(無ければ合成音)
 			"Assets/Sound/SE/forge_loop.wav",	// SE_FORGE_LOOP(無ければ合成音)
 			"Assets/Sound/SE/success.wav",		// SE_SUCCESS(無ければ合成音)
 			"Assets/Sound/SE/fail.wav",			// SE_FAIL(無ければ合成音)
-			"Assets/Sound/BGM/play_bgm.wav",	// BGM_PLAY(無ければ無音)
+			"Assets/Sound/BGM/title_bgm.wav",	// BGM_TITLE(工場環境音。無ければ無音)
+			"Assets/Sound/BGM/play_bgm.wav",	// BGM_PLAY(medieval。無ければ無音)
 			"Assets/Sound/BGM/result_bgm.wav",	// BGM_RESULT(無ければ無音)
 		};
 		for (int i = 0; i < SE_MAX; ++i)

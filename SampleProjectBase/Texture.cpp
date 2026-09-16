@@ -1,9 +1,7 @@
 #include "Texture.h"
 #include "DirectXTex/TextureLoad.h"
 
-/// <summary>
-/// �e�N�X�`��
-/// </summary>
+
 Texture::Texture()
 	: m_width(0), m_height(0)
 	, m_pTex(nullptr)
@@ -19,12 +17,12 @@ HRESULT Texture::Create(const char* fileName)
 {
 	HRESULT hr = S_OK;
 
-	// �����ϊ�
+
 	wchar_t wPath[MAX_PATH];
 	size_t wLen = 0;
 	MultiByteToWideChar(0, 0, fileName, -1, wPath, MAX_PATH);
 
-	// �t�@�C���ʓǂݍ���
+
 	DirectX::TexMetadata mdata;
 	DirectX::ScratchImage image;
 	if (strstr(fileName, ".tga"))
@@ -35,25 +33,49 @@ HRESULT Texture::Create(const char* fileName)
 		return E_FAIL;
 	}
 
-	// mipmap(多級渐遠紋理)を生成する。無いと遠く/斜め(掠射角)で画素が紋素を飛ばして
-	// サンプルし、カメラ移動でチラつき/モアレ(破図)になる。levels=0=フルmip鎖。
-	// 失敗時(圧縮フォーマット等)は元画像(mip無し)で作る=フォールバック。
-	DirectX::ScratchImage mipChain;
-	HRESULT mipHr = DirectX::GenerateMipMaps(
-		image.GetImages(), image.GetImageCount(), mdata,
-		DirectX::TEX_FILTER_DEFAULT, 0, mipChain);
+	// --- mipmap を GPU で生成する ---
+	// mipが無いと遠く/斜め(掠射角)でテクセルを飛ばしてサンプルし、カメラ移動で全面が
+	// チラつく(=長年の「跳ねる」の正体)。以前は DirectXTex の CPU GenerateMipMaps を
+	// 使っていたが、WICの返す形式次第で静默失敗し mip無しになっていた。ここでは D3D11 の
+	// GenerateMips (GPU) を使う=フォーマットに強く、確実に全mip鎖が作られる。
 
-	if (SUCCEEDED(mipHr))
-		hr = CreateShaderResourceView(GetDevice(), mipChain.GetImages(), mipChain.GetImageCount(), mipChain.GetMetadata(), &m_pSRV);
-	else
-		hr = CreateShaderResourceView(GetDevice(), image.GetImages(), image.GetImageCount(), mdata, &m_pSRV);
-
-	if (SUCCEEDED(hr))
+	// GPUに上げる前に必ず R8G8B8A8_UNORM に揃える(GenerateMips/描画で扱いやすい)。
+	const DirectX::Image* base = image.GetImage(0, 0, 0);
+	DirectX::ScratchImage converted;
+	if (mdata.format != DXGI_FORMAT_R8G8B8A8_UNORM)
 	{
-		m_width = (UINT)mdata.width;
-		m_height = (UINT)mdata.height;
+		if (SUCCEEDED(DirectX::Convert(
+			*base, DXGI_FORMAT_R8G8B8A8_UNORM,
+			DirectX::TEX_FILTER_DEFAULT, DirectX::TEX_THRESHOLD_DEFAULT, converted)))
+			base = converted.GetImage(0, 0, 0);
 	}
-	return hr;
+
+	// フルmip鎖を持つGPUテクスチャを作る(MipLevels=0=フル自動割当、GENERATE_MIPS指定)。
+	D3D11_TEXTURE2D_DESC td = {};
+	td.Width = (UINT)base->width;
+	td.Height = (UINT)base->height;
+	td.MipLevels = 0;					// 0 = デバイスがフルmip鎖を確保
+	td.ArraySize = 1;
+	td.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	td.SampleDesc.Count = 1;
+	td.Usage = D3D11_USAGE_DEFAULT;
+	// GenerateMips には RENDER_TARGET バインドと GENERATE_MIPS フラグが必須。
+	td.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+	td.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
+
+	hr = GetDevice()->CreateTexture2D(&td, nullptr, &m_pTex);
+	if (FAILED(hr)) return hr;
+
+	// SRV(全mip)。次に mip0 を書き込み、GPUで下位mipを生成。
+	hr = GetDevice()->CreateShaderResourceView(m_pTex, nullptr, &m_pSRV);
+	if (FAILED(hr)) return hr;
+
+	GetContext()->UpdateSubresource(m_pTex, 0, nullptr, base->pixels, (UINT)base->rowPitch, 0);
+	GetContext()->GenerateMips(m_pSRV);
+
+	m_width = (UINT)base->width;
+	m_height = (UINT)base->height;
+	return S_OK;
 }
 HRESULT Texture::Create(DXGI_FORMAT format, UINT width, UINT height, const void* pData)
 {
@@ -91,14 +113,13 @@ HRESULT Texture::CreateResource(D3D11_TEXTURE2D_DESC& desc, const void* pData)
 {
 	HRESULT hr = E_FAIL;
 
-	// �e�N�X�`���쐬
+
 	D3D11_SUBRESOURCE_DATA data = {};
 	data.pSysMem = pData;
 	data.SysMemPitch = desc.Width * 4;
 	hr = GetDevice()->CreateTexture2D(&desc, pData ? &data : nullptr, &m_pTex);
 	if (FAILED(hr)) { return hr; }
 
-	// �ݒ�
 	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 	switch (desc.Format)
 	{
@@ -107,7 +128,7 @@ HRESULT Texture::CreateResource(D3D11_TEXTURE2D_DESC& desc, const void* pData)
 	}
 	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
 	srvDesc.Texture2D.MipLevels = 1;
-	// ����
+
 	hr = GetDevice()->CreateShaderResourceView(m_pTex, &srvDesc, &m_pSRV);
 	if (SUCCEEDED(hr))
 	{
@@ -117,9 +138,6 @@ HRESULT Texture::CreateResource(D3D11_TEXTURE2D_DESC& desc, const void* pData)
 	return hr;
 }
 
-/// <summary>
-/// �����_�[�^�[�Q�b�g
-/// </summary>
 RenderTarget::RenderTarget()
 	: m_pRTV(nullptr)
 {
@@ -147,12 +165,12 @@ HRESULT RenderTarget::CreateFromScreen()
 {
 	HRESULT hr;
 
-	// �o�b�N�o�b�t�@�̃|�C���^���擾
+
 	ID3D11Texture2D* pBackBuffer = NULL;
 	hr = GetSwapChain()->GetBuffer(0, __uuidof(ID3D11Texture2D), (LPVOID*)&m_pTex);
 	if (FAILED(hr)) { return hr; }
 
-	// �o�b�N�o�b�t�@�ւ̃|�C���^���w�肵�ă����_�[�^�[�Q�b�g�r���[���쐬
+
 	D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
 	rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
 	rtvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
@@ -173,22 +191,20 @@ ID3D11RenderTargetView* RenderTarget::GetView() const
 }
 HRESULT RenderTarget::CreateResource(D3D11_TEXTURE2D_DESC& desc, const void* pData)
 {
-	// �e�N�X�`�����\�[�X�쐬
+	
 	HRESULT hr = Texture::CreateResource(desc, nullptr);
 	if (FAILED(hr)) { return hr; }
 
-	// �ݒ�
+
 	D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
 	rtvDesc.Format = desc.Format;
 	rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
 
-	// ����
+	
 	return GetDevice()->CreateRenderTargetView(m_pTex, &rtvDesc, &m_pRTV);
 }
 
-/// <summary>
-/// �[�x�e�N�X�`��
-/// </summary>
+
 DepthStencil::DepthStencil()
 	: m_pDSV(nullptr)
 {
@@ -214,19 +230,19 @@ ID3D11DepthStencilView* DepthStencil::GetView() const
 }
 HRESULT DepthStencil::CreateResource(D3D11_TEXTURE2D_DESC& desc, const void* pData)
 {
-	// �X�e���V���g�p����
+
 	bool useStencil = (desc.Format == DXGI_FORMAT_R24G8_TYPELESS);
 
-	// ���\�[�X����
+
 	desc.BindFlags |= D3D11_BIND_DEPTH_STENCIL;
 	HRESULT hr = Texture::CreateResource(desc, nullptr);
 	if (FAILED(hr)) { return hr; }
 
-	// �ݒ�
+
 	D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
 	dsvDesc.Format = useStencil ? DXGI_FORMAT_D24_UNORM_S8_UINT : DXGI_FORMAT_D32_FLOAT;
 	dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
 
-	// ����
+
 	return GetDevice()->CreateDepthStencilView(m_pTex, &dsvDesc, &m_pDSV);
 }
