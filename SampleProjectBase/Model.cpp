@@ -19,6 +19,14 @@
 std::shared_ptr<VertexShader> Model::m_defVS = nullptr;
 std::shared_ptr<PixelShader> Model::m_defPS = nullptr;
 
+// UE製FBXは衝突用メッシュ(UCX_接頭辞=Unreal Engine collision convention)を同梱する。
+// これは物理衝突用の粗い凸包で「描画対象ではない」。エンジンが可視メッシュと一緒に
+// 描くと重なってZ-fighting(深度衝突=破図/チラつき)になる。名前の接頭辞で除外する。
+static bool IsCollisionMeshName(const char* name)
+{
+	return name && name[0] == 'U' && name[1] == 'C' && name[2] == 'X' && name[3] == '_';
+}
+
 Model::Model()
 	: m_pVS(nullptr)
 	, m_pPS(nullptr)
@@ -108,6 +116,9 @@ bool Model::Load(const char* file, float scaleBase, bool flip, bool simpleMode)
 	aiVector3D zero(0.0f, 0.0f, 0.0f);
 	for (unsigned int i = 0; i < m_pScene->mNumMeshes; ++i)
 	{
+		// 衝突用メッシュ(UCX_)は描画しない=破図(Z-fighting)防止。全モデル共通。
+		if (IsCollisionMeshName(m_pScene->mMeshes[i]->mName.C_Str())) continue;
+
 		Mesh mesh = {};
 
 		// 頂点の作成
@@ -317,6 +328,7 @@ void Model::GetLocalAABB(DirectX::XMFLOAT3& outMin, DirectX::XMFLOAT3& outMax)
 	for (unsigned int i = 0; i < m_pScene->mNumMeshes; ++i)
 	{
 		const aiMesh* m = m_pScene->mMeshes[i];
+		if (IsCollisionMeshName(m->mName.C_Str())) continue;	// 衝突体は境界箱に含めない
 		for (unsigned int j = 0; j < m->mNumVertices; ++j)
 		{
 			const aiVector3D& v = m->mVertices[j];

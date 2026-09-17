@@ -73,18 +73,18 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <LinkIncremental>true</LinkIncremental>
-    <IncludePath>$(ProjectDir);$(ProjectDir)GameLogic;$(ProjectDir)ImGui;$(IncludePath)</IncludePath>
+    <IncludePath>$(ProjectDir);$(ProjectDir)GameLogic;$(ProjectDir)GameData;$(ProjectDir)StateMachine;$(ProjectDir)StateMachine\Player;$(ProjectDir)Physics;$(ProjectDir)ImGui;$(IncludePath)</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <LinkIncremental>false</LinkIncremental>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
-    <IncludePath>$(ProjectDir);$(ProjectDir)GameLogic;$(ProjectDir)ImGui;$(IncludePath)</IncludePath>
+    <IncludePath>$(ProjectDir);$(ProjectDir)GameLogic;$(ProjectDir)GameData;$(ProjectDir)StateMachine;$(ProjectDir)StateMachine\Player;$(ProjectDir)Physics;$(ProjectDir)ImGui;$(IncludePath)</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>false</LinkIncremental>
-    <IncludePath>$(ProjectDir);$(ProjectDir)GameLogic;$(ProjectDir)ImGui;$(IncludePath)</IncludePath>
+    <IncludePath>$(ProjectDir);$(ProjectDir)GameLogic;$(ProjectDir)GameData;$(ProjectDir)StateMachine;$(ProjectDir)StateMachine\Player;$(ProjectDir)Physics;$(ProjectDir)ImGui;$(IncludePath)</IncludePath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -181,6 +181,13 @@
     <ClCompile Include="GameLogic\AimSystem.cpp" />
     <ClCompile Include="GameLogic\Lerp.cpp" />
     <ClCompile Include="GameLogic\ScreenFade.cpp" />
+    <ClCompile Include="GameData\WeaponRecipe.cpp" />
+    <ClCompile Include="Physics\HammerPhysics.cpp" />
+    <ClCompile Include="StateMachine\StateMachine.cpp" />
+    <ClCompile Include="StateMachine\StateBase.cpp" />
+    <ClCompile Include="StateMachine\Player\HeatStep.cpp" />
+    <ClCompile Include="StateMachine\Player\ForgeStep.cpp" />
+    <ClCompile Include="StateMachine\Player\QuenchStep.cpp" />
     <ClCompile Include="SceneForge\SceneForge.cpp" />
     <ClCompile Include="SceneForge\WeaponRender.cpp" />
     <ClCompile Include="SceneForge\Scenery.cpp" />
@@ -228,6 +235,13 @@
     <ClInclude Include="GameLogic\AimSystem.h" />
     <ClInclude Include="GameLogic\Lerp.h" />
     <ClInclude Include="GameLogic\ScreenFade.h" />
+    <ClInclude Include="GameData\WeaponRecipe.h" />
+    <ClInclude Include="Physics\HammerPhysics.h" />
+    <ClInclude Include="StateMachine\StateMachine.h" />
+    <ClInclude Include="StateMachine\StateBase.h" />
+    <ClInclude Include="StateMachine\Player\HeatStep.h" />
+    <ClInclude Include="StateMachine\Player\ForgeStep.h" />
+    <ClInclude Include="StateMachine\Player\QuenchStep.h" />
     <ClInclude Include="SceneForge\SceneForge.h" />
     <ClInclude Include="SceneForge\SceneForge_Internal.h" />
     <ClInclude Include="SceneWeaponEdit.h" />

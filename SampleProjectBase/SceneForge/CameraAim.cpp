@@ -347,17 +347,17 @@ void SceneForge::SaveTuning()
 	if (fopen_s(&fp, kTuningPath, "w") != 0 || !fp) return;
 
 	// -- ハンマー --
-	fprintf(fp, "restlift %.5f\n",   HAMMER_REST_LIFT);
+	fprintf(fp, "restlift %.5f\n",   m_hammer.restLift);
 	fprintf(fp, "hscale %.5f\n",     m_hammerScale);
 	fprintf(fp, "hrot %.5f %.5f %.5f\n", m_hammerRot[0], m_hammerRot[1], m_hammerRot[2]);
 	fprintf(fp, "hoff %.5f %.5f %.5f\n", m_hammerOff[0], m_hammerOff[1], m_hammerOff[2]);
-	fprintf(fp, "stiffness %.5f\n",  HAMMER_STIFFNESS);
-	fprintf(fp, "damping %.5f\n",    HAMMER_DAMPING);
-	fprintf(fp, "mass %.5f\n",       HAMMER_MASS);
-	fprintf(fp, "impulse %.5f\n",    HAMMER_IMPULSE);
+	fprintf(fp, "stiffness %.5f\n",  m_hammer.stiffness);
+	fprintf(fp, "damping %.5f\n",    m_hammer.damping);
+	fprintf(fp, "mass %.5f\n",       m_hammer.mass);
+	fprintf(fp, "impulse %.5f\n",    m_hammer.impulse);
 	fprintf(fp, "recoilback %.5f\n", HAMMER_RECOIL_BACK);
 	fprintf(fp, "recoiltilt %.5f\n", HAMMER_RECOIL_TILT);
-	fprintf(fp, "chargeraise %.5f\n",HAMMER_CHARGE_RAISE);
+	fprintf(fp, "chargeraise %.5f\n",m_hammer.chargeRaise);
 	fprintf(fp, "camshake %.5f\n",   CAM_SHAKE_AMP);
 	fprintf(fp, "breathamp %.5f\n",   m_camBreathAmp);
 	fprintf(fp, "breathspd %.5f\n",   m_camBreathSpeed);
@@ -396,17 +396,17 @@ void SceneForge::LoadTuning()
 		if (sscanf_s(line, "%31s", key, (unsigned)_countof(key)) != 1) continue;
 		const char* v = line + strlen(key);	// キーの後ろ(数値部)
 
-		if      (strcmp(key, "restlift")   == 0) sscanf_s(v, "%f", &HAMMER_REST_LIFT);
+		if      (strcmp(key, "restlift")   == 0) sscanf_s(v, "%f", &m_hammer.restLift);
 		else if (strcmp(key, "hscale")     == 0) sscanf_s(v, "%f", &m_hammerScale);
 		else if (strcmp(key, "hrot")       == 0) sscanf_s(v, "%f %f %f", &m_hammerRot[0], &m_hammerRot[1], &m_hammerRot[2]);
 		else if (strcmp(key, "hoff")       == 0) sscanf_s(v, "%f %f %f", &m_hammerOff[0], &m_hammerOff[1], &m_hammerOff[2]);
-		else if (strcmp(key, "stiffness")  == 0) sscanf_s(v, "%f", &HAMMER_STIFFNESS);
-		else if (strcmp(key, "damping")    == 0) sscanf_s(v, "%f", &HAMMER_DAMPING);
-		else if (strcmp(key, "mass")       == 0) sscanf_s(v, "%f", &HAMMER_MASS);
-		else if (strcmp(key, "impulse")    == 0) sscanf_s(v, "%f", &HAMMER_IMPULSE);
+		else if (strcmp(key, "stiffness")  == 0) sscanf_s(v, "%f", &m_hammer.stiffness);
+		else if (strcmp(key, "damping")    == 0) sscanf_s(v, "%f", &m_hammer.damping);
+		else if (strcmp(key, "mass")       == 0) sscanf_s(v, "%f", &m_hammer.mass);
+		else if (strcmp(key, "impulse")    == 0) sscanf_s(v, "%f", &m_hammer.impulse);
 		else if (strcmp(key, "recoilback") == 0) sscanf_s(v, "%f", &HAMMER_RECOIL_BACK);
 		else if (strcmp(key, "recoiltilt") == 0) sscanf_s(v, "%f", &HAMMER_RECOIL_TILT);
-		else if (strcmp(key, "chargeraise")== 0) sscanf_s(v, "%f", &HAMMER_CHARGE_RAISE);
+		else if (strcmp(key, "chargeraise")== 0) sscanf_s(v, "%f", &m_hammer.chargeRaise);
 		else if (strcmp(key, "camshake")   == 0) sscanf_s(v, "%f", &CAM_SHAKE_AMP);
 		else if (strcmp(key, "breathamp")  == 0) sscanf_s(v, "%f", &m_camBreathAmp);
 		else if (strcmp(key, "breathspd")  == 0) sscanf_s(v, "%f", &m_camBreathSpeed);

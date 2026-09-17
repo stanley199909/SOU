@@ -298,7 +298,7 @@ void SceneForge::Init()
 	LoadProp("StGround",   "Assets/Model/plane/plane.fbx", "Assets/Model/field/wooden-plank-textured-background-material.jpg", 12.0f, 0.0f, 0.0f, 0.0f, 0.0f, true);
 	LoadProp("StStump",    (P+"Anvil/SM_Stump.fbx").c_str(),             kAnvilTex.c_str(), 0.60f, 0.0f, 0.0f,  0.0f, 0.0f, true);
 	LoadProp("StAnvil",    (P+"Anvil/SM_Anvil.fbx").c_str(),             kAnvilTex.c_str(), 0.70f, 0.0f, 0.0f,  0.0f, 0.0f, true);
-	LoadProp("StForge",    (P+"Forges/SM_BS_Forge_1.fbx").c_str(),       kForgeStone,       2.60f, 1.8f, 0.0f,  0.6f, 0.0f, true);
+	LoadProp("StForge",    (P+"Forges/SM_BS_Forge_2_.fbx").c_str(),      kForgeStone,       2.60f, 1.8f, 0.0f,  0.6f, 0.0f, true);	// Forge_1は可視メッシュが重複(未merge)で破図→Forge_2に差替。材質名Forge_UVxは既存のUVx判定で自動一致
 	LoadProp("StStand",    (P+"Ballows/SM_Bellows_stand_1.fbx").c_str(), kWood.c_str(),     1.20f, 3.2f, 0.0f,  1.0f, 0.0f, true);
 	LoadProp("StBellows",  (P+"Ballows/SM_Bellows.fbx").c_str(),         kWood.c_str(),     1.40f, 3.2f, 0.0f,  1.0f, 0.0f, true);
 	LoadProp("StWorktable",(P+"Worktable/SM_BS_Worktable.fbx").c_str(),  kTable.c_str(),    2.20f,-2.6f, 0.0f,  0.6f, 0.0f, true);
@@ -380,6 +380,8 @@ void SceneForge::Init()
 	// 編集シーンで作った配置(Assets/stage_layout.txt)を反映。無ければ上の既定のまま。
 	LoadLayout();
 	LoadTuning();	// F1で調整したハンマー/カメラ値(forge_tuning.txt)を復元
+
+	SetupSteps();	// 工程(step)状態を生成し状態機へ登録(遷移は StartGame で開始)
 
 	Strike();	// 開始直後から火花を出す
 	// ロード完了後にここで音を開始(起動途中でBGMが鳴らないように Main から移動)
@@ -538,8 +540,7 @@ void SceneForge::StartGame()
 	m_charging    = false;
 	m_charge      = 0.0f;
 	m_strikeCD    = 0.0f;
-	m_hammerVel   = 0.0f;
-	m_hammerLift  = HAMMER_REST_LIFT;
+	m_hammer.Reset();			// 鎚を静止高へ・速度ゼロに戻す
 	m_aimI = NL / 2; m_aimJ = NW / 2; m_aimSeg = 0; m_aimValid = false;
 	m_aimWorld = m_barAnchor;	// 最初の有効照準までのハンマー既定位置(板中心)
 	m_lookYaw = 0.0f; m_lookPitch = 0.0f;
@@ -552,6 +553,49 @@ void SceneForge::StartGame()
 	m_qualitySum   = 0.0f;
 	m_strikeCount  = 0;
 	m_spoil        = 0.0f;		// 廃件率リセット
+
+	// 工程(step)状態機を最初の工程から開始する。
+	//   遷移先の名前は「配方(m_recipe)の順序」から取る=データ駆動(chase は名前を状態に直書きだった)。
+	m_stepIdx = 0;
+	m_stepMachine.ChangeState(StepKey(m_recipe->steps[0].type));
+}
+
+//--- 工程(step)状態を生成し、状態機へ登録する(Init で一度だけ)。
+//    各状態は owner=this を持ち、完了時に AdvanceStep() を呼ぶ。登録名(GetStateName)が状態機のキー。
+void SceneForge::SetupSteps()
+{
+	m_heatStep   = std::make_unique<HeatStep>(this);
+	m_forgeStep  = std::make_unique<ForgeStep>(this);
+	m_quenchStep = std::make_unique<QuenchStep>(this);
+	m_heatStep->RegisterState(m_stepMachine);
+	m_forgeStep->RegisterState(m_stepMachine);
+	m_quenchStep->RegisterState(m_stepMachine);
+}
+
+//--- 次の工程へ進む。配方(データ)が順序の正。最後の工程を越えたら完成(淬火済み)へ。
+void SceneForge::AdvanceStep()
+{
+	++m_stepIdx;
+	if (!m_recipe || m_stepIdx >= (int)m_recipe->steps.size()) { FinishGame(); return; }
+	m_stepMachine.ChangeState(StepKey(m_recipe->steps[m_stepIdx].type));
+}
+
+//--- 今実行中の工程設定(HUD の指示文表示などが読む)。範囲外は端にクランプ。
+const StepSetting& SceneForge::CurrentStep() const
+{
+	int i = m_stepIdx;
+	if (i < 0) i = 0;
+	int last = (int)m_recipe->steps.size() - 1;
+	if (i > last) i = last;
+	return m_recipe->steps[i];
+}
+
+//--- 全区域が成形完了したか(ForgeStep の完了条件)。武器FBXが無い時は自動完成しない(要素材)。
+bool SceneForge::AllSegmentsDone() const
+{
+	if (!m_wpOk) return false;
+	for (int s = 0; s < NSEG; ++s) if (m_segProg[s] < SEG_DONE) return false;
+	return true;
 }
 
 void SceneForge::FinishGame()
@@ -634,9 +678,14 @@ void SceneForge::UpdatePlay(float tick)
 	// --- 蓄力ハンマー: 左クリック押しっぱなしで蓄力、離すと打撃。打撃後はクールダウン ---
 	if (m_strikeCD > 0.0f) m_strikeCD -= tick;	// クールダウン消化
 
-	if (!inputOn)
+	// 打撃は「鍛打(Forge)工程」の時だけ許す。加熱/淬火の工程では叩けない(=工程で行為をゲート)。
+	//   判定は文字列比較でなく強型列挙 StepName で行う: 打ち間違え(StepName::Foge 等)は
+	//   コンパイルエラーで即座に弾ける(文字列 "Forge" だと綴り間違いが黙って false になる)。
+	const bool forgePhase = (CurrentStep().type == StepName::Forge);
+
+	if (!inputOn || !forgePhase)
 	{
-		// F1操作中は蓄力をキャンセル(暴発しないように)
+		// F1操作中・鍛打工程でない=蓄力をキャンセル(暴発しないように)
 		m_charging = false;
 		m_charge   = 0.0f;
 	}
@@ -677,20 +726,8 @@ void SceneForge::UpdatePlay(float tick)
 	//   ・合力 = 張力 + 抵抗力  (重力は静止高に折込み済みなので単列しない)
 	// 上死点を越える過冲(overshoot)も静止高への収束も、係数 k/c/m から自動的に生まれる
 	// =手描きの sin 曲線を廃止。蓄力中だけは手で保持する(離した後にバネが働く)。
-	if (m_charging)
-	{
-		m_hammerLift = HAMMER_REST_LIFT + m_charge * HAMMER_CHARGE_RAISE;
-		m_hammerVel  = 0.0f;	// 手で保持=速度ゼロ
-	}
-	else
-	{
-		float dt = tick; if (dt > 0.033f) dt = 0.033f;	// 大コマ落ち時の発散防止(上限クランプ)
-		float tension    = -HAMMER_STIFFNESS * (m_hammerLift - HAMMER_REST_LIFT);	// 張力(復元)
-		float resistance = -HAMMER_DAMPING   *  m_hammerVel;						// 抵抗力(阻尼)
-		float accel      = (tension + resistance) / HAMMER_MASS;					// 合力→加速度
-		m_hammerVel  += accel * dt;			// 速度に加速度を加える(セミ暗黙オイラー=安定)
-		m_hammerLift += m_hammerVel * dt;	// 速度から位置を移動
-	}
+	if (m_charging) m_hammer.Hold(m_charge);	// 蓄力中は手で保持(高さ=静止高+蓄力量, 速度0)
+	else            m_hammer.Update(tick);		// 離した後はバネ-阻尼で静止高へ収束(積分はクラス内)
 
 	// --- ハンマーの横位置を平滑追従: 準心が格子単位で跳ぶのを Lerp::Damp で滑らかに ---
 	// 目標は現在の照準点(m_aimWorld)＋既定オフセット。Draw はこの m_hammerPos を読む。
@@ -708,16 +745,13 @@ void SceneForge::UpdatePlay(float tick)
 	if (m_shake > 0.0f)     { m_shake -= tick * 3.0f; if (m_shake < 0.0f) m_shake = 0.0f; }
 	if (m_popupLife > 0.0f) m_popupLife -= tick;
 
-	// --- 淬火(仕上げ): Qでいつでも完成にできる。一致度と損傷で品質が決まる ---
-	if (inputOn && IsKeyTrigger('Q')) FinishGame();
-
-	// 武器モーフ使用時: 全区域が到位したら自動で完成(淬火)へ。
-	if (m_wpOk)
-	{
-		bool allDone = true;
-		for (int s = 0; s < NSEG; ++s) if (m_segProg[s] < SEG_DONE) { allDone = false; break; }
-		if (allDone) FinishGame();
-	}
+	// --- 工程(step)状態機を進める ---
+	//   各工程状態の OnUpdate が完了条件を見て AdvanceStep() を呼ぶ:
+	//     Heat  … 目標温度に達したら次へ
+	//     Forge … 全区域が到位したら次へ(叩く行為自体は上の蓄力/DoStrike が担当)
+	//     Quench… Q を押したら完成(FinishGame)
+	//   完了判定に入力(Q)を読む工程があるので、入力凍結中(F1/遷移中)は進めない。
+	if (inputOn) m_stepMachine.Update(tick);
 }
 
 //--- 蓄力を解放して1打: 変形＋フィードバック
@@ -741,8 +775,7 @@ void SceneForge::DoStrike()
 	if (!m_aimValid)
 	{
 		// 空振りでも錘は砧へ振り下ろされ弾む(鉄は変形しないだけ)=バネに接触＋初速を与える
-		m_hammerLift = 0.0f;
-		m_hammerVel  = HAMMER_IMPULSE / HAMMER_MASS;
+		m_hammer.Strike();
 		Audio::Play(Audio::SE_SWING, 0.7f);	// 空を切る「ヒュッ」(鉄に当たっていない合図。文字は出さない)
 		return;
 	}
@@ -825,8 +858,7 @@ void SceneForge::DoStrike()
 	// 冷打は「ガツン」と大きく揺れる(手応えが悪い=衝撃だけ大きい)
 	m_shake = cold ? (0.6f + power * 0.6f) : (0.3f + power * 0.7f);
 	// 打撃=錘を接触位置(lift=0)まで沈め、反発の上向き初速をバネに与える(以後は物理で跳ね返る)
-	m_hammerLift = 0.0f;
-	m_hammerVel  = HAMMER_IMPULSE / HAMMER_MASS;
+	m_hammer.Strike();
 
 	// 評価 & 廃件率: KCD式に「指示せず、誤りだけ知らせる」。負向フィードバックは日本語(主人公の独白)。
 	//   廃件率は不可逆(減らない)。過熱/冷打/完成済みの区域を叩く=誤り→廃件率↑。

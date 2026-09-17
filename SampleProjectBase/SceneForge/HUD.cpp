@@ -124,6 +124,10 @@ void SceneForge::DrawPlayUI()
 	// 温度ゲージ
 	DrawHeatGauge();
 
+	// 現在の工程の指示文(宏観チュートリアル=「今この工程で何をするか」)。工程が進むと自動で変わる。
+	//   文言は配方(GameData/WeaponRecipe)が持つ=換武器で自動的に差し替わる(コードにベタ書きしない)。
+	CenterText(CurrentStep().instruction, 0.12f, 1.3f, IM_COL32(255, 240, 200, 255));
+
 	// ※KCD2式: 画面中心の準心は「置かない」。第一人称に固定十字は不自然で、しかも屏幕中央に
 	//   死んでいて動かせない。狙いの提示は「動くハンマー＋刃の高亮段」で行う(下の WeaponRender)。
 
@@ -322,19 +326,19 @@ void SceneForge::DrawUI()
 		// --- Hammer: 鎚モデルの姿勢と反冲だけ(相機・照準はここに置かない) ---
 		ImGui::Begin("Hammer (F1)");
 		ImGui::TextDisabled("-- Position / Rotation / Scale --");
-		ImGui::SliderFloat("Rest lift",   &HAMMER_REST_LIFT,    0.0f, 1.2f, "%.3f");	// 待機の高さ(下げる=低く構える)
+		ImGui::SliderFloat("Rest lift",   &m_hammer.restLift,   0.0f, 1.2f, "%.3f");	// 待機の高さ(下げる=低く構える)
 		ImGui::SliderFloat("Scale",       &m_hammerScale,       0.005f, 0.06f, "%.4f");
 		ImGui::SliderFloat3("Rot(rad)",   m_hammerRot,          -3.1416f, 3.1416f, "%.3f");
 		ImGui::SliderFloat3("Offset",     m_hammerOff,          -0.5f, 0.5f, "%.3f");	// Y=高さ微調整
 		ImGui::Separator();
 		ImGui::TextDisabled("-- Spring-damper (recoil physics) --");
-		ImGui::SliderFloat("Stiffness k", &HAMMER_STIFFNESS,    20.0f, 600.0f, "%.0f");	// 刚度=硬さ/速さ
-		ImGui::SliderFloat("Damping c",   &HAMMER_DAMPING,      0.0f, 40.0f, "%.2f");	// 阻尼=収まり(小=よく跳ねる)
-		ImGui::SliderFloat("Mass m",      &HAMMER_MASS,         0.2f, 4.0f, "%.2f");	// 質量=重さ/鈍さ
-		ImGui::SliderFloat("Impulse J",   &HAMMER_IMPULSE,      0.0f, 8.0f, "%.2f");	// 打撃の上向き冲量(初速=J/m)
+		ImGui::SliderFloat("Stiffness k", &m_hammer.stiffness,  20.0f, 600.0f, "%.0f");	// 刚度=硬さ/速さ
+		ImGui::SliderFloat("Damping c",   &m_hammer.damping,    0.0f, 40.0f, "%.2f");	// 阻尼=収まり(小=よく跳ねる)
+		ImGui::SliderFloat("Mass m",      &m_hammer.mass,       0.2f, 4.0f, "%.2f");	// 質量=重さ/鈍さ
+		ImGui::SliderFloat("Impulse J",   &m_hammer.impulse,    0.0f, 8.0f, "%.2f");	// 打撃の上向き冲量(初速=J/m)
 		ImGui::SliderFloat("Recoil back", &HAMMER_RECOIL_BACK,  0.0f, 1.0f, "%.3f");	// 手前へ後退(見た目)
 		ImGui::SliderFloat("Recoil tilt", &HAMMER_RECOIL_TILT,  0.0f, 2.0f, "%.3f");	// 錘頭の上翻り(見た目)
-		ImGui::SliderFloat("Charge raise",&HAMMER_CHARGE_RAISE, 0.0f, 1.5f, "%.3f");	// 蓄力で上がる量
+		ImGui::SliderFloat("Charge raise",&m_hammer.chargeRaise,0.0f, 1.5f, "%.3f");	// 蓄力で上がる量
 		ImGui::End();
 
 		// --- Aim & Feel: 照準の重さ / 鎚が照準へ追いつく速さ ---

@@ -423,10 +423,10 @@ void SceneForge::DrawHammer3D()
 	// 打撃直後は上向き速度が最大(=接触の反作用が最も強い)→ rp=1、上昇するにつれ減衰→頂点で0。
 	// これで縦の跳ね(m_hammerLift 側)と、後退＋上翻り(ここ)が同じ物理タイミングで起きる。
 	float rp = 0.0f;
-	float vLaunch = (HAMMER_MASS > 0.0001f) ? (HAMMER_IMPULSE / HAMMER_MASS) : 0.0f;	// 打撃直後の初速
-	if (vLaunch > 0.0001f && m_hammerVel > 0.0f)
+	float vLaunch = m_hammer.LaunchSpeed();		// 打撃直後の初速 v0 = J/m
+	if (vLaunch > 0.0001f && m_hammer.Velocity() > 0.0f)
 	{
-		rp = m_hammerVel / vLaunch;		// 0..1 に正規化(速度で駆動)
+		rp = m_hammer.Velocity() / vLaunch;		// 0..1 に正規化(速度で駆動)
 		if (rp > 1.0f) rp = 1.0f;
 	}
 
@@ -436,7 +436,7 @@ void SceneForge::DrawHammer3D()
 	float barTop = m_barAnchor.y + m_hStart;
 	XMFLOAT3 pos = {
 		m_hammerPos.x,
-		barTop + m_hammerLift + m_hammerOff[1],
+		barTop + m_hammer.Lift() + m_hammerOff[1],
 		m_hammerPos.z - HAMMER_RECOIL_BACK * rp,		// 反作用で鉄匠側(-Z)へ後退
 	};
 

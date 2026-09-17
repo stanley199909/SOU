@@ -90,7 +90,7 @@ void SceneStageEditor::Init()
 	LoadProp("StGround",   "Assets/Model/plane/plane.fbx", "Assets/Model/field/wooden-plank-textured-background-material.jpg", 12.0f, 0.0f, 0.0f, 0.0f);
 	LoadProp("StStump",    (P+"Anvil/SM_Stump.fbx").c_str(),          kAnvilTex.c_str(), 0.60f, 0.0f,  0.0f, 0.0f);
 	LoadProp("StAnvil",    (P+"Anvil/SM_Anvil.fbx").c_str(),          kAnvilTex.c_str(), 0.70f, 0.0f,  0.0f, 0.0f);
-	LoadProp("StForge",    (P+"Forges/SM_BS_Forge_1.fbx").c_str(),    kForgeStone.c_str(), 2.6f, 1.8f, 0.6f, 0.0f);
+	LoadProp("StForge",    (P+"Forges/SM_BS_Forge_2_.fbx").c_str(),   kForgeStone.c_str(), 2.6f, 1.8f, 0.6f, 0.0f);	// Forge_1は重複メッシュで破図→Forge_2へ
 	LoadProp("StStand",    (P+"Ballows/SM_Bellows_stand_1.fbx").c_str(), kWood.c_str(), 1.2f, 3.2f,  1.0f, 0.0f);
 	LoadProp("StBellows",  (P+"Ballows/SM_Bellows.fbx").c_str(),      kWood.c_str(),   1.4f,  3.2f,  1.0f, 0.0f);
 	LoadProp("StWorktable",(P+"Worktable/SM_BS_Worktable.fbx").c_str(),kTable.c_str(),  2.2f, -2.6f, 0.6f, 0.0f);

@@ -49,6 +49,30 @@
     <Filter Include="ヘッダー ファイル\App\GameLogic">
       <UniqueIdentifier>{a1b2c3d4-4444-4a2b-9c3d-0004aaaa0004}</UniqueIdentifier>
     </Filter>
+    <Filter Include="ソース ファイル\App\GameData">
+      <UniqueIdentifier>{a1b2c3d4-5555-4a2b-9c3d-0005aaaa0005}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\App\GameData">
+      <UniqueIdentifier>{a1b2c3d4-6666-4a2b-9c3d-0006aaaa0006}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\App\Physics">
+      <UniqueIdentifier>{a1b2c3d4-bbbb-4a2b-9c3d-000baaaa000b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\App\Physics">
+      <UniqueIdentifier>{a1b2c3d4-cccc-4a2b-9c3d-000caaaa000c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\App\StateMachine">
+      <UniqueIdentifier>{a1b2c3d4-7777-4a2b-9c3d-0007aaaa0007}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\App\StateMachine">
+      <UniqueIdentifier>{a1b2c3d4-8888-4a2b-9c3d-0008aaaa0008}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ソース ファイル\App\StateMachine\Player">
+      <UniqueIdentifier>{a1b2c3d4-9999-4a2b-9c3d-0009aaaa0009}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ヘッダー ファイル\App\StateMachine\Player">
+      <UniqueIdentifier>{a1b2c3d4-aaaa-4a2b-9c3d-000aaaaa000a}</UniqueIdentifier>
+    </Filter>
     <Filter Include="ソース ファイル\imgui">
       <UniqueIdentifier>{a1b2c3d4-5555-4a2b-9c3d-0005aaaa0005}</UniqueIdentifier>
     </Filter>
@@ -180,6 +204,27 @@
     <ClCompile Include="GameLogic\ScreenFade.cpp">
       <Filter>ソース ファイル\App\GameLogic</Filter>
     </ClCompile>
+    <ClCompile Include="GameData\WeaponRecipe.cpp">
+      <Filter>ソース ファイル\App\GameData</Filter>
+    </ClCompile>
+    <ClCompile Include="Physics\HammerPhysics.cpp">
+      <Filter>ソース ファイル\App\Physics</Filter>
+    </ClCompile>
+    <ClCompile Include="StateMachine\StateMachine.cpp">
+      <Filter>ソース ファイル\App\StateMachine</Filter>
+    </ClCompile>
+    <ClCompile Include="StateMachine\StateBase.cpp">
+      <Filter>ソース ファイル\App\StateMachine</Filter>
+    </ClCompile>
+    <ClCompile Include="StateMachine\Player\HeatStep.cpp">
+      <Filter>ソース ファイル\App\StateMachine\Player</Filter>
+    </ClCompile>
+    <ClCompile Include="StateMachine\Player\ForgeStep.cpp">
+      <Filter>ソース ファイル\App\StateMachine\Player</Filter>
+    </ClCompile>
+    <ClCompile Include="StateMachine\Player\QuenchStep.cpp">
+      <Filter>ソース ファイル\App\StateMachine\Player</Filter>
+    </ClCompile>
     <ClCompile Include="DebugUI.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
@@ -304,6 +349,27 @@
     </ClInclude>
     <ClInclude Include="GameLogic\ScreenFade.h">
       <Filter>ヘッダー ファイル\App\GameLogic</Filter>
+    </ClInclude>
+    <ClInclude Include="GameData\WeaponRecipe.h">
+      <Filter>ヘッダー ファイル\App\GameData</Filter>
+    </ClInclude>
+    <ClInclude Include="Physics\HammerPhysics.h">
+      <Filter>ヘッダー ファイル\App\Physics</Filter>
+    </ClInclude>
+    <ClInclude Include="StateMachine\StateMachine.h">
+      <Filter>ヘッダー ファイル\App\StateMachine</Filter>
+    </ClInclude>
+    <ClInclude Include="StateMachine\StateBase.h">
+      <Filter>ヘッダー ファイル\App\StateMachine</Filter>
+    </ClInclude>
+    <ClInclude Include="StateMachine\Player\HeatStep.h">
+      <Filter>ヘッダー ファイル\App\StateMachine\Player</Filter>
+    </ClInclude>
+    <ClInclude Include="StateMachine\Player\ForgeStep.h">
+      <Filter>ヘッダー ファイル\App\StateMachine\Player</Filter>
+    </ClInclude>
+    <ClInclude Include="StateMachine\Player\QuenchStep.h">
+      <Filter>ヘッダー ファイル\App\StateMachine\Player</Filter>
     </ClInclude>
     <ClInclude Include="DebugUI.h">
       <Filter>ヘッダー ファイル</Filter>

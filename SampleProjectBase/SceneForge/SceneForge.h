@@ -3,6 +3,12 @@
 
 #include "SceneBase.hpp"
 #include "ScreenFade.h"	// 画面フェード(場面/状態遷移の黒幕。GameLogic)
+#include "StateMachine.h"	// 工程(step)FSM の枠組み(statemachinechase から再利用)
+#include "HeatStep.h"		// 各工程の状態(StateMachine/Player)
+#include "ForgeStep.h"
+#include "QuenchStep.h"
+#include "WeaponRecipe.h"	// GameData: StepName / StepSetting / WeaponRecipe(データ)
+#include "HammerPhysics.h"	// Physics: 鎚の弾簧-阻尼運動(自作物理)
 #include <DirectXMath.h>
 #include <memory>
 #include <vector>
@@ -24,6 +30,12 @@ public:
 	void Update(float tick);
 	void Draw();
 	void DrawUI();
+
+	//--- 工程(step)状態が呼び出す窓口(StateMachine/Player の各 Step から使う) ---
+	float HeatValue() const { return m_heat; }	// 現在の温度 0..1(HeatStep が完了判定に使う)
+	bool  AllSegmentsDone() const;				// 全区域が成形完了したか(ForgeStep の完了条件)
+	void  AdvanceStep();						// 次の工程へ進む(配方の順序で遷移。無ければ完成)
+	const StepSetting& CurrentStep() const;		// 今実行中の工程設定(HUD が instruction を表示)
 
 private:
 	struct Prop;	// シーン装飾プロップ(定義は後方)
@@ -133,6 +145,17 @@ private:
 	GameState m_state    = GAME_TITLE;
 	int       m_score    = 0;		// スコア
 	ScreenFade m_fade;				// 画面フェード(起動時の淡入・状態遷移の黒幕)
+
+	//--- 工程(step)状態機: PLAY 内部の下位 FSM。上位=GameState(TITLE/PLAY/RESULT)=階層型(HSM)。
+	//    枠組みは statemachinechase の StateMachine を再利用。SceneForge が owner(chase の Enemy 役)。
+	//    「どの工程か」は状態機、「工程の順序」は配方(データ)。両者は SceneForge だけが繋ぐ。
+	StateMachine        m_stepMachine;				// 工程 FSM
+	const WeaponRecipe* m_recipe  = &ShortSword;	// 製作中の武器配方(データ駆動)
+	int                 m_stepIdx = 0;				// m_recipe->steps 内の現在位置
+	std::unique_ptr<HeatStep>   m_heatStep;			// 各工程状態(owner=this を渡して生成)
+	std::unique_ptr<ForgeStep>  m_forgeStep;
+	std::unique_ptr<QuenchStep> m_quenchStep;
+	void SetupSteps();								// 各状態を生成し m_stepMachine へ登録(Init で一度)
 
 	//--- 温度(0=冷たい 〜 1=白熱)
 	float m_heat = 0.0f;
@@ -306,25 +329,17 @@ private:
 	float m_hammerScale  = 0.02f;
 	float m_hammerRot[3] = { 3.14f, -0.20f, -1.58f };	// 向き(ラジアン)。調整済み既定
 	float m_hammerOff[3] = { 0.06f, 0.0f, 0.0f };		// 打撃点からの位置微調整
-	float m_hammerLift   = 0.40f;					// 頭の高さ(弾簧-阻尼で変化)=バネの位置
-	float m_hammerVel    = 0.0f;					// 頭の縦速度(弾簧-阻尼の状態)
+	// 鎚の縦運動(高さ/速度)と弾簧-阻尼の係数は Physics/HammerPhysics に切り出した。
+	//   ForgeStep が Hold/Strike で駆動し、Update で静止高へ収束する。係数は F1 で調整・tuning に保存。
+	HammerPhysics m_hammer;
 	// 表示用の平滑化した横位置(XZ)。準心が格子単位で跳ぶのを Lerp::Damp で吸収する。
-	// Draw はこれを読む。y は m_hammerLift のアニメをそのまま使う。
+	// Draw はこれを読む。y は m_hammer.Lift() のアニメをそのまま使う。
 	DirectX::XMFLOAT3 m_hammerPos = { 0, 0, 0 };
 	bool m_hammerPosInit = false;					// 初回だけ瞬間セット(起動時に飛んでこない)
 	float m_hammerFollow = 12.0f;	// 錘のXZ追従の速さ(小=遅れて重い, 大=機敏)。F1「Hammer follow」
 	float m_aimSens      = 0.0020f;	// 照準感度(小=重い/慎重, 大=軽快)。F1「Aim sens」
-	// ↓ ここから下は F1 の「Hammer」窓で実行時に調整できる値(constではなく変数)。
-	//   気に入った値が出たら、この初期値を書き換えて焼き込む。
-	float HAMMER_REST_LIFT    = 0.40f;	// バネの自然長=静止高(砧面から)。ここへ収束する。下げ=低く構える
-	float HAMMER_CHARGE_RAISE = 0.55f;	// 蓄力で持ち上がる量
-	// 弾簧-阻尼(spring-damper)の物理係数。老師の SceneSpring と同じ模型で、値に物理的意味がある。
-	//   刚度 k 大 → 硬いバネ=速く戻る/振動が速い。 阻尼 c 大 → 早く収まる(小=長く跳ねる)。
-	//   質量 m 大 → 重くて鈍い。 過冲(上死点越え)と収束は k/c/m から自動で出る(手描き曲線を廃止)。
-	float HAMMER_STIFFNESS    = 220.0f;	// 刚度 k (N/m 相当)
-	float HAMMER_DAMPING      = 8.0f;	// 阻尼 c (速度比例の抵抗)。臨界=2*sqrt(k*m)≈29.7、今は低め=よく跳ねる
-	float HAMMER_MASS         = 1.0f;	// 質量 m
-	float HAMMER_IMPULSE      = 2.2f;	// 打撃で与える上向き冲量 J。初速 v0 = J/m。大=高く跳ねる
+	// 弾簧-阻尼の係数(restLift/chargeRaise/stiffness/damping/mass/impulse)は m_hammer が持つ。
+	//   F1「Hammer」窓と forge_tuning.txt は m_hammer.* を直接指す。
 	// 反冲(後座)の見た目: 打撃の反作用で錘が「奥行き(手前へ後退)＋錘頭の上翻り」する。
 	// 位相 rp は上記バネの縦速度から直接求める(接触直後=最大→上昇で減衰)=物理と一致。
 	float HAMMER_RECOIL_BACK  = 0.60f;	// 手前(-Z)へ後退する量(world)
