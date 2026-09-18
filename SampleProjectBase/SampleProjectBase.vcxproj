@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -172,10 +172,8 @@
     </FxCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="Ball.cpp" />
     <ClCompile Include="Box.cpp" />
     <ClCompile Include="Player.cpp" />
-    <ClCompile Include="Enemy.cpp" />
     <ClCompile Include="Deferred.cpp" />
     <ClCompile Include="PostProcess.cpp" />
     <ClCompile Include="GameLogic\AimSystem.cpp" />
@@ -207,8 +205,6 @@
     <ClCompile Include="imgui\imgui_impl_win32.cpp" />
     <ClCompile Include="CameraDCC.cpp" />
     <ClCompile Include="CameraBase.cpp" />
-    <ClCompile Include="CameraWater.cpp" />
-    <ClCompile Include="CameraWipe.cpp" />
     <ClCompile Include="DirectX.cpp" />
     <ClCompile Include="Input.cpp" />
     <ClCompile Include="LightBase.cpp" />
@@ -217,21 +213,17 @@
     <ClCompile Include="Main.cpp" />
     <ClCompile Include="Model.cpp" />
     <ClCompile Include="MoveLight.cpp" />
-    <ClCompile Include="PointLight.cpp" />
     <ClCompile Include="SceneBase.cpp" />
     <ClCompile Include="StageEditor.cpp" />
     <ClCompile Include="Shader.cpp" />
-    <ClCompile Include="SpotLight.cpp" />
     <ClCompile Include="Sprite.cpp" />
     <ClCompile Include="Startup.cpp" />
     <ClCompile Include="Texture.cpp" />
     <ClCompile Include="SceneRoot.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="Ball.h" />
     <ClInclude Include="Box.h" />
     <ClInclude Include="Player.h" />
-    <ClInclude Include="Enemy.h" />
     <ClInclude Include="Deferred.h" />
     <ClInclude Include="PostProcess.h" />
     <ClInclude Include="GameLogic\AimSystem.h" />
@@ -258,8 +250,6 @@
     <ClInclude Include="imgui\imgui_impl_win32.h" />
     <ClInclude Include="CameraDCC.h" />
     <ClInclude Include="CameraBase.h" />
-    <ClInclude Include="CameraWater.h" />
-    <ClInclude Include="CameraWipe.h" />
     <ClInclude Include="DebugLog.h" />
     <ClInclude Include="Defines.h" />
     <ClInclude Include="DirectX.h" />
@@ -270,12 +260,10 @@
     <ClInclude Include="Main.h" />
     <ClInclude Include="Model.h" />
     <ClInclude Include="MoveLight.h" />
-    <ClInclude Include="PointLight.h" />
     <ClInclude Include="SceneBase.hpp" />
     <ClInclude Include="StageEditor.h" />
     <ClInclude Include="SceneRoot.h" />
     <ClInclude Include="Shader.h" />
-    <ClInclude Include="SpotLight.h" />
     <ClInclude Include="Sprite.h" />
     <ClInclude Include="Texture.h" />
   </ItemGroup>

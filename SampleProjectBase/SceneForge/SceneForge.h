@@ -11,6 +11,7 @@
 #include "HammerPhysics.h"	// Physics: 鎚の弾簧-阻尼運動(自作物理)
 #include "ForgingSim.h"		// Physics: 鍛造される鉄の状態と変形(自作物理)
 #include "Particles.h"		// Physics: 火花・余燼の粒子シミュ(自作物理)
+#include "Player.h"			// 鍛冶場を歩き回るプレイヤ(一人称の走動)
 #include <DirectXMath.h>
 #include <memory>
 #include <vector>
@@ -163,6 +164,18 @@ private:
 	DirectX::XMFLOAT3 m_camFwd = { 0, 0, 1 };	// 現在のカメラ正前方(照準射線に使う)
 	void  UpdateMouseLook();		// マウス移動を視角(yaw/pitch)へ累積(再センタリング方式)
 	void  UpdateAim();				// 準心射線を板と交差させ m_aimI/J/World を更新
+
+	//--- 一人称の「走動モード」(工位に着く前に工坊を歩く) ---
+	// 二模式切替: 走動中=ApplyWalkCamera(玩家目線), 工位=ApplyCamera(調校済みの鍛造framing)。
+	Player m_player;					// 歩き回るプレイヤ本体(位置/向き/速度/可互動を持つ)
+	bool   m_walkMode   = false;		// true=走動モード / false=工位(鍛造)モード。E互動で工位へ入る
+	float  m_walkPitch  = 0.0f;			// 走動カメラの上下(pitch)累積。左右(yaw)は m_player が持つ
+	float  m_walkEyeH   = 1.6f;			// 目線の高さ(玩家足元からカメラまで, 単位)
+	float  m_walkSens   = 0.0017f;		// 走動時マウス感度(rad/px)。UpdateMouseLook と同値で統一
+	float  m_walkPitchLim = 1.3f;		// 上下視角の制限(rad)≒74°。真上/真下でひっくり返るのを防ぐ
+	float  m_walkSpeed  = 3.0f;			// 走動速度(単位/秒)。毎フレーム m_player へ渡す(F1で調整)
+	void   UpdateWalkLook();			// 走動時: マウスを玩家yaw(左右)とカメラpitch(上下)へ
+	void   ApplyWalkCamera();			// 走動時: カメラを玩家の目線に置く一人称カメラ
 
 	//--- F1調整値の永続化(Assets/forge_tuning.txt)。Initで読み, Uninit/Saveボタンで書く。
 	void  LoadTuning();

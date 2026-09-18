@@ -36,6 +36,6 @@
 *_Mask.png
 
 # Runtime state (changes every run, no need to track)
-Assets/setting.dat
+**/Assets/setting.dat
 imgui.ini
 debug.txt

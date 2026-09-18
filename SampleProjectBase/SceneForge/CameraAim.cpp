@@ -117,6 +117,54 @@ void SceneForge::ApplyCamera()
 	cam->SetUp  (XMFLOAT3(0.0f, 1.0f, 0.0f));
 }
 
+//--- 走動モードのマウス視角。UpdateMouseLook と同じ「毎フレーム中心へ戻す」相対方式だが、
+//    左右(yaw)は玩家の向き(m_player)に、上下(pitch)は m_walkPitch に入れる(一人称の見回し)。
+void SceneForge::UpdateWalkLook()
+{
+	HWND hwnd = GetActiveWindow();
+	if (!hwnd) return;
+	RECT rc; GetClientRect(hwnd, &rc);
+	POINT center = { (rc.right - rc.left) / 2, (rc.bottom - rc.top) / 2 };
+	POINT cp; GetCursorPos(&cp);
+	POINT cs = center; ClientToScreen(hwnd, &cs);	// 画面座標の中心
+	POINT cc = cp;     ScreenToClient(hwnd, &cc);	// 現在カーソルをクライアント座標へ
+	float dx = (float)(cc.x - center.x);
+	float dy = (float)(cc.y - center.y);
+
+	// 左右: マウス右(dx>0)=右へ振り向く=yaw増加(前方が+xへ回る)
+	m_player.SetYaw(m_player.GetYaw() + dx * m_walkSens);
+	// 上下: マウス上(dy<0)=見上げる=pitch増加。真上/真下で反転しない様に夹住。
+	m_walkPitch -= dy * m_walkSens;
+	if (m_walkPitch >  m_walkPitchLim) m_walkPitch =  m_walkPitchLim;
+	if (m_walkPitch < -m_walkPitchLim) m_walkPitch = -m_walkPitchLim;
+
+	SetCursorPos(cs.x, cs.y);	// 中心へ戻す(累積の基準を保つ)
+}
+
+//--- 走動モードのカメラ = 玩家の目線に置く一人称カメラ。
+//    位置 = 玩家座標 + 目線高。向き = 玩家yaw(左右) + m_walkPitch(上下)。
+void SceneForge::ApplyWalkCamera()
+{
+	CameraBase* cam = GetObj<CameraBase>("Camera");
+	if (!cam) return;
+
+	cam->SetFovY(m_camFov);	// 画角は工位と揃える(必要なら後で走動用に広げる)
+
+	// 目線位置: 足元(m_player)の真上 m_walkEyeH
+	XMFLOAT3 p = m_player.GetPosition();
+	XMFLOAT3 eye = XMFLOAT3(p.x, p.y + m_walkEyeH, p.z);
+
+	// yaw/pitch から前方ベクトル。yaw=0 で +Z を向く(Player::GetForward と同規約)。
+	float cy = cosf(m_walkPitch);
+	float yaw = m_player.GetYaw();
+	XMFLOAT3 fwd = XMFLOAT3(sinf(yaw) * cy, sinf(m_walkPitch), cosf(yaw) * cy);
+	m_camFwd = fwd;	// 照準射線に使う変数も更新(走動中は未使用だが整合させる)
+
+	cam->SetPos (eye);
+	cam->SetLook(XMFLOAT3(eye.x + fwd.x, eye.y + fwd.y, eye.z + fwd.z));
+	cam->SetUp  (XMFLOAT3(0.0f, 1.0f, 0.0f));
+}
+
 //--- マウス移動を視角(yaw/pitch)へ累積する。FPS方式: 毎フレーム、カーソルを画面中心へ
 //    戻し(再センタリング)、その差分を回転量にする。範囲は板の周囲に夹住する。
 void SceneForge::UpdateMouseLook()

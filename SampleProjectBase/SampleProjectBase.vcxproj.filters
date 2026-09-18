@@ -147,21 +147,6 @@
     <ClCompile Include="CameraDCC.cpp">
       <Filter>ソース ファイル\App\Camera</Filter>
     </ClCompile>
-    <ClCompile Include="CameraWipe.cpp">
-      <Filter>ソース ファイル\App\Camera</Filter>
-    </ClCompile>
-    <ClCompile Include="CameraWater.cpp">
-      <Filter>ソース ファイル\App\Camera</Filter>
-    </ClCompile>
-    <ClCompile Include="PointLight.cpp">
-      <Filter>ソース ファイル\App</Filter>
-    </ClCompile>
-    <ClCompile Include="SpotLight.cpp">
-      <Filter>ソース ファイル\App</Filter>
-    </ClCompile>
-    <ClCompile Include="Ball.cpp">
-      <Filter>ソース ファイル\System</Filter>
-    </ClCompile>
     <ClCompile Include="StageEditor.cpp">
       <Filter>ソース ファイル\App\Scene</Filter>
     </ClCompile>
@@ -169,9 +154,6 @@
       <Filter>ソース ファイル\System</Filter>
     </ClCompile>
     <ClCompile Include="Player.cpp">
-      <Filter>ソース ファイル\App</Filter>
-    </ClCompile>
-    <ClCompile Include="Enemy.cpp">
       <Filter>ソース ファイル\App</Filter>
     </ClCompile>
     <ClCompile Include="PostProcess.cpp">
@@ -305,22 +287,7 @@
     <ClInclude Include="CameraDCC.h">
       <Filter>ヘッダー ファイル\App\Camera</Filter>
     </ClInclude>
-    <ClInclude Include="CameraWipe.h">
-      <Filter>ヘッダー ファイル\App\Camera</Filter>
-    </ClInclude>
-    <ClInclude Include="CameraWater.h">
-      <Filter>ヘッダー ファイル\App\Camera</Filter>
-    </ClInclude>
-    <ClInclude Include="PointLight.h">
-      <Filter>ヘッダー ファイル\App</Filter>
-    </ClInclude>
-    <ClInclude Include="SpotLight.h">
-      <Filter>ヘッダー ファイル\App</Filter>
-    </ClInclude>
     <ClInclude Include="DebugLog.h">
-      <Filter>ヘッダー ファイル\System</Filter>
-    </ClInclude>
-    <ClInclude Include="Ball.h">
       <Filter>ヘッダー ファイル\System</Filter>
     </ClInclude>
     <ClInclude Include="StageEditor.h">
@@ -330,9 +297,6 @@
       <Filter>ヘッダー ファイル\System</Filter>
     </ClInclude>
     <ClInclude Include="Player.h">
-      <Filter>ヘッダー ファイル\App</Filter>
-    </ClInclude>
-    <ClInclude Include="Enemy.h">
       <Filter>ヘッダー ファイル\App</Filter>
     </ClInclude>
     <ClInclude Include="PostProcess.h">

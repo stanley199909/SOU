@@ -169,6 +169,10 @@ void SceneForge::Init()
 	m_fade.StartCovered();	// 起動時は黒からタイトルへ淡入
 	m_vtx.resize(Particles::MAX_SPARKS * 6);	// 火花描画の頂点バッファ(粒子上限×6頂点)
 
+	// 一人称プレイヤ: 砧の手前(−Z側)に立たせ、砧の方(+Z)を向かせる。走動速度を設定。
+	m_player.Init(DirectX::XMFLOAT3(0.0f, 0.0f, -2.0f), 0.0f);
+	m_player.SetMoveSpeed(m_walkSpeed);	// 単位/秒(歩き)。F1「Walk / Player」で調整
+
 	// 火花/余燼用パーティクルシェーダー(.hlsl → fxc → .cso をLoad)
 	VertexShader* vs = CreateObj<VertexShader>("VS_Forge");
 	if (FAILED(vs->Load("Assets/Shader/VS_Particle.cso")))
@@ -430,6 +434,10 @@ void SceneForge::StartGame()
 	Audio::PlayLoop(Audio::BGM_PLAY, 0.45f);	// ゲーム中BGM(medieval)
 	m_heatSndOn = false;						// 加熱持続音の状態をリセット
 	m_state    = GAME_PLAY;
+	// ゲーム開始時は「走動モード」から。工坊を歩いて工位に着き、Eで鍛造に入る。
+	m_walkMode = true;
+	m_walkPitch = 0.0f;
+	m_player.Init(DirectX::XMFLOAT3(0.0f, 0.0f, -2.0f), 0.0f);	// 開始位置/向きを戻す
 	m_score    = 0;
 	m_heat     = 0.0f;
 	m_forging.Reset();		// 鉄を厚板・無傷・進捗0へ(目標形状も再生成)
@@ -505,6 +513,7 @@ void SceneForge::FinishGame()
 	Audio::Play(Audio::SE_SUCCESS, 0.8f);		// 完成の合図
 	Audio::PlayLoop(Audio::BGM_RESULT, 0.5f);	// 結果画面BGM
 	m_state = GAME_RESULT;
+	m_walkMode = false;	// 結果画面は通常カメラで見せる(走動カメラを解除)
 }
 
 void SceneForge::GameOverGame()
@@ -514,6 +523,7 @@ void SceneForge::GameOverGame()
 	if (m_heatSndOn) { Audio::Stop(Audio::SE_FORGE_LOOP); m_heatSndOn = false; }
 	Audio::Play(Audio::SE_FAIL, 0.9f);	// 廃件(失敗)の合図
 	m_state = GAME_OVER;				// 分数はそのまま結果画面で見せる
+	m_walkMode = false;					// 失敗画面も通常カメラで見せる(走動カメラを解除)
 }
 
 //--- タイトル: 雰囲気で自動的に火花を出しつつ、SPACEで開始
@@ -529,8 +539,9 @@ void SceneForge::UpdateTitle(float /*tick*/)
 //--- 鍛造中
 void SceneForge::UpdatePlay(float tick)
 {
-	// F1(デバッグUI)を開いている間、および画面フェード(遷移)中はゲーム入力を凍結する。
-	bool inputOn = !DebugUI::IsVisible() && !m_fade.IsBusy();
+	// F1(デバッグUI)を開いている間、画面フェード(遷移)中、および走動モード中はゲーム入力を凍結する。
+	// ※走動中に打鉄/加熱/工程FSMが動かないよう !m_walkMode を条件に含める。
+	bool inputOn = !DebugUI::IsVisible() && !m_fade.IsBusy() && !m_walkMode;
 
 	// Pキー: 瞄準区域の可視化トグル(デバッグ用。既定OFF=KCD式に「叩く場所」を示さない)
 	if (inputOn && IsKeyTrigger('P')) m_showAimHi = !m_showAimHi;
@@ -762,8 +773,29 @@ void SceneForge::Update(float tick)
 {
 	m_time += tick;
 	m_fade.Update(tick);	// 画面フェード(黒幕)を進める。遷移はTransitionの黒転じで実行される
-	// PLAY中かつF1非表示のときだけ、マウスをFPS式に視角へ累積(ApplyCameraより先に)。
-	if (m_state == GAME_PLAY && !DebugUI::IsVisible() && !m_fade.IsBusy()) UpdateMouseLook();
+	// PLAY中かつF1非表示・遷移中でないときだけ操作を受け付ける(ApplyCameraより先に)。
+	bool canControl = (m_state == GAME_PLAY && !DebugUI::IsVisible() && !m_fade.IsBusy());
+	if (canControl)
+	{
+		if (m_walkMode)
+		{
+			// --- 走動モード: 一人称で工坊を歩く ---
+			UpdateWalkLook();				// マウス→玩家yaw(左右)/カメラpitch(上下)
+			m_player.SetMoveSpeed(m_walkSpeed);	// F1スライダの速度を毎フレーム反映
+			std::vector<Box> walls;			// TODO(Step3): シーンのプロップから壁を組む。今は衝突なし
+			m_player.Update(tick, walls);	// WASDで一人称移動
+
+			// TODO(Step3): 本来は各工位(砧/炉/水槽)への距離で可互動を判定する。今は常に可互動。
+			m_player.SetCanInteract(true);
+			// E互動 → 工位(鍛造)モードへ。実行する工程は配方の現在工程(StartGameで step0 から進む)。
+			//   ※退出(工位→走動)のキー/処理は未定(ユーザー検討中)なので、ここでは入れない。
+			if (m_player.WantInteract()) m_walkMode = false;
+		}
+		else
+		{
+			UpdateMouseLook();				// 工位: 従来のFPS式受限環視(準心/rail)
+		}
+	}
 	// カメラは KCD式に3つの固定視角へ吸着する。狙い(m_aimRail)自体は連続でハンマーは全長を動くが、
 	// カメラ用の rail は現在の段(m_viewSeg)の中心へ寄せる → 視角は3段でカチッと切り替わる。
 	{
@@ -776,7 +808,8 @@ void SceneForge::Update(float tick)
 	}
 	// デバッグUI表示中はカメラ固定を外し、DCCの自由カメラ(ALT+ドラッグでオービット)を許可。
 	// 非表示時(=プレイ中)はKCD風の固定カメラに上書きする。
-	ApplyCamera();		// FPS式受限環視カメラ(編集は STAGESETTING シーンで行う)
+	if (m_walkMode) ApplyWalkCamera();	// 走動: 玩家目線の一人称カメラ
+	else            ApplyCamera();		// 工位: FPS式受限環視カメラ(編集は STAGESETTING シーンで行う)
 	UpdateBarAnchor();	// 金床の砧面の高さに鉄条を自動配置
 
 	// PLAY中はOSカーソルを隠す(照準は光るセグメントで示す)。デバッグUI表示中は出す
@@ -810,7 +843,8 @@ void SceneForge::Update(float tick)
 
 void SceneForge::Draw()
 {
-	ApplyCamera();	// 固定カメラを適用(GetViewの前に)
+	if (m_walkMode) ApplyWalkCamera();	// 走動: 玩家目線(Updateと同じ規約でDrawでも適用)
+	else            ApplyCamera();		// 工位: 固定カメラを適用(GetViewの前に)
 	DrawModelsTest();	// 先に不透明な3Dモデル(金床)を描く
 	if (m_wpOk) DrawWeapon();	// Blender武器モデルを進捗でモーフ(あれば優先)
 	else        Draw3DBillet();	// 無ければ従来の高さ場メッシュ

@@ -349,6 +349,16 @@ void SceneForge::DrawUI()
 		// 手動保存。退出時にも自動保存されるが、確認したい時のボタン(全窓の値をまとめて保存)。
 		if (ImGui::Button("Save tuning (forge_tuning.txt)")) SaveTuning();
 		ImGui::End();
+
+		// --- Walk / Player: 一人称の走動(移動速度/マウス感度/上下範囲/目線高) ---
+		ImGui::Begin("Walk / Player (F1)");
+		ImGui::Text(m_walkMode ? "mode: WALK (press E to enter station)"
+		                       : "mode: STATION (forging)");
+		ImGui::SliderFloat("Walk speed",  &m_walkSpeed,    0.5f,  8.0f,   "%.2f");	// 移動速度(単位/秒)
+		ImGui::SliderFloat("Mouse sens",  &m_walkSens,     0.0006f, 0.0050f, "%.4f");	// 視角感度(低=重い)
+		ImGui::SliderFloat("Pitch limit", &m_walkPitchLim, 0.3f,  1.55f,  "%.2f");	// 上下の振り切り制限(rad)
+		ImGui::SliderFloat("Eye height",  &m_walkEyeH,     0.8f,  2.2f,   "%.2f");	// 目線の高さ
+		ImGui::End();
 	}
 
 	m_fade.Draw();	// 最後に全画面の黒幕(前景層)を重ねる=遷移の淡入淡出
