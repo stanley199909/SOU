@@ -158,6 +158,8 @@ void SceneForge::UpdateMouseLook()
 //    準心が刃に乗っている＝射線が刃に当たる、が一致する(Valorant等と同じ原理)。
 void SceneForge::UpdateAim()
 {
+	// 格子寸法の別名(唯一の定義は ForgingSim。ここは読みやすさのための局所別名)。
+	const int NL = ForgingSim::NL, NW = ForgingSim::NW, NSEG = ForgingSim::NSEG;
 	if (m_wpOk)
 	{
 		// 狙いは m_aimRail(マウス縦で動く 0=手前..1=奥)で直接決める。射線の当たり外れに依存しないので、
@@ -187,7 +189,7 @@ void SceneForge::UpdateAim()
 	XMFLOAT3 o = { m_camPos[0], m_camPos[1], m_camPos[2] };
 	XMFLOAT3 d = m_camFwd;
 	// 板の上面を代表する水平面 y = planeY と交差
-	float planeY = m_barAnchor.y + m_hStart * 0.5f;
+	float planeY = m_barAnchor.y + m_forging.Start() * 0.5f;
 	if (fabsf(d.y) < 1e-5f) { m_aimValid = false; return; }
 	float t = (planeY - o.y) / d.y;
 	if (t <= 0.0f) { m_aimValid = false; return; }	// 前方でない
@@ -209,7 +211,7 @@ void SceneForge::UpdateAim()
 	// 照準セルの中心のワールド座標(ハンマー配置に使う)
 	float cx = (m_barAnchor.x - m_barWidth) + 2.0f * m_barWidth * ((m_aimJ + 0.5f) / NW);
 	float cz = (m_barAnchor.z - half)       + m_barLen        * ((m_aimI + 0.5f) / NL);
-	m_aimWorld = XMFLOAT3(cx, m_barAnchor.y + m_h[m_aimI][m_aimJ], cz);
+	m_aimWorld = XMFLOAT3(cx, m_barAnchor.y + m_forging.Height(m_aimI, m_aimJ), cz);
 	m_aimValid = true;
 }
 

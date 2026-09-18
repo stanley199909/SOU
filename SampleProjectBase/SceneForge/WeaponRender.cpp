@@ -36,6 +36,8 @@ using namespace DirectX;
 //    色は熱色を高さで明暗変調し、照準セルに接する角を少しハイライト。周縁は薄いスカートで底へ閉じる。
 int SceneForge::BuildBarMesh()
 {
+	// 格子寸法の別名(唯一の定義は ForgingSim)。
+	const int NL = ForgingSim::NL, NW = ForgingSim::NW;
 	int v = 0;
 	const float half = m_barLen * 0.5f;
 	const float ax   = m_barAnchor.x;
@@ -51,7 +53,7 @@ int SceneForge::BuildBarMesh()
 		{
 			int ci = i + di, cj = j + dj;
 			if (ci < 0 || ci >= NL || cj < 0 || cj >= NW) continue;
-			s += m_h[ci][cj]; ++n;
+			s += m_forging.Height(ci, cj); ++n;
 		}
 		return (n > 0) ? s / n : 0.0f;
 	};
@@ -70,10 +72,10 @@ int SceneForge::BuildBarMesh()
 		{
 			int ci = i + di, cj = j + dj;
 			if (ci < 0 || ci >= NL || cj < 0 || cj >= NW) continue;
-			if (m_dmgF[ci][cj] > dmg) dmg = m_dmgF[ci][cj];
+			float d = m_forging.Damage(ci, cj); if (d > dmg) dmg = d;
 		}
 		XMFLOAT4 c = HeatRGB(m_heat, dmg);
-		float norm = h / m_hStart;
+		float norm = h / m_forging.Start();
 		if (norm < 0.0f) norm = 0.0f; if (norm > 1.0f) norm = 1.0f;
 		float b = 0.26f + 0.74f * norm;
 		c.x *= b; c.y *= b; c.z *= b;
@@ -255,6 +257,7 @@ XMMATRIX SceneForge::WeaponWorld() const
 void SceneForge::BuildWeaponMorph()
 {
 	if (!m_wpOk) return;
+	const int NSEG = ForgingSim::NSEG;	// 区域数の別名(唯一の定義は ForgingSim)
 	int ns = (int)m_wpStage.size();
 
 	XMMATRIX world = WeaponWorld();
@@ -280,7 +283,7 @@ void SceneForge::BuildWeaponMorph()
 			float ft = fpos - s0;
 			int   sa = s0 < 0 ? 0 : (s0 >= NSEG ? NSEG - 1 : s0);
 			int   sb = (s0 + 1) < 0 ? 0 : ((s0 + 1) >= NSEG ? NSEG - 1 : (s0 + 1));
-			p = m_segProg[sa] + (m_segProg[sb] - m_segProg[sa]) * ft;
+			p = m_forging.SegProg(sa) + (m_forging.SegProg(sb) - m_forging.SegProg(sa)) * ft;
 			thisSeg = (int)sc; if (thisSeg >= NSEG) thisSeg = NSEG - 1;
 		}
 		else { p = m_forgeProg; thisSeg = -1; }
@@ -433,7 +436,7 @@ void SceneForge::DrawHammer3D()
 	// ハンマーの高さは固定(砧面+平坦時の板厚)。旧2D高度場 m_h は DoStrike で叩いた格子だけ
 	// 凹むため、それを読むと「叩いた位置に戻ると錘が沈む」不具合になる。武器モーフの刃面は
 	// ほぼ平なので、位置に依らない一定の barTop にする(高さは回弾アニメ m_hammerLift のみで変える)。
-	float barTop = m_barAnchor.y + m_hStart;
+	float barTop = m_barAnchor.y + m_forging.Start();
 	XMFLOAT3 pos = {
 		m_hammerPos.x,
 		barTop + m_hammer.Lift() + m_hammerOff[1],

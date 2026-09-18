@@ -183,6 +183,8 @@
     <ClCompile Include="GameLogic\ScreenFade.cpp" />
     <ClCompile Include="GameData\WeaponRecipe.cpp" />
     <ClCompile Include="Physics\HammerPhysics.cpp" />
+    <ClCompile Include="Physics\ForgingSim.cpp" />
+    <ClCompile Include="Physics\Particles.cpp" />
     <ClCompile Include="StateMachine\StateMachine.cpp" />
     <ClCompile Include="StateMachine\StateBase.cpp" />
     <ClCompile Include="StateMachine\Player\HeatStep.cpp" />
@@ -237,6 +239,8 @@
     <ClInclude Include="GameLogic\ScreenFade.h" />
     <ClInclude Include="GameData\WeaponRecipe.h" />
     <ClInclude Include="Physics\HammerPhysics.h" />
+    <ClInclude Include="Physics\ForgingSim.h" />
+    <ClInclude Include="Physics\Particles.h" />
     <ClInclude Include="StateMachine\StateMachine.h" />
     <ClInclude Include="StateMachine\StateBase.h" />
     <ClInclude Include="StateMachine\Player\HeatStep.h" />

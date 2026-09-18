@@ -210,6 +210,12 @@
     <ClCompile Include="Physics\HammerPhysics.cpp">
       <Filter>ソース ファイル\App\Physics</Filter>
     </ClCompile>
+    <ClCompile Include="Physics\ForgingSim.cpp">
+      <Filter>ソース ファイル\App\Physics</Filter>
+    </ClCompile>
+    <ClCompile Include="Physics\Particles.cpp">
+      <Filter>ソース ファイル\App\Physics</Filter>
+    </ClCompile>
     <ClCompile Include="StateMachine\StateMachine.cpp">
       <Filter>ソース ファイル\App\StateMachine</Filter>
     </ClCompile>
@@ -354,6 +360,12 @@
       <Filter>ヘッダー ファイル\App\GameData</Filter>
     </ClInclude>
     <ClInclude Include="Physics\HammerPhysics.h">
+      <Filter>ヘッダー ファイル\App\Physics</Filter>
+    </ClInclude>
+    <ClInclude Include="Physics\ForgingSim.h">
+      <Filter>ヘッダー ファイル\App\Physics</Filter>
+    </ClInclude>
+    <ClInclude Include="Physics\Particles.h">
       <Filter>ヘッダー ファイル\App\Physics</Filter>
     </ClInclude>
     <ClInclude Include="StateMachine\StateMachine.h">

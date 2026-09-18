@@ -9,6 +9,8 @@
 #include "QuenchStep.h"
 #include "WeaponRecipe.h"	// GameData: StepName / StepSetting / WeaponRecipe(データ)
 #include "HammerPhysics.h"	// Physics: 鎚の弾簧-阻尼運動(自作物理)
+#include "ForgingSim.h"		// Physics: 鍛造される鉄の状態と変形(自作物理)
+#include "Particles.h"		// Physics: 火花・余燼の粒子シミュ(自作物理)
 #include <DirectXMath.h>
 #include <memory>
 #include <vector>
@@ -49,14 +51,7 @@ private:
 		GAME_OVER,		// 廃件(失敗)
 	};
 
-	struct Spark
-	{
-		DirectX::XMFLOAT3 pos;
-		DirectX::XMFLOAT3 vel;
-		float life;
-		float maxLife;
-		float size;
-	};
+	// 火花/余燼の粒子型は Physics/Particles が持つ(Particles::Particle)。
 	struct Vertex
 	{
 		DirectX::XMFLOAT3 pos;
@@ -67,8 +62,7 @@ private:
 	//--- 火花
 	void Strike(float scale = 1.0f);	// 1回叩く(火花をまとめて発生, scaleで量と勢いを調整)
 
-	//--- 炭火から立ち上る余燼(火の粉)。持続発生・上昇・淡出
-	void UpdateEmbers(float tick);	// 発生＋上昇＋消滅のシミュレーション(CPU)
+	//--- 炭火から立ち上る余燼(火の粉)。シミュは Particles、描画はここ。
 	void DrawEmbers();				// 余燼をカメラ向きビルボードで加算描画(火花と同じシェーダー)
 
 	//--- 状態ごとの更新
@@ -99,8 +93,6 @@ private:
 	bool  m_showAimHi = false;
 
 	//--- 鍛造(鉄塊)
-	void  BuildTarget();		// 目標形状(剣)を生成
-	float ShapeMatch() const;	// 現在の形状と目標の一致度(0..1)
 	void  ApplyCamera();		// ゲーム用の固定カメラ(KCD風の見下ろし)を毎フレーム適用
 	void  UpdateBarAnchor();	// 金床のAABBから砧面(上面中心)を求め、鉄条をその上に自動配置
 	void  DrawDebugBoxes();	// デバッグ: 金床AABBと鉄条の箱を線で可視化
@@ -121,11 +113,8 @@ private:
 	void DoStrike();		// 蓄力を解放して1打(変形＋フィードバック)
 
 private:
-	//--- 火花シミュレーション
-	std::vector<Spark>  m_sparks;
-	std::vector<Spark>  m_embers;		// 炭火の余燼(火の粉)。上昇して淡出
-	float               m_emberSpawn = 0.0f;	// 余燼発生の端数(1未満を持ち越す)
-	static const int    MAX_EMBERS = 500;
+	//--- 火花・余燼の粒子シミュ(状態と運動は Physics/Particles が所有)。描画はこのクラス。
+	Particles m_particles;
 	//--- 余燼発生器の調整値(編集シーンで調整→stage_layout.txtの E 行で読む)
 	float m_emberPos[3]  = { 3.20f, 0.60f, 1.80f };	// 発生中心(既定は炭付近)
 	float m_emberArea[2] = { 0.45f, 0.60f };		// 発生半径(X,Z)
@@ -160,20 +149,13 @@ private:
 	//--- 温度(0=冷たい 〜 1=白熱)
 	float m_heat = 0.0f;
 
-	//--- 鉄板の二次元セル(粗いブロック): KCD式「注定成形」。
-	//    俯視の板を 長さNL × 幅NW の「格子(ブロック)」に切り、各セルが1つの独立した高さ m_h[i][j]。
-	//    1打=命中した「その1セルだけ」を目標高さ m_hTgt へ「下げる」(只下不上=注定, 形は壊れない)。
-	//    起点は一様な厚板。周囲のセルを叩き下げると、高いセル=武器がブロックとして浮き出る。
-	//      i = 長さ方向(Z, 0=柄端タング → NL-1=切先) / j = 幅方向(X, 中央=刃の峰)
-	static const int NL = 20;		// 長さ方向(Z)のセル数
-	static const int NW = 6;		// 幅方向(X)のセル数
-	float m_h[NL][NW];				// 現在の高さ(厚み)場
-	float m_hTgt[NL][NW];			// 目標(完成武器)の高さ場
-	float m_dmgF[NL][NW];			// 各セルの損傷(冷打の割れ/過熱の焼け, 0..1)
-	float m_hStart = 0.17f;			// 鉄坯(平板)の一様な高さ = 武器の最厚部
-	float m_match  = 0.0f;			// 成形の進捗(平均) 0..1
+	//--- 鍛造される鉄の状態＋物理は Physics/ForgingSim に切り出した。
+	//    (格子・高さ場・目標形・成形進捗・損傷、および打撃による変形演算を全て所有)
+	//    SceneForge は m_forging へ「打撃を適用/状態を読む」だけ。玩家の動作は ForgeStep。
+	ForgingSim m_forging;
+	float m_match  = 0.0f;			// 成形の進捗(平均) 0..1。表示用に SceneForge が保持
 	//--- FPS式照準: 画面中心の準心から射線を飛ばし、板に当たったセルを求める
-	int   m_aimI = NL / 2, m_aimJ = NW / 2;		// 現在照準しているセル
+	int   m_aimI = ForgingSim::NL / 2, m_aimJ = ForgingSim::NW / 2;	// 現在照準しているセル
 	bool  m_aimValid = false;					// 準心が板の上にあるか
 	DirectX::XMFLOAT3 m_aimWorld = { 0, 0, 0 };	// 準心が当たった板上のワールド座標
 	//--- FPS式の受限環視カメラ(マウスで視角を回す。準心は常に画面中心=カメラ正前方)
@@ -224,12 +206,7 @@ private:
 	int   m_wpN = 0;							// 1段の頂点数
 	bool  m_wpOk = false;						// 読み込み成功&段間で頂点数一致
 	float m_forgeProg = 0.0f;					// 全体進捗 0..1(=各区域の平均。F1のプレビュー用)
-	//--- 分区域進度: 刀身を長手方向に NSEG 分割し、各区域を独立に成形する(KCDの指示に従う核心)。
-	//    各区域は stage_0 位置 → stage_final 位置へ、その区域の進度で個別に頂点補間される。
-	//    ある区域が到位(~1.0)後にまた叩く=無用打撃→廃件率↑。全区域到位で完成。
-	static const int NSEG = 5;
-	float m_segProg[NSEG] = {};					// 各区域の成形進捗 0..1
-	static constexpr float SEG_DONE = 0.98f;	// この値以上で「その区域は完成」とみなす
+	//--- 分区域進度は m_forging が所有(ForgingSim::NSEG / SegProg / SegDone / AllSegmentsDone)。
 	int   m_aimSeg = 0;							// 現在照準している区域(AimSystemが更新)
 	// 照準している区域番号。AimSystem(射線×区域ボックス)が決めた値をそのまま返す。
 	int   AimSeg() const { return m_aimSeg; }
@@ -377,8 +354,6 @@ private:
 	float m_qualitySum  = 0.0f;
 	int   m_strikeCount = 0;
 
-	static const int MAX_SPARKS = 3000;
-	static constexpr float GRAVITY      = 9.8f;
 	static constexpr float TITLE_INTERVAL = 1.0f;	// タイトルで自動的に叩く間隔(秒)
 
 	//--- 温度パラメータ
@@ -391,8 +366,6 @@ private:
 	//--- 打撃パラメータ
 	static constexpr float CHARGE_RATE = 1.6f;	// 蓄力速度(/秒, 満蓄力まで約0.6秒)
 	static constexpr float STRIKE_COOL = 0.08f;	// 1打ごとに下がる温度
-	static constexpr float FLOW_DROP = 0.095f;	// 満蓄力・最適温度で1打が命中セルから押し出す高さ量
-	static constexpr float FORGE_STEP = 0.055f;	// 満蓄力・最適温度で1打が進める成形進捗(武器モーフ用)
 	static constexpr float COLD_LIMIT  = 0.35f;	// これ未満は冷たすぎ(ほぼ変形せず割れる)
 	static constexpr float CADENCE_MIN = 0.45f;	// 良い打撃間隔の下限(これより速いと駄目)
 	static constexpr float CADENCE_MAX = 1.00f;	// 良い打撃間隔の上限(これより遅いと駄目)
@@ -403,8 +376,6 @@ private:
 	static constexpr float HEAT_EFF_COLD = 0.10f;	// 冷たい鋼での変形効率(ほぼ効かない)
 	static constexpr float HEAT_EFF_OVER = 0.70f;	// 過熱鋼での変形効率(効くが品質悪)
 	static constexpr float GROOVE_MULT   = 1.30f;	// リズムが乗ったときの変形効率倍率
-	static constexpr float DMG_COLD_HIT  = 0.35f;	// 冷打1回で命中セルに刻む割れ
-	static constexpr float DMG_OVER_HIT  = 0.25f;	// 過熱打1回で命中セルに刻む焼け
 	static constexpr float POWER_PERFECT = 0.85f;	// この蓄力以上でPERFECT判定
 	static constexpr float POWER_GOOD    = 0.50f;	// この蓄力以上でGOOD判定
 	static constexpr float QUALITY_PERFECT = 1.0f;	// PERFECT打の品質

@@ -167,8 +167,7 @@ void GetMouseClient(float& mx, float& my, float& cw, float& ch)
 void SceneForge::Init()
 {
 	m_fade.StartCovered();	// 起動時は黒からタイトルへ淡入
-	m_sparks.reserve(MAX_SPARKS);
-	m_vtx.resize(MAX_SPARKS * 6);
+	m_vtx.resize(Particles::MAX_SPARKS * 6);	// 火花描画の頂点バッファ(粒子上限×6頂点)
 
 	// 火花/余燼用パーティクルシェーダー(.hlsl → fxc → .cso をLoad)
 	VertexShader* vs = CreateObj<VertexShader>("VS_Forge");
@@ -204,10 +203,8 @@ void SceneForge::Init()
 	desc.topology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 	m_mesh = std::make_shared<MeshBuffer>(desc);
 
-	// 鉄板を一様な厚板(=進捗0)・無傷で初期化。BuildTargetが目標高さ場を作る。
-	for (int i = 0; i < NL; ++i)
-	for (int j = 0; j < NW; ++j) { m_h[i][j] = m_hStart; m_dmgF[i][j] = 0.0f; }
-	BuildTarget();
+	// 鉄を一様な厚板(進捗0)・無傷に初期化し、目標形状も作る(全て ForgingSim が担当)。
+	m_forging.Reset();
 
 	// --- 【3D化テスト】鍛冶素材モデルの読み込み ---
 	VertexShader* mvs = CreateObj<VertexShader>("VS_ForgeObj");
@@ -251,7 +248,7 @@ void SceneForge::Init()
 		MessageBox(nullptr, "PS_Water.cso", "Shader Error", MB_OK);
 
 	// ブロックメッシュ: 各セルを箱(上面+側面4=5面, 各面両面12頂点=60頂点)で描く分を確保
-	m_barVtx.resize(NL * NW * 60 + 64);
+	m_barVtx.resize(ForgingSim::NL * ForgingSim::NW * 60 + 64);
 	MeshBuffer::Description bdesc = {};
 	bdesc.pVtx     = m_barVtx.data();
 	bdesc.vtxSize  = sizeof(Vertex);
@@ -409,115 +406,20 @@ void SceneForge::Uninit()
 	m_barMesh.reset();
 	m_mesh.reset();
 	m_glow.reset();
-	m_sparks.clear();
-	m_embers.clear();
+	m_particles.Clear();
 	Audio::Stop(Audio::BGM_TITLE);	// ゲームシーンを離れるときタイトルループを止める(BGMは継続)
 	if (!m_cursorShown) { ShowCursor(TRUE); m_cursorShown = true; }	// カーソルを戻す
 }
 
 void SceneForge::Strike(float scale)
 {
-	// 1回叩くと火花をまとめて発生(バースト)。scaleで量と勢いを変える
+	// 1回叩くと火花をまとめて発生(バースト)。量と勢いの物理は Particles が持つ。
 	const int N = (int)(m_burst * scale);
 	XMFLOAT3 origin = XMFLOAT3(0.0f, 1.0f, 0.0f);	// 金床の位置(カメラ注視点の高さ)
-	for (int i = 0; i < N; ++i)
-	{
-		if ((int)m_sparks.size() >= MAX_SPARKS) break;
-		Spark s = {};
-		s.pos = origin;
-		float a = frand(0.0f, 6.2832f);		// 水平方向の角度
-		float elev = frand(0.25f, 1.4f);	// 上向きの仰角
-		float speed = frand(2.5f, 7.0f) * m_power * scale;
-		float h = cosf(elev) * speed;
-		s.vel = XMFLOAT3(cosf(a) * h, sinf(elev) * speed + frand(1.0f, 3.0f), sinf(a) * h);
-		s.maxLife = frand(0.5f, 1.1f);
-		s.life = s.maxLife;
-		s.size = frand(0.16f, 0.30f);
-		m_sparks.push_back(s);
-	}
+	m_particles.SpawnSparks(origin, N, m_power, scale);
 }
 
-//====================================================================
-//  目標形状(剣のシルエット)
-//====================================================================
-//--- 完成武器(短剣)の目標「高さ場」を定義する。
-//    i = 長さ方向(0=柄端タング → 切先) / j = 幅方向(中央=刃の峰)。
-//    各(i,j)セルに目標高さを入れる。武器の内側=高い(峰は最も高い), 武器の外側=飛边でほぼ0。
-//    起点の厚板(m_hStart)を周囲だけ叩き下げると、この高い所=武器が浮き出る(注定成形)。
-void SceneForge::BuildTarget()
-{
-	const float flashH = 0.012f;	// 武器の外側(飛边=叩き落とす余肉)のごく薄い高さ
-	for (int i = 0; i < NL; ++i)
-	{
-		float u = (i + 0.5f) / NL;	// セル中心 0=柄端 → 1=切先
-
-		// この長さ位置での「武器が占める半幅の割合」wfrac(0..1) と「峰の高さ」ridgeH
-		float wfrac, ridgeH;
-		if (u < 0.20f)					// タング(柄の芯): 細い/厚い
-		{
-			wfrac  = 0.34f;
-			ridgeH = 0.90f;
-		}
-		else if (u < 0.30f)				// 護手・刃の付け根(肩): 幅が最大に張り出す
-		{
-			float v = (u - 0.20f) / 0.10f;
-			wfrac  = 0.34f + (0.95f - 0.34f) * v;
-			ridgeH = 0.90f + (0.72f - 0.90f) * v;
-		}
-		else							// 刀身: 幅も高さも切先へテーパー
-		{
-			float v = (u - 0.30f) / 0.70f;
-			wfrac  = 0.95f + (0.05f - 0.95f) * v;	// 幅広い付け根 → 尖った切先
-			ridgeH = 0.72f + (0.14f - 0.72f) * v;	// 厚い付け根 → 薄い切先
-		}
-
-		for (int j = 0; j < NW; ++j)
-		{
-			float cv = fabsf((j + 0.5f) / NW - 0.5f) * 2.0f;	// セル中心 0=中央 .. 1=端
-			float h;
-			if (cv <= wfrac)
-			{
-				// 武器の内側: 中央(峰)が高く、刃の縁に向かって薄くなる断面
-				float e = cv / (wfrac > 1e-4f ? wfrac : 1.0f);	// 0=峰 .. 1=刃縁
-				float bevel = 1.0f - 0.75f * e;					// 峰1.0 → 刃縁0.25
-				h = ridgeH * bevel;
-			}
-			else h = flashH;	// 武器の外側=飛边
-
-			m_hTgt[i][j] = h * m_hStart;	// 倍率を実寸へ
-		}
-	}
-
-	// 体積守恒: 目標の総体積を鉄坯(=全セルhStart)の総体積に一致させる。
-	// これで「料を再分配するだけで目標に到達できる」ことが保証される(過不足なし)。
-	float sumT = 0.0f;
-	for (int i = 0; i < NL; ++i)
-	for (int j = 0; j < NW; ++j) sumT += m_hTgt[i][j];
-	float sumS = (float)(NL * NW) * m_hStart;
-	if (sumT > 1e-6f)
-	{
-		float k = sumS / sumT;
-		for (int i = 0; i < NL; ++i)
-		for (int j = 0; j < NW; ++j) m_hTgt[i][j] *= k;
-	}
-}
-
-//--- 成形の一致度(0..1)。現在の高さ場と目標高さ場の差(L1)が小さいほど100%へ。
-//    体積守恒なので、料を目標どおりに再分配できているほど誤差が減る。
-float SceneForge::ShapeMatch() const
-{
-	float err = 0.0f;
-	for (int i = 0; i < NL; ++i)
-	for (int j = 0; j < NW; ++j) err += fabsf(m_h[i][j] - m_hTgt[i][j]);
-	// 誤差の基準: 全セルが「起点(hStart)」にある初期状態の誤差。ここから0へ近づく。
-	float ref = 0.0f;
-	for (int i = 0; i < NL; ++i)
-	for (int j = 0; j < NW; ++j) ref += fabsf(m_hStart - m_hTgt[i][j]);
-	if (ref < 1e-6f) return 1.0f;
-	float m = 1.0f - err / ref;
-	if (m < 0.0f) m = 0.0f; if (m > 1.0f) m = 1.0f;
-	return m;
-}
+// 目標形状(BuildTarget)と一致度(ShapeMatch)は Physics/ForgingSim へ移動した。
 
 //====================================================================
 //  ゲーム進行
@@ -530,18 +432,15 @@ void SceneForge::StartGame()
 	m_state    = GAME_PLAY;
 	m_score    = 0;
 	m_heat     = 0.0f;
-	for (int i = 0; i < NL; ++i)
-	for (int j = 0; j < NW; ++j) { m_h[i][j] = m_hStart; m_dmgF[i][j] = 0.0f; }	// 厚板に戻す
-	BuildTarget();
-	m_forgeProg = 0.0f;		// 武器モーフを未打磨(stage_0)に戻す
-	for (int s = 0; s < NSEG; ++s) m_segProg[s] = 0.0f;	// 各区域を未成形に
+	m_forging.Reset();		// 鉄を厚板・無傷・進捗0へ(目標形状も再生成)
+	m_forgeProg = 0.0f;		// 武器モーフのプレビュー進捗も戻す
 	m_match = 0.0f;
 
 	m_charging    = false;
 	m_charge      = 0.0f;
 	m_strikeCD    = 0.0f;
 	m_hammer.Reset();			// 鎚を静止高へ・速度ゼロに戻す
-	m_aimI = NL / 2; m_aimJ = NW / 2; m_aimSeg = 0; m_aimValid = false;
+	m_aimI = ForgingSim::NL / 2; m_aimJ = ForgingSim::NW / 2; m_aimSeg = 0; m_aimValid = false;
 	m_aimWorld = m_barAnchor;	// 最初の有効照準までのハンマー既定位置(板中心)
 	m_lookYaw = 0.0f; m_lookPitch = 0.0f;
 	m_canStrike   = false;		// SPACEを一度離すまで蓄力しない
@@ -594,8 +493,7 @@ const StepSetting& SceneForge::CurrentStep() const
 bool SceneForge::AllSegmentsDone() const
 {
 	if (!m_wpOk) return false;
-	for (int s = 0; s < NSEG; ++s) if (m_segProg[s] < SEG_DONE) return false;
-	return true;
+	return m_forging.AllSegmentsDone();
 }
 
 void SceneForge::FinishGame()
@@ -655,12 +553,7 @@ void SceneForge::UpdatePlay(float tick)
 	// --- 過熱で放置すると鋼全体が焼けていく(損傷が蓄積)＋ジュー音 ---
 	if (m_heat > OVERHEAT)
 	{
-		for (int i = 0; i < NL; ++i)
-		for (int j = 0; j < NW; ++j)
-		{
-			m_dmgF[i][j] += BURN_RATE * tick;
-			if (m_dmgF[i][j] > 1.0f) m_dmgF[i][j] = 1.0f;
-		}
+		m_forging.BurnAll(BURN_RATE * tick);	// 過熱で鉄全体が焼ける(損傷が蓄積)
 		m_sizzleTimer -= tick;
 		if (m_sizzleTimer <= 0.0f) { Audio::Play(Audio::SE_SIZZLE); m_sizzleTimer = 0.22f; }
 	}
@@ -711,11 +604,10 @@ void SceneForge::UpdatePlay(float tick)
 	// --- 目標形状との一致度を更新(武器時=全区域の平均進度) ---
 	if (m_wpOk)
 	{
-		float sum = 0.0f; for (int s = 0; s < NSEG; ++s) sum += m_segProg[s];
-		m_forgeProg = sum / NSEG;	// 全体進捗(表示・モーフのプレビュー用)
+		m_forgeProg = m_forging.SegAverage();	// 全体進捗(表示・モーフのプレビュー用)
 		m_match = m_forgeProg;
 	}
-	else m_match = ShapeMatch();
+	else m_match = m_forging.ShapeMatch();
 
 	// --- ハンマーの上下: 真の弾簧-阻尼(spring-damper)物理 ---
 	// 自然長 HAMMER_REST_LIFT のバネに質量 m の錘が付く模型(老師の SceneSpring と同じ流儀)。
@@ -780,67 +672,13 @@ void SceneForge::DoStrike()
 		return;
 	}
 
-	// 温度係数(冷たい→ほぼ効かない, 過熱→効くが品質悪, 適温→最大)
+	// 温度係数(冷たい→ほぼ効かない, 過熱→効くが品質悪, 適温→最大)。玩家側で算した修正値。
 	float heatFactor = cold ? HEAT_EFF_COLD : (over ? HEAT_EFF_OVER : 1.0f);
-	// 引导式流动(体積守恒 + 結果注定): 命中セルは「目標高さ」までしか下げない(削り過ぎない)。
-	// 押し出した料は「設計がより料を欲しがっている(=e が小さい)隣」へ多く流す。
-	//   e = 現在高 - 目標高 (>0=余り/削るべき, <0=不足/盛るべき)。料は e の高→低へ流れる。
-	// これで叩くほど形は設計の目標へ収束し、余肉(飛边)は不足部(刃身/峰)へ引かれる=可控。
-	float want = FLOW_DROP * power * heatFactor * grooveMult;
-	int ci = m_aimI, cj = m_aimJ;
-	float eC = m_h[ci][cj] - m_hTgt[ci][cj];	// 命中セルの余り(surplus)
-	float delta = want;
-	if (delta > eC) delta = eC;					// 目標より下げない=結果が壊れない
-	if (delta < 0.0f) delta = 0.0f;				// 既に目標以下=削る余肉なし(空砕き)
-
-	if (delta > 0.0f)
-	{
-		// 板の内側にある4近傍(端では隣が減る=料は板から出ない)
-		int ni[4], nj[4], n = 0;
-		if (ci > 0)      { ni[n] = ci - 1; nj[n] = cj;     ++n; }
-		if (ci < NL - 1) { ni[n] = ci + 1; nj[n] = cj;     ++n; }
-		if (cj > 0)      { ni[n] = ci;     nj[n] = cj - 1; ++n; }
-		if (cj < NW - 1) { ni[n] = ci;     nj[n] = cj + 1; ++n; }
-		if (n > 0)
-		{
-			// 各隣の重み = max(0, eC - eK): 命中セルより「不足寄り(e が小)」の隣ほど多く受ける。
-			float w[4], wsum = 0.0f;
-			for (int k = 0; k < n; ++k)
-			{
-				float eK = m_h[ni[k]][nj[k]] - m_hTgt[ni[k]][nj[k]];
-				float ww = eC - eK;
-				if (ww < 0.0f) ww = 0.0f;
-				w[k] = ww;
-				wsum += ww;
-			}
-			if (wsum < 1e-6f) { for (int k = 0; k < n; ++k) w[k] = 1.0f; wsum = (float)n; }	// 全隣が余り側→均等
-			m_h[ci][cj] -= delta;				// 命中セルは目標へ近づく
-			for (int k = 0; k < n; ++k)			// 押し出した料を不足寄りの隣へ流す
-				m_h[ni[k]][nj[k]] += delta * (w[k] / wsum);
-		}
-	}
-
-	// 冷打=割れ / 過熱打=焼け として、命中セルに損傷を刻む
-	float dmgAdd = cold ? DMG_COLD_HIT : (over ? DMG_OVER_HIT : 0.0f);
-	if (dmgAdd > 0.0f)
-	{
-		m_dmgF[ci][cj] += dmgAdd;
-		if (m_dmgF[ci][cj] > 1.0f) m_dmgF[ci][cj] = 1.0f;
-	}
-
-	// KCD式: 「叩く場所」は指示しない。玩家が「まだ出来ていない区域」を自分で見つけて叩く。
-	//   照準セル → 区域番号。その区域が既に完成していれば無用打撃(=誤り)。
-	int  seg     = AimSeg();
-	bool segDone = (m_segProg[seg] >= SEG_DONE);
-	bool goodHit = !cold && !over && !segDone;
-	// 良い打撃だけ、その区域の進捗を前進させる(只進不退)。全区域到位で完成。
-	if (goodHit)
-	{
-		// FORGE_STEPは「全体で何%進むか」の値。区域は1/NSEGの長さなので×NSEGして、
-		// 1区域あたりの必要打数を旧・全体と同程度に保つ(分区域化で5倍にならないように)。
-		m_segProg[seg] += FORGE_STEP * NSEG * power * grooveMult;
-		if (m_segProg[seg] > 1.0f) m_segProg[seg] = 1.0f;
-	}
+	// 打撃の「鉄の反応」(体積守恒の金属流動・損傷・成形進度)は ForgingSim が担当。
+	//   ここは玩家の動作側=修正値を渡して結果(outcome)を受け取るだけ。結果で下の回饋を出す。
+	int ci = m_aimI, cj = m_aimJ, seg = AimSeg();
+	ForgingSim::StrikeOutcome outcome =
+		m_forging.ApplyStrike(ci, cj, seg, power, heatFactor, grooveMult, cold, over);
 
 	// 温度が下がる / 火花 / 振動
 	m_heat -= STRIKE_COOL;
@@ -862,19 +700,25 @@ void SceneForge::DoStrike()
 
 	// 評価 & 廃件率: KCD式に「指示せず、誤りだけ知らせる」。負向フィードバックは日本語(主人公の独白)。
 	//   廃件率は不可逆(減らない)。過熱/冷打/完成済みの区域を叩く=誤り→廃件率↑。
+	//   ForgingSim が返した「鉄がどうなったか」で分岐する(cold/over/完成済みの再判定は不要)。
 	const char* label; unsigned int col; float quality = 0.0f;
 	// u8"" は C++20 では char8_t。ImGuiはUTF-8バイトを要求するので(const char*)へ再解釈する。
-	if (cold)         { label = (const char*)u8"まだ冷たい…赤くなるまで熱して"; col = IM_COL32(120, 170, 255, 255); m_spoil += SPOIL_COLD; }
-	else if (over)    { label = (const char*)u8"熱しすぎだ！鋼が焼ける";       col = IM_COL32(255, 120, 120, 255); m_spoil += SPOIL_BURN; }
-	else if (segDone) { label = (const char*)u8"ここはもう完成済みだ";         col = IM_COL32(255, 200,  90, 255); m_spoil += SPOIL_WASTE; }
-	else	// 適温 & 未完成の区域に命中 = 成功。得点のみ(廃件率は回復しない)
+	switch (outcome)
 	{
+	case ForgingSim::StrikeOutcome::ColdHit:
+		label = (const char*)u8"まだ冷たい…赤くなるまで熱して"; col = IM_COL32(120, 170, 255, 255); m_spoil += SPOIL_COLD; break;
+	case ForgingSim::StrikeOutcome::OverHit:
+		label = (const char*)u8"熱しすぎだ！鋼が焼ける";       col = IM_COL32(255, 120, 120, 255); m_spoil += SPOIL_BURN; break;
+	case ForgingSim::StrikeOutcome::AlreadyDone:
+		label = (const char*)u8"ここはもう完成済みだ";         col = IM_COL32(255, 200,  90, 255); m_spoil += SPOIL_WASTE; break;
+	default:	// Shaped = 適温 & 未完成の区域に命中 = 成功。得点のみ(廃件率は回復しない)
 		if      (power > POWER_PERFECT) { label = "PERFECT!"; col = IM_COL32(255, 220, 120, 255); quality = QUALITY_PERFECT; }
 		else if (power > POWER_GOOD)    { label = "GOOD";     col = IM_COL32(180, 255, 150, 255); quality = QUALITY_GOOD; }
 		else                            { label = "WEAK";     col = IM_COL32(200, 200, 200, 255); quality = QUALITY_WEAK; }
 		if (inGroove) { quality += GROOVE_QUALITY_BONUS; Audio::Play(Audio::SE_WHISTLE, 0.5f); }	// テンポで口笛
 		m_qualitySum += quality;
 		m_score += (int)(quality * SCORE_PER_QUALITY);
+		break;
 	}
 	m_strikeCount++;
 	if (m_spoil > 1.0f) m_spoil = 1.0f;	// 上限のみ(下限クランプ不要=減らないので)
@@ -955,33 +799,12 @@ void SceneForge::Update(float tick)
 	case GAME_OVER:   UpdateGameOver(tick); break;
 	}
 
-	// 火花シミュレーション(重力＋地面バウンド)はどの状態でも動かす
-	for (size_t i = 0; i < m_sparks.size(); )
-	{
-		Spark& s = m_sparks[i];
-		s.life -= tick;
-		if (s.life <= 0.0f)
-		{
-			s = m_sparks.back();
-			m_sparks.pop_back();
-			continue;
-		}
-		s.vel.y -= GRAVITY * tick;				// 重力
-		s.pos.x += s.vel.x * tick;
-		s.pos.y += s.vel.y * tick;
-		s.pos.z += s.vel.z * tick;
-		if (s.pos.y < 0.0f && s.vel.y < 0.0f)	// 地面で弾む
-		{
-			s.pos.y = 0.0f;
-			s.vel.y = -s.vel.y * 0.3f;
-			s.vel.x *= 0.6f;
-			s.vel.z *= 0.6f;
-		}
-		++i;
-	}
-
-	// 炭火の余燼(火の粉)も常時シミュレート
-	UpdateEmbers(tick);
+	// 火花・余燼の粒子シミュ(重力/バウンド, 浮力/上昇/淡出)はどの状態でも動かす。
+	//   炭がONなら炭床(m_emberPos±m_emberArea)から余燼を発生させ、その後まとめて積分する。
+	if (m_coalOn)
+		m_particles.EmitEmbers(XMFLOAT3(m_emberPos[0], m_emberPos[1], m_emberPos[2]),
+			m_emberArea[0], m_emberArea[1], m_emberRate, m_emberRise, tick);
+	m_particles.Update(tick, m_time);
 }
 
 
@@ -1012,7 +835,7 @@ void SceneForge::Draw()
 
 	// 速度方向に伸びたストリーク(火花の線)を作る
 	int v = 0;
-	for (const Spark& s : m_sparks)
+	for (const Particles::Particle& s : m_particles.Sparks())
 	{
 		float t = s.life / s.maxLife;			// 1→0
 

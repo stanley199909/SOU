@@ -297,50 +297,12 @@ void SceneForge::DrawModelsTest()
 //====================================================================
 //  炭火の余燼(火の粉) : 炭床から持続的に発生し、熱気で上昇して淡出する
 //====================================================================
-void SceneForge::UpdateEmbers(float tick)
-{
-	// 発生: 炭がONのとき、炭床(m_coalPos ± m_coalSize)の各所から少しずつ湧かせる
-	if (m_coalOn)
-	{
-		m_emberSpawn += tick * m_emberRate;
-		int n = (int)m_emberSpawn;	// 今フレームで出す整数個
-		m_emberSpawn -= n;			// 端数は次フレームへ持ち越し
-		for (int k = 0; k < n && (int)m_embers.size() < MAX_EMBERS; ++k)
-		{
-			Spark e = {};
-			// 中心に寄せて発生(frand*frandで中央ほど密)。発生器の位置/範囲は配置ファイル駆動
-			float rx = frand(-1.0f, 1.0f) * frand(0.0f, 1.0f) * m_emberArea[0];
-			float rz = frand(-1.0f, 1.0f) * frand(0.0f, 1.0f) * m_emberArea[1];
-			e.pos = XMFLOAT3(m_emberPos[0] + rx, m_emberPos[1] + 0.05f, m_emberPos[2] + rz);
-			// ほぼ真上へ、わずかな横ぶれ(火花のような下向き重力はナシ=熱気で上がる)
-			e.vel = XMFLOAT3(frand(-0.15f, 0.15f), m_emberRise * frand(0.7f, 1.3f), frand(-0.15f, 0.15f));
-			e.maxLife = frand(1.2f, 2.6f);
-			e.life = e.maxLife;
-			e.size = frand(0.02f, 0.05f);
-			m_embers.push_back(e);
-		}
-	}
-
-	// シミュレート: 浮力で上昇＋ゆらぎ＋寿命で消滅
-	for (size_t i = 0; i < m_embers.size(); )
-	{
-		Spark& e = m_embers[i];
-		e.life -= tick;
-		if (e.life <= 0.0f) { e = m_embers.back(); m_embers.pop_back(); continue; }
-		e.vel.y += 0.4f * tick;												// 浮力(少し加速して上る)
-		e.vel.x += sinf(m_time * 3.0f + e.pos.y * 8.0f) * 0.10f * tick;		// 横ゆらぎ
-		e.vel.z += cosf(m_time * 2.3f + e.pos.x * 8.0f) * 0.10f * tick;
-		e.pos.x += e.vel.x * tick;
-		e.pos.y += e.vel.y * tick;
-		e.pos.z += e.vel.z * tick;
-		++i;
-	}
-}
+// 余燼の発生と運動(浮力/上昇/淡出)は Physics/Particles が担当(SceneForge::Update から駆動)。
 
 //--- 余燼(火の粉)をカメラ向きの丸い光点(ビルボード)で加算描画。火花と同じシェーダー/グロー貼り
 void SceneForge::DrawEmbers()
 {
-	if (m_embers.empty()) return;
+	if (m_particles.Embers().empty()) return;
 	CameraBase*   cam = GetObj<CameraBase>("Camera");
 	VertexShader* vs  = GetObj<VertexShader>("VS_Forge");
 	PixelShader*  ps  = GetObj<PixelShader>("PS_Forge");
@@ -356,7 +318,7 @@ void SceneForge::DrawEmbers()
 	vs->WriteBuffer(0, camMat);
 
 	int v = 0;
-	for (const Spark& e : m_embers)
+	for (const Particles::Particle& e : m_particles.Embers())
 	{
 		float t = e.life / e.maxLife;		// 1→0(消えるほど暗く小さく)
 		// 温かい橙色。消えぎわは赤く、細かくチラつく
