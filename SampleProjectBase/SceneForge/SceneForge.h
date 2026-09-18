@@ -181,6 +181,15 @@ private:
 	void  LoadTuning();
 	void  SaveTuning();
 
+	//--- 起動時スナップショット(メモリのみ・ファイルは触らない)。
+	// 全ての可調値の「アドレス」を一覧にし(TuningRefs=列挙は1箇所だけ)、
+	// Init 完了時に現在値を m_tuneStartup へコピー(Snapshot)。F8/ボタンでコピーし戻す(Restore)。
+	// 目的: 調整で滅茶苦茶にしても起動時の状態へ一発で戻せる(存档は汚さない)。
+	void  TuningRefs(std::vector<float*>& out);	// 可調値のアドレス表(唯一の列挙点)
+	void  SnapshotTuning();						// 現在値 → m_tuneStartup へ保存
+	void  RestoreTuning();						// m_tuneStartup → 現在値へ復元
+	std::vector<float> m_tuneStartup;			// 起動時の全可調値のコピー
+
 	//--- 3Dモデル描画のON/OFF(Scenery のガード)
 	bool  m_show3D  = true;
 

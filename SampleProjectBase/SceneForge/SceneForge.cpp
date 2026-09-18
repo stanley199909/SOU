@@ -3,6 +3,7 @@
 #include "MeshBuffer.h"
 #include "Shader.h"
 #include "Texture.h"
+#include "TextureCache.h"	// パス単位の貼图キャッシュ(シーン跨ぎで PNG を再解码しない)
 #include "CameraBase.h"
 #include "LightBase.h"
 #include "Model.h"
@@ -232,9 +233,7 @@ void SceneForge::Init()
 
 	// 武器の鋼テクスチャ(BaseColor=冷鋼の地色)。発光は m_heat で駆動するので Emissive は直貼りしない。
 	{
-		auto wt = std::make_shared<Texture>();
-		if (SUCCEEDED(wt->Create("Assets/MM_Blacksmith_Pack/Medieval_Sword_Blade/Blade_BaseColor.png")))
-			m_wpTex = wt;
+		m_wpTex = TextureCache::Get("Assets/MM_Blacksmith_Pack/Medieval_Sword_Blade/Blade_BaseColor.png");
 	}
 
 	// 光る炭ベッド用シェーダー(pos/uv/col レイアウト + テクスチャ)。
@@ -265,20 +264,19 @@ void SceneForge::Init()
 	// 光る鉄条の落点(UpdateBarAnchor)は StAnvil のワールド変換＋AABBから毎フレーム算出するので、
 	// 配置ファイルで金床を動かしても鉄条が自動追従する(第8節の最重要ポイント)。
 
-	// 3Dハンマー
-	Model* hammer = CreateObj<Model>("MdlHammer");
-	hammer->Load("Assets/MM_Blacksmith_Pack/Tools/SM_BS_Hammer_1.fbx", 1.0f, false, true);
+	// 3Dハンマー(MdlHammerはSceneForge専用だが、再入場時の再インポートを避けキャッシュ)
+	Model* hammer = GetObj<Model>("MdlHammer");
+	if (!hammer)
 	{
+		hammer = CreateObj<Model>("MdlHammer");
+		hammer->Load("Assets/MM_Blacksmith_Pack/Tools/SM_BS_Hammer_1.fbx", 1.0f, false, true);
 		auto tex = std::make_shared<Texture>();
 		if (SUCCEEDED(tex->Create("Assets/MM_Blacksmith_Pack/Tools/Textures/1024x512/T_BS_Tools_BaseColor.png")))
 			hammer->SetTexture(tex);
 	}
 
 	// UI: 羊皮紙パネル(結果/失敗画面の下地)。透明PNGを読み、ImGuiのAddImageで貼る。
-	{
-		auto p = std::make_shared<Texture>();
-		if (SUCCEEDED(p->Create("Assets/Ui/parchment.png"))) m_uiParchment = p;
-	}
+	m_uiParchment = TextureCache::Get("Assets/Ui/parchment.png");
 
 	// --- シーン装飾: 編集シーン(StageEditor)と同じ道具一式・同じキー(St...)で読み込む ---
 	//   キーを St... に統一したので Assets/stage_layout.txt を両シーンで共有できる。
@@ -337,9 +335,9 @@ void SceneForge::Init()
 	};
 	for (auto& t : forgeTexList)
 	{
-		auto tex = std::make_shared<Texture>();
 		std::string path = std::string(kForgeDir) + t.file;
-		if (SUCCEEDED(tex->Create(path.c_str())))
+		auto tex = TextureCache::Get(path.c_str());	// 一度だけ解码、以後は同じ実体を共有
+		if (tex)
 		{
 			m_forgeTex.push_back(tex);
 			m_forgeTexName.push_back(t.name);
@@ -381,6 +379,7 @@ void SceneForge::Init()
 	// 編集シーンで作った配置(Assets/stage_layout.txt)を反映。無ければ上の既定のまま。
 	LoadLayout();
 	LoadTuning();	// F1で調整したハンマー/カメラ値(forge_tuning.txt)を復元
+	SnapshotTuning();	// ↑復元直後の値を「起動時の姿」として記録(F8/ボタンでここへ戻せる)
 
 	SetupSteps();	// 工程(step)状態を生成し状態機へ登録(遷移は StartGame で開始)
 
@@ -404,14 +403,21 @@ void SceneForge::Uninit()
 	DestroyObj("PS_Water");
 	m_coalMesh.reset();
 	m_coalTex.reset();
-	DestroyObj("MdlHammer");	// 金床(StAnvil)は m_props ループで破棄される
-	for (auto& p : m_props) DestroyObj(p.key.c_str());
-	m_props.clear();
+	// プロップのモデル(St...)とハンマーは破棄しない = static map に常駐させ、編集シーンと
+	// 共有する。両シーンはキー(St...)を統一済みなので、片方が読んだモデルをもう片方が
+	// そのまま再利用でき、シーン切替の再インポート(数秒)が消える。摩擦: 常駐メモリ(許容)。
+	m_props.clear();	// m_props は死ぬインスタンス側の配置データだけ。モデル実体は map に残す
 	m_barMesh.reset();
 	m_mesh.reset();
 	m_glow.reset();
 	m_particles.Clear();
-	Audio::Stop(Audio::BGM_TITLE);	// ゲームシーンを離れるときタイトルループを止める(BGMは継続)
+	// シーンを離れる時は「このシーンが鳴らしている全ループ音」を止める。
+	// どの状態(TITLE/PLAY/RESULT)で抜けても対応する BGM が残るのを防ぐ。
+	// 残ると: 編集シーンへ切替→BGMが鳴りっぱなし、戻ると新旧BGMが二重再生になる。
+	Audio::Stop(Audio::BGM_TITLE);	// タイトルBGM
+	Audio::Stop(Audio::BGM_PLAY);	// ゲーム中BGM(PLAYで抜けた時)
+	Audio::Stop(Audio::BGM_RESULT);	// 結果BGM(RESULTで抜けた時)
+	if (m_heatSndOn) { Audio::Stop(Audio::SE_FORGE_LOOP); m_heatSndOn = false; }	// 加熱ループ音(Rを押しながら抜けた時)
 	if (!m_cursorShown) { ShowCursor(TRUE); m_cursorShown = true; }	// カーソルを戻す
 }
 
@@ -773,6 +779,9 @@ void SceneForge::Update(float tick)
 {
 	m_time += tick;
 	m_fade.Update(tick);	// 画面フェード(黒幕)を進める。遷移はTransitionの黒転じで実行される
+
+	// F8 = 全調整値を起動時スナップショットへ一発リセット(F1デバッグ表示中のみ=誤爆防止)。
+	if (DebugUI::IsVisible() && IsKeyTrigger(VK_F8)) RestoreTuning();
 	// PLAY中かつF1非表示・遷移中でないときだけ操作を受け付ける(ApplyCameraより先に)。
 	bool canControl = (m_state == GAME_PLAY && !DebugUI::IsVisible() && !m_fade.IsBusy());
 	if (canControl)

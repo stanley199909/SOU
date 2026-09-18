@@ -434,6 +434,53 @@ void SceneForge::SaveTuning()
 	fclose(fp);
 }
 
+//------------------------------------------------------------------------------------
+//  可調値の「アドレス表」= 全 tunable を1箇所だけ列挙する。
+//  Save/Load はキー文字列と対で書くので別物。ここは Snapshot/Restore 用に
+//  「メモリ上の値そのもの」を順序どおり往復コピーするための一覧。
+//  ※CAM_SHAKE_AMP / HAMMER_RECOIL_* はこの .cpp の file-static なので、
+//    この関数を同じ .cpp に置くことでアドレスが取れる(他ファイルからは不可)。
+//------------------------------------------------------------------------------------
+void SceneForge::TuningRefs(std::vector<float*>& out)
+{
+	float* r[] = {
+		// -- Hammer --
+		&m_hammer.restLift, &m_hammerScale,
+		&m_hammerRot[0], &m_hammerRot[1], &m_hammerRot[2],
+		&m_hammerOff[0], &m_hammerOff[1], &m_hammerOff[2],
+		&m_hammer.stiffness, &m_hammer.damping, &m_hammer.mass, &m_hammer.impulse,
+		&HAMMER_RECOIL_BACK, &HAMMER_RECOIL_TILT, &m_hammer.chargeRaise,
+		// -- Camera (organic feel) --
+		&CAM_SHAKE_AMP, &m_camBreathAmp, &m_camBreathSpeed,
+		&m_camTremorAmp, &m_camTremorSpeed, &m_camTremorRamp, &m_camLookNoise,
+		// -- Aim & follow --
+		&m_aimSens, &m_hammerFollow,
+		// -- Camera (view / follow) --
+		&m_camPos[0], &m_camPos[1], &m_camPos[2],
+		&m_camLook[0], &m_camLook[1], &m_camLook[2],
+		&m_camFov, &m_camFollowZ, &m_camPanGain, &m_camLerpRate,
+		// -- Weapon align --
+		&m_wpYaw, &m_wpPitch, &m_wpRoll, &m_wpScale,
+		&m_wpOff[0], &m_wpOff[1], &m_wpOff[2],
+	};
+	out.assign(r, r + _countof(r));
+}
+
+void SceneForge::SnapshotTuning()	// 現在値 → m_tuneStartup(起動時の姿を記録)
+{
+	std::vector<float*> refs; TuningRefs(refs);
+	m_tuneStartup.resize(refs.size());
+	for (size_t i = 0; i < refs.size(); ++i) m_tuneStartup[i] = *refs[i];
+}
+
+void SceneForge::RestoreTuning()	// m_tuneStartup → 現在値(一発で起動時へ戻す)
+{
+	if (m_tuneStartup.empty()) return;	// まだ Snapshot していなければ何もしない
+	std::vector<float*> refs; TuningRefs(refs);
+	for (size_t i = 0; i < refs.size() && i < m_tuneStartup.size(); ++i)
+		*refs[i] = m_tuneStartup[i];
+}
+
 void SceneForge::LoadTuning()
 {
 	FILE* fp = nullptr;

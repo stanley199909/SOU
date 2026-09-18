@@ -59,6 +59,15 @@ private:
 	void  CopyFromPrev();			// copy previous stage into the active one
 	void  SaveWeapon();
 	void  LoadWeapon();
+
+	//--- startup snapshot (memory only; never writes weapon.txt).
+	// Init copies the loaded shapes here; F8 / the "Reset to startup" button copies them back,
+	// so you can sculpt freely and undo the whole mess in one press.
+	float m_hwStartup[MAX_STAGE][NL][NW];	// the sculpted heights as they were at Init
+	int   m_stageCountStartup = 0;
+	bool  m_haveStartup = false;
+	void  SnapshotShapes();					// current shapes -> startup backup
+	void  RestoreShapes();					// startup backup -> current shapes
 };
 
 #endif // __SCENE_WEAPON_EDIT_H__

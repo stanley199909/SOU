@@ -1,13 +1,16 @@
 ﻿#include "SceneRoot.h"
 #include <stdio.h>
+#include <string>
 #include "CameraDCC.h"
 #include "MoveLight.h"
 #include "Model.h"
+#include "Texture.h"
+#include "TextureCache.h"
 #include "Input.h"
 #include "Geometory.h"
 
 #include "StageEditor.h"	// = 鍛冶場ステージ配置エディタ(SCENE_STAGE_EDITOR)
-#include "SceneWeaponEdit.h"	// = 武器(目標形状)デザインエディタ(SCENE_FORGE_WEAPON)
+#include "SceneParticleLab.h"	// = 火花/余燼パーティクルの調整シーン(SCENE_PARTICLE_LAB)
 #include "SceneForge/SceneForge.h"
 #include "DebugUI.h"
 
@@ -21,7 +24,7 @@ enum SceneKind
 {
 	SCENE_FORGE,			// 鍛冶ミニゲーム本体(ゲーム)
 	SCENE_STAGE_EDITOR,	// 鍛冶場のステージ配置エディタ
-	SCENE_FORGE_WEAPON,		// 武器(目標形状)デザインエディタ
+	SCENE_PARTICLE_LAB,		// 火花/余燼パーティクルの調整シーン
 	SCENE_MAX				// 終端
 };
 
@@ -43,9 +46,9 @@ void SceneRoot::ChangeScene()
 		AddSubScene<SceneStageEditor>();
 		m_sceneName = "SCENE_STAGE_EDITOR";
 		break;
-	case SCENE_FORGE_WEAPON:
-		AddSubScene<SceneWeaponEdit>();
-		m_sceneName = "SCENE_FORGE_WEAPON";
+	case SCENE_PARTICLE_LAB:
+		AddSubScene<SceneParticleLab>();
+		m_sceneName = "SCENE_PARTICLE_LAB";
 		break;
 	}
 	DebugLog::log(DebugLog::INFO_LOG,"SceneName = " + m_sceneName);
@@ -124,10 +127,60 @@ void SceneRoot::Init()
 	CreateObj<Model>("FieldModel");
 	//pField->Load("Assets/Model/field/field.fbx", 1.0f, false, true);
 
+	// 鍛冶場プロップを SceneRoot 所有で一度だけ読む(子シーンは GetObj で共有＝切替が高速)。
+	LoadSharedProps();
+
 	// 起動時は常にゲーム本体(SCENE_FORGE)から。編集シーンへは SHIFT+←/→ で移動。
 	// (setting.dat のカメラ/ライトは復元するが、開始シーンはゲーム固定にする)
 	m_index = SCENE_FORGE;
 	ChangeScene();
+}
+
+//--- 両シーン共有のプロップモデルを SceneRoot 所有で一括ロード(唯一の権威リスト)。
+//    子シーンの LoadProp は GetObj で当たり(=再ロードしない)。テクスチャもここで一度だけ貼る。
+//    ※キー(St...)と一致していれば、どの子シーンからも同じモデル実体を参照する。
+void SceneRoot::LoadSharedProps()
+{
+	const std::string P = "Assets/MM_Blacksmith_Pack/";
+	const std::string kAnvil = P + "Anvil/Textures/T_Anvil_BaseColor.png";
+	const std::string kWood  = P + "Ballows/Textures/T_Wood_BaseColor.png";
+	const std::string kTable = P + "Worktable/Textures/T_BS_Worktable_V1_BaseColor.png";
+	const std::string kBucket= P + "Buckets/Textures/T_Buckets_V1_BaseColor.png";
+	const std::string kSharp = P + "Sharpner/Textures/T_Sharpner_V1_BaseColor.png";
+	const std::string kTools = P + "Tools/Textures/1024x512/T_BS_Tools_BaseColor.png";
+	const std::string kMetal = P + "Metal Parts/Textures/T_Metal_parts_BaseColor.png";
+	const std::string kStone = P + "Forges/Textures/T_Forge_1_UV1_BaseColor.PNG";
+	const std::string kGround= "Assets/Model/field/wooden-plank-textured-background-material.jpg";
+
+	struct Row { const char* key; std::string fbx; std::string tex; };
+	const Row rows[] = {
+		{ "StGround",    "Assets/Model/plane/plane.fbx",     kGround },
+		{ "StStump",     P + "Anvil/SM_Stump.fbx",            kAnvil  },
+		{ "StAnvil",     P + "Anvil/SM_Anvil.fbx",            kAnvil  },
+		{ "StForge",     P + "Forges/SM_BS_Forge_2_.fbx",     kStone  },
+		{ "StStand",     P + "Ballows/SM_Bellows_stand_1.fbx",kWood   },
+		{ "StBellows",   P + "Ballows/SM_Bellows.fbx",        kWood   },
+		{ "StWorktable", P + "Worktable/SM_BS_Worktable.fbx", kTable  },
+		{ "StTrough",    P + "Buckets/SM_Trough.fbx",         kBucket },
+		{ "StBucket",    P + "Buckets/SM_B_Bucket_1.fbx",     kBucket },
+		{ "StGrind",     P + "Sharpner/SM_Sharpner.fbx",      kSharp  },
+		{ "StPoker",     P + "Tools/SM_BS_Poker.fbx",         kTools  },
+		{ "StPliers",    P + "Tools/SM_BS_Pliers_1.fbx",      kTools  },
+		{ "StMetal1",    P + "Metal Parts/SM_Metal_part_1.fbx", kMetal },
+		{ "StMetal2",    P + "Metal Parts/SM_Metal_part_2.fbx", kMetal },
+		{ "MdlHammer",   P + "Tools/SM_BS_Hammer_1.fbx",      kTools  },	// SceneForge専用だが常駐でOK
+	};
+	for (const Row& r : rows)
+	{
+		if (GetObj<Model>(r.key)) continue;					// 既に読んであれば飛ばす
+		Model* m = CreateObj<Model>(r.key);
+		if (!m->Load(r.fbx.c_str(), 1.0f, false, true)) continue;	// 欠品でも落ちない
+		if (!r.tex.empty())
+		{
+			auto t = TextureCache::Get(r.tex.c_str());	// 同じ貼图(例:Anvil)は一度だけ解码
+			if (t) m->SetTexture(t);
+		}
+	}
 }
 
 void SceneRoot::Uninit()

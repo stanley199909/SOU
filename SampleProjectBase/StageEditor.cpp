@@ -4,6 +4,7 @@
 #include "DebugLog.h"
 #include "Model.h"
 #include "Texture.h"
+#include "TextureCache.h"	// path-keyed texture cache (no PNG re-decode across scene switches)
 #include "Shader.h"
 #include "CameraBase.h"
 #include "DirectX.h"
@@ -40,12 +41,19 @@ static void GetMouseClient(float& mx, float& my)
 void SceneStageEditor::LoadProp(const char* key, const char* fbx, const char* tex,
                           float targetSize, float px, float pz, float yaw)
 {
-	Model* m = CreateObj<Model>(key);
-	if (!m->Load(fbx, 1.0f, false, true)) return;
-	if (tex && tex[0])
+	// Cache: the shared object map is static (outlives the scene instance), so if this
+	// model was already imported on a previous visit, reuse it and skip assimp entirely.
+	// assimp FBX import is the slow part; this makes re-entering the editor near-instant.
+	Model* m = GetObj<Model>(key);
+	if (!m)
 	{
-		auto t = std::make_shared<Texture>();
-		if (SUCCEEDED(t->Create(tex))) m->SetTexture(t);
+		m = CreateObj<Model>(key);
+		if (!m->Load(fbx, 1.0f, false, true)) return;
+		if (tex && tex[0])
+		{
+			auto t = std::make_shared<Texture>();
+			if (SUCCEEDED(t->Create(tex))) m->SetTexture(t);
+		}
 	}
 	Prop p;
 	p.key = key; p.label = key;
@@ -125,9 +133,8 @@ void SceneStageEditor::Init()
 	};
 	for (auto* f : forgeTexFiles)
 	{
-		auto tex = std::make_shared<Texture>();
-		if (SUCCEEDED(tex->Create((P + "Forges/Textures/" + f).c_str())))
-			m_forgeTex.push_back(tex);
+		auto tex = TextureCache::Get((P + "Forges/Textures/" + f).c_str());	// decode once, share
+		if (tex) m_forgeTex.push_back(tex);
 	}
 	if (Model* forge = GetObj<Model>("StForge"))
 	{
@@ -157,8 +164,7 @@ void SceneStageEditor::Init()
 	}
 	// water surface texture (subtle stone tinted blue = water in the trough)
 	{
-		auto t = std::make_shared<Texture>();
-		if (SUCCEEDED(t->Create("Assets/Model/plane/stone.png"))) m_waterTex = t;
+		m_waterTex = TextureCache::Get("Assets/Model/plane/stone.png");
 	}
 
 	// --- coal ember particles: same system as the game (VS_Particle/PS_Particle) ---
@@ -201,6 +207,7 @@ void SceneStageEditor::Init()
 	}
 
 	LoadLayout();	// override defaults with the saved arrangement if it exists
+	SnapshotLayout();	// remember this as the "startup" layout (F8 / button restores it)
 }
 
 //--- coal embers: spawn from the coal bed center, rise with buoyancy, fade out
@@ -355,7 +362,9 @@ void SceneStageEditor::Uninit()
 	DestroyObj("StVS"); DestroyObj("StPS");
 	DestroyObj("StCoalVS"); DestroyObj("StCoalPS"); DestroyObj("StWaterPS");
 	DestroyObj("StPartVS"); DestroyObj("StPartPS");
-	for (auto& p : m_props) DestroyObj(p.key.c_str());
+	// NOTE: do NOT destroy the prop Models here. They stay in the static object map so the
+	// next visit reuses them (LoadProp's cache hit) instead of re-importing 14 FBX = the 4-5s
+	// stall. Cost: those models stay resident in memory after the first visit (acceptable).
 	m_props.clear();
 	m_coalMesh.reset(); m_coalTex.reset();
 	m_emberMesh.reset(); m_emberGlow.reset(); m_embers.clear();
@@ -722,9 +731,52 @@ void SceneStageEditor::UpdateEditorDrag()
 	m_lmbPrev = lmb;
 }
 
+//--- startup snapshot: remember the whole layout at Init so it can be restored in one press.
+//    Memory only - it does NOT write stage_layout.txt, so experimenting never corrupts the save.
+void SceneStageEditor::SnapshotLayout()
+{
+	m_startup.props = m_props;	// full copy (pos/yaw/scale/groundSnap + aabb/key/label)
+	m_startup.coalOn = m_coalOn;
+	memcpy(m_startup.coalPos,  m_coalPos,  sizeof(m_coalPos));
+	m_startup.coalYaw = m_coalYaw;
+	memcpy(m_startup.coalSize, m_coalSize, sizeof(m_coalSize));
+	m_startup.coalGlow = m_coalGlow;
+	memcpy(m_startup.emberPos,  m_emberPos,  sizeof(m_emberPos));
+	memcpy(m_startup.emberArea, m_emberArea, sizeof(m_emberArea));
+	m_startup.emberRate = m_emberRate;
+	m_startup.emberRise = m_emberRise;
+	m_startup.waterOn = m_waterOn;
+	memcpy(m_startup.waterPos,  m_waterPos,  sizeof(m_waterPos));
+	m_startup.waterYaw = m_waterYaw;
+	memcpy(m_startup.waterSize, m_waterSize, sizeof(m_waterSize));
+	m_haveStartup = true;
+}
+
+void SceneStageEditor::RestoreLayout()
+{
+	if (!m_haveStartup) return;
+	m_props = m_startup.props;
+	m_coalOn = m_startup.coalOn;
+	memcpy(m_coalPos,  m_startup.coalPos,  sizeof(m_coalPos));
+	m_coalYaw = m_startup.coalYaw;
+	memcpy(m_coalSize, m_startup.coalSize, sizeof(m_coalSize));
+	m_coalGlow = m_startup.coalGlow;
+	memcpy(m_emberPos,  m_startup.emberPos,  sizeof(m_emberPos));
+	memcpy(m_emberArea, m_startup.emberArea, sizeof(m_emberArea));
+	m_emberRate = m_startup.emberRate;
+	m_emberRise = m_startup.emberRise;
+	m_waterOn = m_startup.waterOn;
+	memcpy(m_waterPos,  m_startup.waterPos,  sizeof(m_waterPos));
+	m_waterYaw = m_startup.waterYaw;
+	memcpy(m_waterSize, m_startup.waterSize, sizeof(m_waterSize));
+	m_editSel = -1;	// selection may point past the restored list; clear it
+}
+
 void SceneStageEditor::Update(float tick)
 {
 	m_time += tick;
+	// F8 = restore the whole layout to how it was at startup (undo any editing mess).
+	if (IsKeyTrigger(VK_F8)) RestoreLayout();
 	UpdateEditorDrag();
 	UpdateEmbers(tick);	// coal embers rise even while editing
 }
@@ -743,6 +795,8 @@ void SceneStageEditor::DrawUI()
 	ImGui::SetNextWindowSize(ImVec2(340, 420), ImGuiCond_FirstUseEver);
 	ImGui::Begin("Forge Stage Editor");
 	ImGui::TextDisabled("Free cam: ALT+LMB orbit / MMB pan / RMB zoom");
+	if (ImGui::Button("Reset layout to startup  (F8)")) RestoreLayout();	// undo any editing mess
+	ImGui::Separator();
 
 	if (ImGui::BeginTabBar("tabs"))
 	{

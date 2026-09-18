@@ -269,95 +269,102 @@ void SceneForge::DrawUI()
 	case GAME_OVER:   DrawGameOverUI(); break;
 	}
 
-	// F1中: 調整パネルは「職責ごとに1窓」で分ける。
-	//   Weapon = 工件モデルの姿勢 / Camera = 視点と追従 / Hammer = 鎚の姿勢と反冲 / Aim = 照準の手触り。
-	//   合った値は SceneForge.h の初期値へ焼き込む。ここで混ぜない(相機は相機窓だけ、鎚は鎚窓だけ)。
+	// F1中: 調整パネルは「1つの窓 + 折叠見出し(CollapsingHeader)」にまとめる。
+	//   別々の Begin() 窓を5つ開くと画面を覆って見づらいので、1窓に集約し、既定は全部畳んだ状態。
+	//   見出しを開いた区画だけ展開 = 画面を殆ど遮らずに調整できる(imgui の定石)。
+	//   区画: Weapon(工件姿勢) / Camera(視点と追従) / Hammer(鎚姿勢と反冲) / Aim / Walk。
 	if (DebugUI::IsVisible())
 	{
+		// 初回のみ左上に配置(以後はユーザーが動かせる)。幅は狭め=画面を占有しない。
+		ImGui::SetNextWindowPos(ImVec2(8, 8), ImGuiCond_FirstUseEver);
+		ImGui::SetNextWindowSize(ImVec2(340, 560), ImGuiCond_FirstUseEver);
+		ImGui::Begin("Forge Tuning (F1)");
+
+		// --- 起動時スナップショットへ一発リセット(F8キーと同じ)。滅茶苦茶にしても戻せる保険。 ---
+		if (ImGui::Button("Reset ALL to startup  (F8)")) RestoreTuning();
+		ImGui::SameLine();
+		if (ImGui::Button("Save tuning")) SaveTuning();	// 手動保存(退出時にも自動保存)
+		ImGui::Separator();
+
 		// --- Weapon: 工件モデルを砧面に合わせる(FBXが読めた時だけ) ---
-		if (m_wpOk)
+		if (m_wpOk && ImGui::CollapsingHeader("Weapon"))
 		{
-			ImGui::Begin("Weapon (F1)");
 			ImGui::Text("stages loaded: %d,  verts: %d", (int)m_wpStage.size(), m_wpN);
 			ImGui::SliderFloat("Forge progress", &m_forgeProg, 0.0f, 1.0f, "%.2f");
-			ImGui::Separator();
 			ImGui::TextDisabled("-- Orientation --");
 			ImGui::SliderFloat("Yaw",   &m_wpYaw,   -3.1416f, 3.1416f, "%.3f");
 			ImGui::SliderFloat("Pitch", &m_wpPitch, -3.1416f, 3.1416f, "%.3f");
 			ImGui::SliderFloat("Roll",  &m_wpRoll,  -3.1416f, 3.1416f, "%.3f");
-			ImGui::Separator();
 			ImGui::TextDisabled("-- Scale / Position --");
-			ImGui::SliderFloat("Scale", &m_wpScale, 0.2f, 3.0f, "%.2f");
+			ImGui::SliderFloat("Scale##wp", &m_wpScale, 0.2f, 3.0f, "%.2f");	// ##wp=同窓の"Scale"衝突回避
 			ImGui::SliderFloat("Off X", &m_wpOff[0], -1.0f, 1.0f, "%.3f");
 			ImGui::SliderFloat("Off Y", &m_wpOff[1], -1.0f, 1.0f, "%.3f");
 			ImGui::SliderFloat("Off Z", &m_wpOff[2], -1.0f, 1.0f, "%.3f");
-			ImGui::End();
 		}
 
-		// --- Camera: 視点・画角・追従・打撃の揺れ(相機に属するものは全部ここ) ---
-		ImGui::Begin("Camera (F1)");
-		ImGui::TextDisabled("-- View (3/4 forge) --");
-		ImGui::SliderFloat3("Cam Pos",  m_camPos,  -5.0f, 6.0f, "%.2f");
-		ImGui::SliderFloat3("Cam Look", m_camLook, -5.0f, 6.0f, "%.2f");
+		// --- Camera: 視点・画角・追従・打撃の揺れ ---
+		if (ImGui::CollapsingHeader("Camera"))
 		{
-			float fovDeg = m_camFov * 57.29578f;			// rad→deg で見せる
-			if (ImGui::SliderFloat("Cam FOV", &fovDeg, 25.0f, 70.0f, "%.0f deg"))
-				m_camFov = fovDeg * 0.01745329f;			// deg→rad へ戻す
+			ImGui::TextDisabled("-- View (3/4 forge) --");
+			ImGui::SliderFloat3("Cam Pos",  m_camPos,  -5.0f, 6.0f, "%.2f");
+			ImGui::SliderFloat3("Cam Look", m_camLook, -5.0f, 6.0f, "%.2f");
+			{
+				float fovDeg = m_camFov * 57.29578f;			// rad→deg で見せる
+				if (ImGui::SliderFloat("Cam FOV", &fovDeg, 25.0f, 70.0f, "%.0f deg"))
+					m_camFov = fovDeg * 0.01745329f;			// deg→rad へ戻す
+			}
+			ImGui::TextDisabled("-- Follow (aim along blade) --");
+			ImGui::SliderFloat("Rail (aim)",  &m_aimRail,     0.0f, 1.0f, "%.2f");	// 手前0..奥1(手動確認用)
+			ImGui::SliderFloat("Follow Z",    &m_camFollowZ,  0.0f, 1.0f, "%.2f");	// カメラ本体のZ追従割合
+			ImGui::SliderFloat("Pan gain",    &m_camPanGain,  0.0f, 2.0f, "%.2f");	// 追従量の倍率
+			ImGui::SliderFloat("Cam lerp",    &m_camLerpRate, 0.5f, 12.0f, "%.1f");	// 3段切替の速さ(小=重い)
+			ImGui::TextDisabled("-- Impact shake --");
+			ImGui::SliderFloat("Cam shake",   &CAM_SHAKE_AMP,  0.0f, 0.2f, "%.3f");	// 打撃のカメラ揺れ
+			ImGui::TextDisabled("-- Handheld feel (organic) --");
+			ImGui::SliderFloat("Breath amp",  &m_camBreathAmp,   0.0f, 0.08f, "%.3f");	// 呼吸の振幅
+			ImGui::SliderFloat("Breath speed",&m_camBreathSpeed, 0.1f, 2.0f,  "%.2f");	// 呼吸の速さ
+			ImGui::SliderFloat("Tremor amp",  &m_camTremorAmp,   0.0f, 0.01f, "%.4f");	// 蓄力満時の微顫(既定OFF。極小で試す)
+			ImGui::SliderFloat("Tremor speed",&m_camTremorSpeed, 8.0f, 40.0f, "%.0f");	// 微顫の速さ
+			ImGui::SliderFloat("Tremor ramp", &m_camTremorRamp,  1.0f, 6.0f,  "%.1f");	// 立ち上がりの遅さ(大=満蓄直前で効く)
+			ImGui::SliderFloat("Look noise",  &m_camLookNoise,   0.0f, 1.0f,  "%.2f");	// 注視点への伝達
 		}
-		ImGui::Separator();
-		ImGui::TextDisabled("-- Follow (aim along blade) --");
-		ImGui::SliderFloat("Rail (aim)",  &m_aimRail,     0.0f, 1.0f, "%.2f");	// 手前0..奥1(手動確認用)
-		ImGui::SliderFloat("Follow Z",    &m_camFollowZ,  0.0f, 1.0f, "%.2f");	// カメラ本体のZ追従割合
-		ImGui::SliderFloat("Pan gain",    &m_camPanGain,  0.0f, 2.0f, "%.2f");	// 追従量の倍率
-		ImGui::SliderFloat("Cam lerp",    &m_camLerpRate, 0.5f, 12.0f, "%.1f");	// 3段切替の速さ(小=重い)
-		ImGui::Separator();
-		ImGui::TextDisabled("-- Impact shake --");
-		ImGui::SliderFloat("Cam shake",   &CAM_SHAKE_AMP,  0.0f, 0.2f, "%.3f");	// 打撃のカメラ揺れ
-		ImGui::Separator();
-		ImGui::TextDisabled("-- Handheld feel (organic) --");
-		ImGui::SliderFloat("Breath amp",  &m_camBreathAmp,   0.0f, 0.08f, "%.3f");	// 呼吸の振幅
-		ImGui::SliderFloat("Breath speed",&m_camBreathSpeed, 0.1f, 2.0f,  "%.2f");	// 呼吸の速さ
-		ImGui::SliderFloat("Tremor amp",  &m_camTremorAmp,   0.0f, 0.01f, "%.4f");	// 蓄力満時の微顫(既定OFF。極小で試す)
-		ImGui::SliderFloat("Tremor speed",&m_camTremorSpeed, 8.0f, 40.0f, "%.0f");	// 微顫の速さ
-		ImGui::SliderFloat("Tremor ramp", &m_camTremorRamp,  1.0f, 6.0f,  "%.1f");	// 立ち上がりの遅さ(大=満蓄直前で効く)
-		ImGui::SliderFloat("Look noise",  &m_camLookNoise,   0.0f, 1.0f,  "%.2f");	// 注視点への伝達
-		ImGui::End();
 
-		// --- Hammer: 鎚モデルの姿勢と反冲だけ(相機・照準はここに置かない) ---
-		ImGui::Begin("Hammer (F1)");
-		ImGui::TextDisabled("-- Position / Rotation / Scale --");
-		ImGui::SliderFloat("Rest lift",   &m_hammer.restLift,   0.0f, 1.2f, "%.3f");	// 待機の高さ(下げる=低く構える)
-		ImGui::SliderFloat("Scale",       &m_hammerScale,       0.005f, 0.06f, "%.4f");
-		ImGui::SliderFloat3("Rot(rad)",   m_hammerRot,          -3.1416f, 3.1416f, "%.3f");
-		ImGui::SliderFloat3("Offset",     m_hammerOff,          -0.5f, 0.5f, "%.3f");	// Y=高さ微調整
-		ImGui::Separator();
-		ImGui::TextDisabled("-- Spring-damper (recoil physics) --");
-		ImGui::SliderFloat("Stiffness k", &m_hammer.stiffness,  20.0f, 600.0f, "%.0f");	// 刚度=硬さ/速さ
-		ImGui::SliderFloat("Damping c",   &m_hammer.damping,    0.0f, 40.0f, "%.2f");	// 阻尼=収まり(小=よく跳ねる)
-		ImGui::SliderFloat("Mass m",      &m_hammer.mass,       0.2f, 4.0f, "%.2f");	// 質量=重さ/鈍さ
-		ImGui::SliderFloat("Impulse J",   &m_hammer.impulse,    0.0f, 8.0f, "%.2f");	// 打撃の上向き冲量(初速=J/m)
-		ImGui::SliderFloat("Recoil back", &HAMMER_RECOIL_BACK,  0.0f, 1.0f, "%.3f");	// 手前へ後退(見た目)
-		ImGui::SliderFloat("Recoil tilt", &HAMMER_RECOIL_TILT,  0.0f, 2.0f, "%.3f");	// 錘頭の上翻り(見た目)
-		ImGui::SliderFloat("Charge raise",&m_hammer.chargeRaise,0.0f, 1.5f, "%.3f");	// 蓄力で上がる量
-		ImGui::End();
+		// --- Hammer: 鎚モデルの姿勢と反冲 ---
+		if (ImGui::CollapsingHeader("Hammer"))
+		{
+			ImGui::TextDisabled("-- Position / Rotation / Scale --");
+			ImGui::SliderFloat("Rest lift",   &m_hammer.restLift,   0.0f, 1.2f, "%.3f");	// 待機の高さ(下げる=低く構える)
+			ImGui::SliderFloat("Scale##hammer", &m_hammerScale,     0.005f, 0.06f, "%.4f");	// ##hammer=同窓の"Scale"衝突回避
+			ImGui::SliderFloat3("Rot(rad)",   m_hammerRot,          -3.1416f, 3.1416f, "%.3f");
+			ImGui::SliderFloat3("Offset",     m_hammerOff,          -0.5f, 0.5f, "%.3f");	// Y=高さ微調整
+			ImGui::TextDisabled("-- Spring-damper (recoil physics) --");
+			ImGui::SliderFloat("Stiffness k", &m_hammer.stiffness,  20.0f, 600.0f, "%.0f");	// 刚度=硬さ/速さ
+			ImGui::SliderFloat("Damping c",   &m_hammer.damping,    0.0f, 40.0f, "%.2f");	// 阻尼=収まり(小=よく跳ねる)
+			ImGui::SliderFloat("Mass m",      &m_hammer.mass,       0.2f, 4.0f, "%.2f");	// 質量=重さ/鈍さ
+			ImGui::SliderFloat("Impulse J",   &m_hammer.impulse,    0.0f, 8.0f, "%.2f");	// 打撃の上向き冲量(初速=J/m)
+			ImGui::SliderFloat("Recoil back", &HAMMER_RECOIL_BACK,  0.0f, 1.0f, "%.3f");	// 手前へ後退(見た目)
+			ImGui::SliderFloat("Recoil tilt", &HAMMER_RECOIL_TILT,  0.0f, 2.0f, "%.3f");	// 錘頭の上翻り(見た目)
+			ImGui::SliderFloat("Charge raise",&m_hammer.chargeRaise,0.0f, 1.5f, "%.3f");	// 蓄力で上がる量
+		}
 
 		// --- Aim & Feel: 照準の重さ / 鎚が照準へ追いつく速さ ---
-		ImGui::Begin("Aim & Feel (F1)");
-		ImGui::SliderFloat("Aim sens",     &m_aimSens,      0.0006f, 0.0050f, "%.4f");	// 低=重い
-		ImGui::SliderFloat("Hammer follow",&m_hammerFollow, 3.0f, 24.0f, "%.1f");		// 低=遅れて重い
-		ImGui::Separator();
-		// 手動保存。退出時にも自動保存されるが、確認したい時のボタン(全窓の値をまとめて保存)。
-		if (ImGui::Button("Save tuning (forge_tuning.txt)")) SaveTuning();
-		ImGui::End();
+		if (ImGui::CollapsingHeader("Aim & Feel"))
+		{
+			ImGui::SliderFloat("Aim sens",     &m_aimSens,      0.0006f, 0.0050f, "%.4f");	// 低=重い
+			ImGui::SliderFloat("Hammer follow",&m_hammerFollow, 3.0f, 24.0f, "%.1f");		// 低=遅れて重い
+		}
 
-		// --- Walk / Player: 一人称の走動(移動速度/マウス感度/上下範囲/目線高) ---
-		ImGui::Begin("Walk / Player (F1)");
-		ImGui::Text(m_walkMode ? "mode: WALK (press E to enter station)"
-		                       : "mode: STATION (forging)");
-		ImGui::SliderFloat("Walk speed",  &m_walkSpeed,    0.5f,  8.0f,   "%.2f");	// 移動速度(単位/秒)
-		ImGui::SliderFloat("Mouse sens",  &m_walkSens,     0.0006f, 0.0050f, "%.4f");	// 視角感度(低=重い)
-		ImGui::SliderFloat("Pitch limit", &m_walkPitchLim, 0.3f,  1.55f,  "%.2f");	// 上下の振り切り制限(rad)
-		ImGui::SliderFloat("Eye height",  &m_walkEyeH,     0.8f,  2.2f,   "%.2f");	// 目線の高さ
+		// --- Walk / Player: 一人称の走動 ---
+		if (ImGui::CollapsingHeader("Walk / Player"))
+		{
+			ImGui::Text(m_walkMode ? "mode: WALK (press E to enter station)"
+			                       : "mode: STATION (forging)");
+			ImGui::SliderFloat("Walk speed",  &m_walkSpeed,    0.5f,  8.0f,   "%.2f");	// 移動速度(単位/秒)
+			ImGui::SliderFloat("Mouse sens",  &m_walkSens,     0.0006f, 0.0050f, "%.4f");	// 視角感度(低=重い)
+			ImGui::SliderFloat("Pitch limit", &m_walkPitchLim, 0.3f,  1.55f,  "%.2f");	// 上下の振り切り制限(rad)
+			ImGui::SliderFloat("Eye height",  &m_walkEyeH,     0.8f,  2.2f,   "%.2f");	// 目線の高さ
+		}
+
 		ImGui::End();
 	}
 

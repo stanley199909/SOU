@@ -193,7 +193,7 @@
     <ClCompile Include="SceneForge\Scenery.cpp" />
     <ClCompile Include="SceneForge\HUD.cpp" />
     <ClCompile Include="SceneForge\CameraAim.cpp" />
-    <ClCompile Include="SceneWeaponEdit.cpp" />
+    <ClCompile Include="SceneParticleLab.cpp" />
     <ClCompile Include="Audio.cpp" />
     <ClCompile Include="DebugUI.cpp" />
     <ClCompile Include="imgui\imgui.cpp" />
@@ -219,6 +219,7 @@
     <ClCompile Include="Sprite.cpp" />
     <ClCompile Include="Startup.cpp" />
     <ClCompile Include="Texture.cpp" />
+    <ClCompile Include="TextureCache.cpp" />
     <ClCompile Include="SceneRoot.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -240,7 +241,7 @@
     <ClInclude Include="StateMachine\Player\QuenchStep.h" />
     <ClInclude Include="SceneForge\SceneForge.h" />
     <ClInclude Include="SceneForge\SceneForge_Internal.h" />
-    <ClInclude Include="SceneWeaponEdit.h" />
+    <ClInclude Include="SceneParticleLab.h" />
     <ClInclude Include="Audio.h" />
     <ClInclude Include="DebugUI.h" />
     <ClInclude Include="imgui\imgui.h" />
@@ -266,6 +267,7 @@
     <ClInclude Include="Shader.h" />
     <ClInclude Include="Sprite.h" />
     <ClInclude Include="Texture.h" />
+    <ClInclude Include="TextureCache.h" />
   </ItemGroup>
   <ItemGroup>
     <FxCompile Include="PS_TexColor.hlsl">

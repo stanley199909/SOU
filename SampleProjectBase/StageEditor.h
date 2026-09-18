@@ -103,6 +103,21 @@ private:
 	//--- persistence: save/load the whole layout to a text file (survives restart)
 	void  SaveLayout();
 	void  LoadLayout();
+
+	//--- startup snapshot (memory only; never touches stage_layout.txt).
+	// Init copies the loaded layout here; F8 / the "Reset to startup" button copies it back,
+	// so you can rearrange props freely and undo the whole mess in one press.
+	struct LayoutSnapshot
+	{
+		std::vector<Prop> props;
+		bool  coalOn; float coalPos[3], coalYaw, coalSize[2], coalGlow;
+		float emberPos[3], emberArea[2], emberRate, emberRise;
+		bool  waterOn; float waterPos[3], waterYaw, waterSize[2];
+	};
+	LayoutSnapshot m_startup;			// the layout as it was at Init
+	bool  m_haveStartup = false;		// false until SnapshotLayout() runs
+	void  SnapshotLayout();				// current layout -> m_startup
+	void  RestoreLayout();				// m_startup -> current layout
 };
 
 #endif // __STAGE_EDITOR_H___

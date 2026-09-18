@@ -39,9 +39,33 @@ public:
     static const int MAX_SPARKS = 3000;
     static const int MAX_EMBERS = 500;
 
-private:
-    static constexpr float GRAVITY = 9.8f; // downward accel on sparks
+    // Tunable physics constants. Defaults reproduce the original hardcoded behaviour,
+    // so callers that ignore this (the game) are unchanged; the Particle Lab scene edits
+    // these live to see the effect. Grouped: spark spawn / spark motion / ember spawn / ember motion.
+    struct Tune
+    {
+        // -- spark spawn (SpawnSparks) --
+        float sparkSpeedMin = 2.5f, sparkSpeedMax = 7.0f;   // launch speed range (x power*scale)
+        float sparkElevMin  = 0.25f, sparkElevMax = 1.4f;   // launch elevation angle (rad)
+        float sparkUpBonusMin = 1.0f, sparkUpBonusMax = 3.0f; // extra straight-up kick
+        float sparkLifeMin  = 0.5f, sparkLifeMax = 1.1f;    // seconds alive
+        float sparkSizeMin  = 0.16f, sparkSizeMax = 0.30f;  // streak size
+        // -- spark motion (Update) --
+        float sparkGravity      = 9.8f;   // downward accel
+        float sparkRestitution  = 0.3f;   // vertical energy kept per ground bounce
+        float sparkFriction     = 0.6f;   // horizontal speed kept per bounce
+        // -- ember spawn (EmitEmbers) --
+        float emberLifeMin  = 1.2f, emberLifeMax = 2.6f;
+        float emberSizeMin  = 0.02f, emberSizeMax = 0.05f;
+        float emberDrift    = 0.15f;      // initial random sideways speed
+        float emberRiseJitterMin = 0.7f, emberRiseJitterMax = 1.3f; // x the caller's rise
+        // -- ember motion (Update) --
+        float emberBuoyancy = 0.4f;       // upward accel (hot air)
+        float emberShimmer  = 0.10f;      // sideways wobble strength
+    };
+    Tune tune;
 
+private:
     std::vector<Particle> m_sparks;
     std::vector<Particle> m_embers;
     float m_emberSpawn = 0.0f; // fractional ember count carried to the next frame

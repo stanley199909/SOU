@@ -57,12 +57,19 @@ void SceneForge::DrawModelWorld(Model* m, const XMMATRIX& world, const XMFLOAT4&
 void SceneForge::LoadProp(const char* key, const char* fbx, const char* tex,
                           float targetSize, float px, float py, float pz, float yaw, bool groundSnap)
 {
-	Model* m = CreateObj<Model>(key);
-	if (!m->Load(fbx, 1.0f, false, true)) return;	// 読込失敗ならスキップ(欠品でも落ちない)
-	if (tex && tex[0])
+	// 共有キャッシュ: 共有オブジェクトmapはstaticでシーン跨ぎで生存する。編集シーンと
+	// キー(St...)を統一済みなので、どちらかが一度読めば assimp 再インポート無しで再利用できる
+	// (=シーン切替の数秒ストールを解消)。摩擦: 一度読んだモデルは常駐(許容)。
+	Model* m = GetObj<Model>(key);
+	if (!m)
 	{
-		auto t = std::make_shared<Texture>();
-		if (SUCCEEDED(t->Create(tex))) m->SetTexture(t);
+		m = CreateObj<Model>(key);
+		if (!m->Load(fbx, 1.0f, false, true)) return;	// 読込失敗ならスキップ(欠品でも落ちない)
+		if (tex && tex[0])
+		{
+			auto t = std::make_shared<Texture>();
+			if (SUCCEEDED(t->Create(tex))) m->SetTexture(t);
+		}
 	}
 	Prop p;
 	p.key = key;

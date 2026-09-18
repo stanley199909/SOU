@@ -41,6 +41,7 @@ void SceneWeaponEdit::Init()
 
 	DefaultShapes();
 	LoadWeapon();	// overwrite with saved design if present
+	SnapshotShapes();	// remember this as the "startup" design (F8 / button restores it)
 }
 
 void SceneWeaponEdit::Uninit()
@@ -126,9 +127,28 @@ void SceneWeaponEdit::CopyFromPrev()
 		m_hw[m_stage][i][j] = m_hw[m_stage - 1][i][j];
 }
 
+//--- startup snapshot: remember the sculpted shapes at Init so they restore in one press.
+//    Memory only - does NOT write weapon.txt, so experimenting never corrupts the save.
+void SceneWeaponEdit::SnapshotShapes()
+{
+	memcpy(m_hwStartup, m_hw, sizeof(m_hw));	// whole [stage][len][width] block
+	m_stageCountStartup = m_stageCount;
+	m_haveStartup = true;
+}
+
+void SceneWeaponEdit::RestoreShapes()
+{
+	if (!m_haveStartup) return;
+	memcpy(m_hw, m_hwStartup, sizeof(m_hw));
+	m_stageCount = m_stageCountStartup;
+	if (m_stage >= m_stageCount) m_stage = m_stageCount - 1;	// keep active stage in range
+}
+
 void SceneWeaponEdit::Update(float tick)
 {
 	m_time += tick;
+	// F8 = restore all sculpted shapes to how they were at startup (undo any editing mess).
+	if (IsKeyTrigger(VK_F8)) RestoreShapes();
 	ApplyCamera();		// editing happens in the 2D paint grid (DrawUI), not in the 3D view
 }
 
@@ -315,6 +335,7 @@ void SceneWeaponEdit::DrawUI()
 	if (ImGui::Button("Reload")) LoadWeapon();
 	ImGui::SameLine();
 	if (ImGui::Button("Load DEMO")) DefaultShapes();	// my authored raw->dagger example
+	if (ImGui::Button("Reset to startup  (F8)")) RestoreShapes();	// undo any sculpting mess
 
 	ImGui::Separator();
 	PaintGridUI();
