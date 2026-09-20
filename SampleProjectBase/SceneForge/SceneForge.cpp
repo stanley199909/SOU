@@ -219,6 +219,14 @@ void SceneForge::Init()
 	if (FAILED(mps->Load("Assets/Shader/PS_TexTint.cso")))
 		MessageBox(nullptr, "PS_TexTint.cso", "Shader Error", MB_OK);
 
+	// --- 石墙専用シェーダー(triplanarで Poly Haven の実PBR貼图を投影) ---
+	VertexShader* wallVS = CreateObj<VertexShader>("VS_Wall");
+	if (FAILED(wallVS->Load("Assets/Shader/VS_Wall.cso")))
+		MessageBox(nullptr, "VS_Wall.cso", "Shader Error", MB_OK);
+	PixelShader* wallPS = CreateObj<PixelShader>("PS_Wall");
+	if (FAILED(wallPS->Load("Assets/Shader/PS_Wall.cso")))
+		MessageBox(nullptr, "PS_Wall.cso", "Shader Error", MB_OK);
+
 	// --- 3D鉄条メッシュ用シェーダーと動的メッシュ ---
 	VertexShader* bvs = CreateObj<VertexShader>("VS_Bar");
 	bvs->Compile(g_barVS);
@@ -309,6 +317,13 @@ void SceneForge::Init()
 	LoadProp("StMetal1",   (P+"Metal Parts/SM_Metal_part_1.fbx").c_str(),kMetal.c_str(),    0.40f,-2.8f, 0.0f,  0.6f, 0.0f, true);
 	LoadProp("StMetal2",   (P+"Metal Parts/SM_Metal_part_2.fbx").c_str(),kMetal.c_str(),    0.40f,-3.1f, 0.0f,  0.7f, 0.0f, true);
 
+	// 整屋(AI生成 Cottage_Clean.fbx)。モデルと材質貼りは SceneRoot::LoadSharedProps が一度だけ用意
+	// (両シーン共有)。ここは m_props への登録だけ(LoadProp はキャッシュ命中で再ロードしない)。
+	//   大きさ/位置は編集シーン(StageEditor)で調整し stage_layout.txt 経由で此処が読む(下の LoadLayout)。
+	//   既定は大きめ(初回=配置ファイルに StCottage 行が無い時のみ使用)。石/灰泥は DrawWall で triplanar。
+	LoadProp("StCottage", "Assets/Medieval_Blacksmith_Cottage_Production/Cottage_Clean.fbx",
+	         "Assets/PolyHaven_RockWall17/rock_wall_17_Diffuse_2k.png", 10.0f, 0.0f, 0.0f, 0.0f, 0.0f, true);
+
 	// 既定の積み重ね(金床=樹桩の上、風箱=支架の上、道具=作業台の上)。この後 LoadLayout で上書きされる。
 	{
 		auto worldH = [](Prop* p)->float { return (p->aabbMax.y - p->aabbMin.y) * p->scale; };
@@ -377,6 +392,7 @@ void SceneForge::Init()
 	}
 
 	// 編集シーンで作った配置(Assets/stage_layout.txt)を反映。無ければ上の既定のまま。
+	// StCottage も普通のプロップとして round-trip する(編集シーンで大きさ/位置を決めれば此処が読む)。
 	LoadLayout();
 	LoadTuning();	// F1で調整したハンマー/カメラ値(forge_tuning.txt)を復元
 	SnapshotTuning();	// ↑復元直後の値を「起動時の姿」として記録(F8/ボタンでここへ戻せる)

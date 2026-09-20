@@ -181,6 +181,37 @@ void SceneRoot::LoadSharedProps()
 			if (t) m->SetTexture(t);
 		}
 	}
+
+	// --- 整屋(AI生成 Cottage_Clean.fbx)も共有プロップとして常駐させる ---
+	//   両シーン(ゲーム/編集)が同じ実体を GetObj で参照＝再インポート無し。材質名で貼り分け。
+	//   石/灰泥は在ゲーム側で triplanar(DrawWall)で塗るので、ここでは base=Poly Haven石壁のまま。
+	if (!GetObj<Model>("StCottage"))
+	{
+		const std::string CO = "Assets/Medieval_Blacksmith_Cottage_Production/";
+		Model* m = CreateObj<Model>("StCottage");
+		if (m->Load((CO + "Cottage_Clean.fbx").c_str(), 1.0f, false, true))
+		{
+			// base(全材質) = Poly Haven の実PBR石壁ディフューズ
+			if (auto base = TextureCache::Get("Assets/PolyHaven_RockWall17/rock_wall_17_Diffuse_2k.png"))
+				m->SetTexture(base);
+			// 材質名で個別上書き(屋根/床/鉄/玻璃は同梱BaseColor、木はMM木)
+			const std::string T = CO + "Medieval_Blacksmith_Cottage_Production/07_Textures/";
+			auto wood  = TextureCache::Get(kWood.c_str());
+			auto roof  = TextureCache::Get((T + "Roof_Aged_Shingle_BaseColor_2048.png").c_str());
+			auto floor = TextureCache::Get((T + "Floor_Dirt_Flagstone_BaseColor_2048.png").c_str());
+			auto iron  = TextureCache::Get((T + "Iron_Rusted_BaseColor_2048.png").c_str());
+			auto glass = TextureCache::Get((T + "Glass_Old_BaseColor_2048.png").c_str());
+			for (size_t i = 0; i < m->GetMaterialCount(); ++i)
+			{
+				const char* n = m->GetMaterialName(i); if (!n) continue;
+				if      (strstr(n, "Wood")  && wood)  m->SetTextureAt(i, wood);
+				else if (strstr(n, "Roof")  && roof)  m->SetTextureAt(i, roof);
+				else if (strstr(n, "Floor") && floor) m->SetTextureAt(i, floor);
+				else if (strstr(n, "Iron")  && iron)  m->SetTextureAt(i, iron);
+				else if (strstr(n, "Glass") && glass) m->SetTextureAt(i, glass);
+			}
+		}
+	}
 }
 
 void SceneRoot::Uninit()

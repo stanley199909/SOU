@@ -283,6 +283,9 @@ private:
 	std::vector<Prop> m_props;
 	float m_groundY = 0.0f;	// 床の高さ(金床のワールドAABB下面から算出)
 	bool  m_showScenery = true;
+	//--- 石墙(AI生成FBX)専用PBR: UVが壊れているため triplanar(Box投影)で Poly Haven の実PBR貼图を worldPos から投影する
+	float m_wallTile = 1.8f;	// 1タイルが覆うワールド長(m)。F1で調整予定
+	void  DrawWall(Model* m, const DirectX::XMMATRIX& world);	// 石墙専用描画(VS_Wall/PS_Wall)
 
 	//--- Unity風のドラッグ配置エディタ(F1中に選択したプロップを地面上でLMBドラッグ移動)
 	int   m_editSel     = -1;		// 選択中のプロップindex(-1=なし)

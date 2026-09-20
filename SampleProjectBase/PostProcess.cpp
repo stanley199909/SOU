@@ -171,6 +171,25 @@ float4 main(PIN i):SV_TARGET
 }
 )EOT";
 
+// トーンマッピング専用PS: HDR(リニア空間, 1超えあり)を ACES のS字曲線で 0..1 へ優雅に圧縮する。
+// 以前 ACES は FXAA シェーダーの中だけにあり、FXAA を切ると収光されず亮部が白飛びした。
+// これを独立させ「画面へ出す最後に必ず1回収光する」形にするための最小のパス。
+static const char* g_tonemapShaderCode = R"EOT(
+Texture2D    tex  : register(t0);
+SamplerState samp : register(s0);
+struct PIN { float4 pos:SV_POSITION; float2 uv:TEXCOORD0; float4 color:TEXCOORD1; };
+// Narkowicz 2015 ACES fitted curve (業界標準の近似式。係数の導出は黒箱でよい)
+float3 ACESFilm(float3 x){
+    float a=2.51, b=0.03, c=2.43, d=0.59, e=0.14;
+    return saturate((x*(a*x+b))/(x*(c*x+d)+e));
+}
+float4 main(PIN i):SV_TARGET
+{
+    float3 c = tex.Sample(samp, i.uv).rgb;
+    return float4(ACESFilm(c), 1.0);
+}
+)EOT";
+
 void PostProcess::Init(UINT width, UINT height)
 {
 	m_width  = width;
@@ -191,11 +210,14 @@ void PostProcess::Init(UINT width, UINT height)
 	m_bloomPS->Compile(g_bloomShaderCode);
 	m_fxaaPS = std::make_shared<PixelShader>();
 	m_fxaaPS->Compile(g_fxaaShaderCode);
+	m_tonemapPS = std::make_shared<PixelShader>();
+	m_tonemapPS->Compile(g_tonemapShaderCode);
 }
 
 void PostProcess::Uninit()
 {
 	m_fxaaPS.reset();
+	m_tonemapPS.reset();
 	m_ppPS.reset();
 	m_bloomPS.reset();
 }
@@ -316,7 +338,7 @@ void PostProcess::End(RenderTarget* pScreen)
 		SetRenderTargets(1, &pScreen, nullptr);
 		SetBlendMode(BLEND_NONE);
 		if (m_fxaa) DrawFXAA(&m_sceneRT);						// 元の絵(エッジを均す)
-		else        DrawFull(&m_sceneRT, nullptr, XMFLOAT4(1, 1, 1, 1));
+		else        DrawFull(&m_sceneRT, m_tonemapPS.get(), XMFLOAT4(1, 1, 1, 1));	// FXAA無しでも必ずACESで収光
 		SetBlendMode(BLEND_ADD);
 		float b = m_bloomStrength * intensity;
 		DrawFull(&m_brightRT, nullptr, XMFLOAT4(b, b, b, 1));	// にじむ光を加算

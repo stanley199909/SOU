@@ -1,0 +1,34 @@
+{
+  "triangles": 4712,
+  "vertices": 3168,
+  "bounds_min_m": [
+    -1.7500000000000002,
+    0.0,
+    -0.3247926701461602
+  ],
+  "bounds_max_m": [
+    1.7500000000000002,
+    3.0,
+    0.3338134807437642
+  ],
+  "wall_nominal_m": [
+    3.5,
+    3.0,
+    0.5
+  ],
+  "window_nominal_m": [
+    0.8,
+    1.0
+  ],
+  "sill_m": 1.2,
+  "objects": [
+    "Stone_Wall_Solid",
+    "Stone_Window_Sill",
+    "Stone_Relief_Interior",
+    "Stone_Relief_Soot_Interior",
+    "Stone_Relief_Exterior",
+    "Window_Reveal_Stonework",
+    "Window_Frame",
+    "Window_Lattice_Shutter"
+  ]
+}

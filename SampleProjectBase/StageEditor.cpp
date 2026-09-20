@@ -109,6 +109,10 @@ void SceneStageEditor::Init()
 	LoadProp("StPliers",   (P+"Tools/SM_BS_Pliers_1.fbx").c_str(),    kTools.c_str(),  0.6f, -2.4f, 0.6f, 0.0f);
 	LoadProp("StMetal1",   (P+"Metal Parts/SM_Metal_part_1.fbx").c_str(), kMetal.c_str(), 0.4f, -2.8f, 0.6f, 0.0f);
 	LoadProp("StMetal2",   (P+"Metal Parts/SM_Metal_part_2.fbx").c_str(), kMetal.c_str(), 0.4f, -3.1f, 0.7f, 0.0f);
+	// Cottage: model+textures shared via SceneRoot (GetObj hit here). Selectable/scalable in the
+	// editor; SaveLayout writes it to stage_layout.txt so SceneForge reads the same size/pos.
+	LoadProp("StCottage",  "Assets/Medieval_Blacksmith_Cottage_Production/Cottage_Clean.fbx",
+	         "Assets/PolyHaven_RockWall17/rock_wall_17_Diffuse_2k.png", 10.0f, 0.0f, 0.0f, 0.0f);
 
 	// placement pass: stack things where they belong (anvil on stump, bellows on stand, tools on table)
 	{

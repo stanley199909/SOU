@@ -75,6 +75,7 @@ private:
 	std::shared_ptr<PixelShader> m_ppPS;	// 6種効果用ピクセルシェーダー
 	std::shared_ptr<PixelShader> m_bloomPS;	// ブルーム用ピクセルシェーダー
 	std::shared_ptr<PixelShader> m_fxaaPS;	// FXAA(エッジ抗鋸歯)
+	std::shared_ptr<PixelShader> m_tonemapPS;	// トーンマッピング専用(ACESでHDR→0..1に収光)
 	UINT  m_width  = 0;
 	UINT  m_height = 0;
 

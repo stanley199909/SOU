@@ -53,6 +53,33 @@ void SceneForge::DrawModelWorld(Model* m, const XMMATRIX& world, const XMFLOAT4&
 	m->Draw();
 }
 
+//--- 石墙専用描画: VS_Wall/PS_Wall で triplanar(Box投影)。モデルのUVが壊れているため uv を使わず
+//    worldPos から投影して Poly Haven の実PBR BaseColor を貼る(=Blenderの Box 投影の再現)。
+//    貼图は Model のマテリアルに載っている(LoadProp で割当)ので m->Draw() が t0 に束ねる。
+//    まだ光照は無い(段階b-1: 色/タイル確認)。光照は段階cで足す。
+void SceneForge::DrawWall(Model* m, const XMMATRIX& world)
+{
+	CameraBase*   cam = GetObj<CameraBase>("Camera");
+	VertexShader* vs  = GetObj<VertexShader>("VS_Wall");
+	PixelShader*  ps  = GetObj<PixelShader>("PS_Wall");
+	if (!m || !cam || !vs || !ps) return;
+
+	XMFLOAT4X4 mat[3];
+	mat[1] = cam->GetView();
+	mat[2] = cam->GetProj();
+	XMStoreFloat4x4(&mat[0], XMMatrixTranspose(world));
+	vs->WriteBuffer(0, mat);
+
+	XMFLOAT4 param(m_wallTile, 0.0f, 0.0f, 0.0f);	// x = 1タイルが覆うワールド長(m)
+	ps->WriteBuffer(0, &param);
+
+	SetBlendMode(BLEND_ALPHA);
+	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
+	m->SetVertexShader(vs);
+	m->SetPixelShader(ps);
+	m->Draw();
+}
+
 //--- 装飾プロップを読み込み、BaseColorを割当、AABBをキャッシュ
 void SceneForge::LoadProp(const char* key, const char* fbx, const char* tex,
                           float targetSize, float px, float py, float pz, float yaw, bool groundSnap)
@@ -196,6 +223,8 @@ void SceneForge::DrawScenery()
 	{
 		Model* m = GetObj<Model>(p.key.c_str());
 		if (!m) continue;
+		// 整屋は専用のPBRシェーダー(triplanar)で描く。他プロップは共通シェーダー。
+		if (p.key == "StCottage") { DrawWall(m, PropWorld(p)); continue; }
 		// 炉だけ、のっぺり感を抑えるため僅かに暗い暖色を掛ける(炉内が煤けて見える)
 		XMFLOAT4 tint = (p.key == "StForge")
 			? XMFLOAT4(0.80f, 0.76f, 0.72f, 1.0f)

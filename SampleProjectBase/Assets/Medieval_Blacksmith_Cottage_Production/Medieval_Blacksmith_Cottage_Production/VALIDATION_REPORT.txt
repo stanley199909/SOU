@@ -1,0 +1,33 @@
+MEDIEVAL BLACKSMITH COTTAGE - AUTOMATED VALIDATION
+
+Blender runtime: 5.0.1
+Units: meters; scene unit scale = 1.0
+FBX export: Y-Up, forward -Z
+House footprint: 5.60 m x 5.60 m
+Wall: 5.60 W x 3.00 H x 0.50 D m
+Window clear opening: 0.80 W x 1.00 H m; sill 1.20 m
+
+Source module triangle total: 63,424
+All mesh object transforms: scale 1/1/1, no negative scale
+Wall openings: Boolean-cut through full 0.50 m thickness
+Stone relief offset: 0.055 m beyond mortar faces (no coplanar surfaces)
+Soot: material assignment on wall polygons, not overlay planes
+Window lattice: ends contact inner frame; separate physical glass mesh
+Lighting: preview lights only; no directional/fire/window light baked into maps
+
+Per export group:
+- Wall_With_Window: 8 mesh objects, 15,108 triangles
+- Wall_No_Window_Identical: 4 mesh objects, 16,292 triangles
+- Wall_With_Door: 7 mesh objects, 13,584 triangles
+- Window_Complete: 4 mesh objects, 440 triangles
+- Floor_Stone_Dirt: 2 mesh objects, 2,936 triangles
+- Roof_And_Beams: 7 mesh objects, 12,712 triangles
+- Tool_Rack: 2 mesh objects, 660 triangles
+- Ladder: 1 mesh objects, 396 triangles
+- Shelves: 1 mesh objects, 220 triangles
+- Firewood: 1 mesh objects, 968 triangles
+- Straw_Pile: 1 mesh objects, 80 triangles
+- Chains_Hooks: 6 mesh objects, 468 triangles
+- Assembly: 44 mesh objects, 79,716 triangles
+
+RESULT: PASS - no empty meshes, no negative scales, exactly one UV set per mesh.
