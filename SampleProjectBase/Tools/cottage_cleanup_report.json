@@ -1,0 +1,23 @@
+{
+  "before_objects": 42,
+  "after_objects": 35,
+  "before_polygons": 78416,
+  "after_polygons": 66942,
+  "uniform_y_lift_m": 0.66405,
+  "removed_groups": [
+    "ASM_Chains_Hooks_*",
+    "ASM_Tool_Rack_*"
+  ],
+  "roof_tint": [
+    0.12,
+    0.1,
+    0.08
+  ],
+  "validation": {
+    "wall_roof_max_excess_source_m": 4.24e-07,
+    "missing_uv_meshes": 0,
+    "unwanted_meshes": 0,
+    "foundation_bottom_preserved": true
+  },
+  "note": "Geometry verified by FBX reimport; runtime visual inspection pending."
+}

@@ -42,6 +42,8 @@ IDXGISwapChain* GetSwapChain();
 
 HRESULT InitDirectX(HWND hWnd, UINT width, UINT height, bool fullscreen);
 void UninitDirectX();
+bool GetVSyncEnabled();
+void SetVSyncEnabled(bool enabled);
 void SwapDirectX();
 
 void SetRenderTargets(UINT num, RenderTarget** ppViews, DepthStencil* pView);

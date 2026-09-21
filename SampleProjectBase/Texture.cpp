@@ -13,7 +13,7 @@ Texture::~Texture()
 	SAFE_RELEASE(m_pSRV);
 	SAFE_RELEASE(m_pTex);
 }
-HRESULT Texture::Create(const char* fileName)
+HRESULT Texture::Create(const char* fileName, bool srgb)
 {
 	HRESULT hr = S_OK;
 
@@ -56,7 +56,7 @@ HRESULT Texture::Create(const char* fileName)
 	td.Height = (UINT)base->height;
 	td.MipLevels = 0;					// 0 = デバイスがフルmip鎖を確保
 	td.ArraySize = 1;
-	td.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+	td.Format = srgb ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB : DXGI_FORMAT_R8G8B8A8_UNORM;
 	td.SampleDesc.Count = 1;
 	td.Usage = D3D11_USAGE_DEFAULT;
 	// GenerateMips には RENDER_TARGET バインドと GENERATE_MIPS フラグが必須。

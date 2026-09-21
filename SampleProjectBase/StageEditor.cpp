@@ -1,3 +1,5 @@
+#include "CottageRender.h"
+#include "OutdoorStage.h"
 #include "math.h"
 #include "StageEditor.h"
 #include "Geometory.h"
@@ -68,6 +70,12 @@ void SceneStageEditor::LoadProp(const char* key, const char* fbx, const char* te
 
 void SceneStageEditor::Init()
 {
+    CottageRender::Load();
+    auto* wallVS = CreateObj<VertexShader>("StWallVS");
+    auto* wallPS = CreateObj<PixelShader>("StWallPS");
+    if (FAILED(wallVS->Load("Assets/Shader/VS_Wall.cso"))) return;
+    if (FAILED(wallPS->Load("Assets/Shader/PS_Wall.cso"))) return;
+
 	VertexShader* vs = CreateObj<VertexShader>("StVS");
 	if (FAILED(vs->Load("Assets/Shader/VS_Object.cso")))
 		MessageBox(nullptr, "VS_Object.cso", "Shader Error", MB_OK);
@@ -210,6 +218,10 @@ void SceneStageEditor::Init()
 		cam->SetUp  (XMFLOAT3(0.0f, 1.0f,  0.0f));
 	}
 
+	for (const auto& e : OutdoorStage::Read()) {
+		LoadProp(e.key.c_str(),e.path.c_str(),"",1.0f,e.x,e.z,e.yaw);
+		for(auto& p:m_props) if(p.key==e.key) {p.scale=e.scale;p.pos[1]=e.y;p.groundSnap=false;}
+	}
 	LoadLayout();	// override defaults with the saved arrangement if it exists
 	SnapshotLayout();	// remember this as the "startup" layout (F8 / button restores it)
 }
@@ -505,15 +517,37 @@ void SceneStageEditor::DrawWater()
 
 void SceneStageEditor::DrawScenery()
 {
+    std::vector<SunStage::Item> casters;
+    XMFLOAT3 shadowCenter(0,3,0);
+    for(auto& p:m_props) {
+        if(p.key=="StGround") continue;
+        auto world=PropWorld(p);
+        if(p.key=="StCottage") XMStoreFloat3(&shadowCenter,XMVector3TransformCoord(XMVectorSet(0,150,0,1),world));
+        casters.push_back(SunStage::MakeItem(GetObj<Model>(p.key.c_str()),world));
+    }
+    SunStage::Prepare(casters,CottageRender::Data().sun,shadowCenter);
+    SunStage::Sky(GetObj<CameraBase>("Camera"),CottageRender::Data().sun,CottageRender::Data().exteriorSky);
+
 	ApplyForgeTextures();
 	for (auto& p : m_props)
 	{
+		if(p.key=="StGround") continue;
 		Model* m = GetObj<Model>(p.key.c_str());
 		if (!m) continue;
+        if (p.key == "StCottage" || OutdoorStage::IsOutdoor(p.key))
+        {
+            CottageRender::Draw(m, PropWorld(p), GetObj<CameraBase>("Camera"),
+                GetObj<VertexShader>("StWallVS"), GetObj<PixelShader>("StWallPS"), m_coalPos, false,OutdoorStage::IsOutdoor(p.key));
+            continue;
+        }
+
 		XMFLOAT4 tint = (p.key == "StForge") ? XMFLOAT4(0.80f, 0.76f, 0.72f, 1.0f) : XMFLOAT4(1, 1, 1, 1);
-		DrawModelWorld(m, PropWorld(p), tint);
+		SunStage::LitProp(m,PropWorld(p),GetObj<CameraBase>("Camera"),tint,CottageRender::Data().sun,CottageRender::Data().ambient,m_coalPos,CottageRender::Data().windowExtra.w);
 	}
 	DrawCoalBed();
+    for (auto& p : m_props) if (p.key == "StCottage")
+        CottageRender::Draw(GetObj<Model>("StCottage"), PropWorld(p), GetObj<CameraBase>("Camera"),
+            GetObj<VertexShader>("StWallVS"), GetObj<PixelShader>("StWallPS"), m_coalPos, true);
 	DrawWater();
 }
 
@@ -551,7 +585,7 @@ int SceneStageEditor::PickProp(float mx, float my)
 	int best = -1; float bestD = 70.0f;	// selection radius in px
 	for (int i = 0; i < (int)m_props.size(); ++i)
 	{
-		if (m_props[i].key == "StGround") continue;	// don't pick the floor
+		if (m_props[i].key == "StGround" || m_props[i].key == "StOutdoorGround") continue;	// don't pick the floor
 		XMFLOAT3 c = PropCenter(this, PropWorld(m_props[i]), m_props[i].aabbMin, m_props[i].aabbMax);
 		float sx, sy;
 		if (!WorldToScreen(c, sx, sy)) continue;
@@ -787,6 +821,7 @@ void SceneStageEditor::Update(float tick)
 
 void SceneStageEditor::Draw()
 {
+    CottageRender::ClearExterior();
 	DrawScenery();
 	DrawEmbers();				// coal embers rising from the forge
 	DrawSelectionHighlight();	// yellow box around the selected prop
@@ -798,6 +833,34 @@ void SceneStageEditor::DrawUI()
 	ImGui::SetNextWindowPos(ImVec2(12, 12), ImGuiCond_FirstUseEver);
 	ImGui::SetNextWindowSize(ImVec2(340, 420), ImGuiCond_FirstUseEver);
 	ImGui::Begin("Forge Stage Editor");
+	CottageRender::Controls();
+    if (ImGui::Button("View outdoor yard")) {
+        auto* cam=GetObj<CameraBase>("Camera");
+        if(cam) {
+            constexpr float kYardViewX=-20.0f,kYardViewY=7.0f,kYardViewZ=24.0f;
+            cam->SetPos(XMFLOAT3(kYardViewX,kYardViewY,kYardViewZ));
+            cam->SetLook(XMFLOAT3(0,3,0));cam->SetUp(XMFLOAT3(0,1,0));
+        }
+    }
+    if (ImGui::Button("Focus actual window"))
+    {
+        for (auto& house : m_props) if (house.key == "StCottage")
+        {
+            auto* cam = GetObj<CameraBase>("Camera");
+            if (!cam) break;
+            const auto& w = CottageRender::Data().window;
+            const XMMATRIX world = PropWorld(house);
+            const XMVECTOR center = XMVector3TransformCoord(XMVectorSet(w.x,w.y,w.z,1),world);
+            const XMVECTOR outward = XMVector3Normalize(XMVector3TransformNormal(XMVectorSet(0,0,1,0),world));
+            constexpr float kWindowViewDistance=3.0f;
+            XMFLOAT3 pos,look;
+            XMStoreFloat3(&pos,center-outward*kWindowViewDistance);
+            XMStoreFloat3(&look,center);
+            cam->SetPos(pos); cam->SetLook(look); cam->SetUp(XMFLOAT3(0,1,0));
+            break;
+        }
+    }
+
 	ImGui::TextDisabled("Free cam: ALT+LMB orbit / MMB pan / RMB zoom");
 	if (ImGui::Button("Reset layout to startup  (F8)")) RestoreLayout();	// undo any editing mess
 	ImGui::Separator();

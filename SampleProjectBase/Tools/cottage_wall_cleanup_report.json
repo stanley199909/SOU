@@ -1,0 +1,30 @@
+{
+  "before_faces": 66942,
+  "stone_faces_removed": 162,
+  "trimmed": [
+    "ASM_Back_Wall_Door_Stone_Interior",
+    "ASM_Back_Wall_Door_Stone_Interior_Soot",
+    "ASM_Front_Wall_Window_Stone_Interior",
+    "ASM_Front_Wall_Window_Stone_Interior_Soot",
+    "ASM_Left_Wall_Plain_Stone_Interior",
+    "ASM_Left_Wall_Plain_Stone_Interior_Soot",
+    "ASM_Right_Wall_Plain_Stone_Interior",
+    "ASM_Right_Wall_Plain_Stone_Interior_Soot"
+  ],
+  "mortar_faces_after": 222,
+  "after_faces": 63399,
+  "bounds": [
+    [
+      -3.2047431468963623,
+      3.2847583293914795
+    ],
+    [
+      -3.1599998474121094,
+      3.160001039505005
+    ],
+    [
+      -0.23999999463558197,
+      4.387755393981934
+    ]
+  ]
+}

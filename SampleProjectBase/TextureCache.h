@@ -13,7 +13,7 @@ class Texture;
 //  (failures are not cached, so a fixed file can load next time).
 namespace TextureCache
 {
-	std::shared_ptr<Texture> Get(const char* path);
+	std::shared_ptr<Texture> Get(const char* path, bool srgb = true);
 	void Clear();	// drop all cached textures (optional; e.g. on shutdown)
 }
 

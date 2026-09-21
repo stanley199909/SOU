@@ -216,9 +216,13 @@ void UninitDirectX()
 	SAFE_RELEASE(g_pDevice);
 }
 
+namespace { bool g_vsyncEnabled = true; }
+bool GetVSyncEnabled() { return g_vsyncEnabled; }
+void SetVSyncEnabled(bool enabled) { g_vsyncEnabled = enabled; }
 void SwapDirectX()
 {
-	g_pSwapChain->Present(0, 0);
+	constexpr UINT kOneRefresh = 1;
+	g_pSwapChain->Present(g_vsyncEnabled ? kOneRefresh : 0, 0);
 }
 
 

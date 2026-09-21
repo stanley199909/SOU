@@ -170,6 +170,7 @@ private:
 	Player m_player;					// 歩き回るプレイヤ本体(位置/向き/速度/可互動を持つ)
 	bool   m_walkMode   = false;		// true=走動モード / false=工位(鍛造)モード。E互動で工位へ入る
 	float  m_walkPitch  = 0.0f;			// 走動カメラの上下(pitch)累積。左右(yaw)は m_player が持つ
+	float  m_walkFloorY = 0.0f; // Stage floor elevation, loaded from forge_tuning.txt.
 	float  m_walkEyeH   = 1.6f;			// 目線の高さ(玩家足元からカメラまで, 単位)
 	float  m_walkSens   = 0.0017f;		// 走動時マウス感度(rad/px)。UpdateMouseLook と同値で統一
 	float  m_walkPitchLim = 1.3f;		// 上下視角の制限(rad)≒74°。真上/真下でひっくり返るのを防ぐ
@@ -284,7 +285,6 @@ private:
 	float m_groundY = 0.0f;	// 床の高さ(金床のワールドAABB下面から算出)
 	bool  m_showScenery = true;
 	//--- 石墙(AI生成FBX)専用PBR: UVが壊れているため triplanar(Box投影)で Poly Haven の実PBR貼图を worldPos から投影する
-	float m_wallTile = 1.8f;	// 1タイルが覆うワールド長(m)。F1で調整予定
 	void  DrawWall(Model* m, const DirectX::XMMATRIX& world);	// 石墙専用描画(VS_Wall/PS_Wall)
 
 	//--- Unity風のドラッグ配置エディタ(F1中に選択したプロップを地面上でLMBドラッグ移動)

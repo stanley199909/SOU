@@ -1,0 +1,50 @@
+[
+  {
+    "asset": "brown_mud_02",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/brown_mud_02/brown_mud_02_diff_2k.jpg",
+    "file": "Assets\\Cottage_Materials\\brown_mud_02_base.jpg",
+    "sha256": "5c735b1df784ab1990f4e209c55d27fa4e7a19508e40484ed5aa783266783726",
+    "license": "CC0",
+    "bytes": 2163682
+  },
+  {
+    "asset": "brown_mud_02",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/brown_mud_02/brown_mud_02_nor_gl_2k.jpg",
+    "file": "Assets\\Cottage_Materials\\brown_mud_02_normal.jpg",
+    "sha256": "3d6eec0adba8fd514d5634c56f806ad40206975c3ef17de1e2468b9e3ebcf719",
+    "license": "CC0",
+    "bytes": 4234657
+  },
+  {
+    "asset": "brown_mud_02",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/brown_mud_02/brown_mud_02_rough_2k.jpg",
+    "file": "Assets\\Cottage_Materials\\brown_mud_02_rough.jpg",
+    "sha256": "00ef047ecda114930311efd31cbdb371c7a236f211a00f1dfeb6b1b73ac2f674",
+    "license": "CC0",
+    "bytes": 1662813
+  },
+  {
+    "asset": "grass_path_2",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/grass_path_2/grass_path_2_diff_2k.jpg",
+    "file": "Assets\\Cottage_Materials\\grass_path_2_base.jpg",
+    "sha256": "e6b353085d0fc0062832e70cfdf1b77f8b886a1fbb303541479e4f99a3b3ee79",
+    "license": "CC0",
+    "bytes": 2788295
+  },
+  {
+    "asset": "grass_path_2",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/grass_path_2/grass_path_2_nor_gl_2k.jpg",
+    "file": "Assets\\Cottage_Materials\\grass_path_2_normal.jpg",
+    "sha256": "e25c3e4574021fafb3737c56a2b7373c84f1f0b9bce99b94c2b565b8cd7fd55e",
+    "license": "CC0",
+    "bytes": 2506245
+  },
+  {
+    "asset": "grass_path_2",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/grass_path_2/grass_path_2_rough_2k.jpg",
+    "file": "Assets\\Cottage_Materials\\grass_path_2_rough.jpg",
+    "sha256": "96bc66d10e0f29ca5d1a9efda7734fd0522b5e0c01ba4a828415176d754667b5",
+    "license": "CC0",
+    "bytes": 1329811
+  }
+]

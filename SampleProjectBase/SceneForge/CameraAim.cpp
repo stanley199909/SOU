@@ -418,6 +418,7 @@ void SceneForge::SaveTuning()
 	fprintf(fp, "aimsens %.6f\n",    m_aimSens);
 	fprintf(fp, "hfollow %.5f\n",    m_hammerFollow);
 	// -- カメラ --
+	fprintf(fp, "walkfloor %.5f\n", m_walkFloorY);
 	fprintf(fp, "campos %.5f %.5f %.5f\n",  m_camPos[0],  m_camPos[1],  m_camPos[2]);
 	fprintf(fp, "camlook %.5f %.5f %.5f\n", m_camLook[0], m_camLook[1], m_camLook[2]);
 	fprintf(fp, "camfov %.5f\n",     m_camFov);
@@ -513,6 +514,7 @@ void SceneForge::LoadTuning()
 		else if (strcmp(key, "looknoise")  == 0) sscanf_s(v, "%f", &m_camLookNoise);
 		else if (strcmp(key, "aimsens")    == 0) sscanf_s(v, "%f", &m_aimSens);
 		else if (strcmp(key, "hfollow")    == 0) sscanf_s(v, "%f", &m_hammerFollow);
+		else if (strcmp(key, "walkfloor") == 0) sscanf_s(v, "%f", &m_walkFloorY);
 		else if (strcmp(key, "campos")     == 0) sscanf_s(v, "%f %f %f", &m_camPos[0],  &m_camPos[1],  &m_camPos[2]);
 		else if (strcmp(key, "camlook")    == 0) sscanf_s(v, "%f %f %f", &m_camLook[0], &m_camLook[1], &m_camLook[2]);
 		else if (strcmp(key, "camfov")     == 0) sscanf_s(v, "%f", &m_camFov);

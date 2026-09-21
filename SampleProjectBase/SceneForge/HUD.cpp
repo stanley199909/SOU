@@ -3,6 +3,7 @@
 // original source keep compiling correctly under MSVC (no C2601/C1075).
 // All SceneForge members share the class declaration in SceneForge.h and the
 // file-local helpers declared in SceneForge_Internal.h.
+#include "CottageRender.h"
 #include "SceneForge/SceneForge.h"
 #include "SceneForge/SceneForge_Internal.h"
 #include "DirectX.h"
@@ -279,6 +280,7 @@ void SceneForge::DrawUI()
 		ImGui::SetNextWindowPos(ImVec2(8, 8), ImGuiCond_FirstUseEver);
 		ImGui::SetNextWindowSize(ImVec2(340, 560), ImGuiCond_FirstUseEver);
 		ImGui::Begin("Forge Tuning (F1)");
+	CottageRender::Controls();
 
 		// --- 起動時スナップショットへ一発リセット(F8キーと同じ)。滅茶苦茶にしても戻せる保険。 ---
 		if (ImGui::Button("Reset ALL to startup  (F8)")) RestoreTuning();

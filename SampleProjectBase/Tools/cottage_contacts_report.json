@@ -1,0 +1,16 @@
+{
+  "before_faces": 63399,
+  "removed": {
+    "ASM_Back_Door_Frame": 14,
+    "ASM_Back_Wall_Door_MortarBody": 7,
+    "ASM_Front_Wall_Window_MortarBody": 3,
+    "ASM_Gable_Back_Closed": 1,
+    "ASM_Gable_Front_Closed": 1,
+    "ASM_Left_Wall_Plain_MortarBody": 4,
+    "ASM_Right_Wall_Plain_MortarBody": 4,
+    "ASM_Roof_A": 1,
+    "ASM_Roof_B": 1
+  },
+  "ironwork_outward_offset_m": 0.007000591278075952,
+  "after_faces": 63588
+}

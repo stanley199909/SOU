@@ -95,6 +95,7 @@ public:
 	size_t GetMaterialCount() const;				// マテリアル数(貼り分けに使う)
 	bool HasAnyTexture() const;						// FBXが自前でテクスチャを読めたか(trim sheet等の自動貼り分け判定)
 	const char* GetMaterialName(size_t index) const;// マテリアル名(FBXの MI_Forge_1_UVx など)
+	Texture* GetTextureAt(size_t i) const { return i < m_materials.size() ? m_materials[i].texture.get() : nullptr; }
 	void GetLocalAABB(DirectX::XMFLOAT3& outMin, DirectX::XMFLOAT3& outMax);	// モデル空間の境界箱(スケール前の生頂点)
 
 public:

@@ -18,8 +18,9 @@ tremorramp 3.00000
 looknoise 0.45000
 aimsens 0.001100
 hfollow 12.00000
-campos 0.00000 2.30000 -0.95000
-camlook 0.00000 1.15000 0.55000
+walkfloor 0.66405
+campos 0.00000 2.96405 -0.95000
+camlook 0.00000 1.81405 0.55000
 camfov 0.89012
 followz 0.55000
 pangain 1.00000

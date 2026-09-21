@@ -1,0 +1,90 @@
+{
+  "license": "CC0",
+  "source": "https://polyhaven.com/license",
+  "files": [
+    {
+      "asset": "rock_surface",
+      "map": "base",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/rock_surface/rock_surface_diff_2k.jpg",
+      "md5": "2d4912a91f73f08ed11734c044cd83b6",
+      "file": "rock_surface_base.jpg"
+    },
+    {
+      "asset": "rock_surface",
+      "map": "normal",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/rock_surface/rock_surface_nor_gl_2k.jpg",
+      "md5": "6a7a2005834232c854cf907b22e67e42",
+      "file": "rock_surface_normal.jpg"
+    },
+    {
+      "asset": "rock_surface",
+      "map": "rough",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/rock_surface/rock_surface_rough_2k.jpg",
+      "md5": "14f6c59dd2948ac97c0fdb3a346064c0",
+      "file": "rock_surface_rough.jpg"
+    },
+    {
+      "asset": "monastery_stone_floor",
+      "map": "base",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/monastery_stone_floor/monastery_stone_floor_diff_2k.jpg",
+      "md5": "35420aa52b8257920b1d7566fb80ab4d",
+      "file": "monastery_stone_floor_base.jpg"
+    },
+    {
+      "asset": "monastery_stone_floor",
+      "map": "normal",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/monastery_stone_floor/monastery_stone_floor_nor_gl_2k.jpg",
+      "md5": "68fe9fe33ed384c0a0f45b57f642e0a9",
+      "file": "monastery_stone_floor_normal.jpg"
+    },
+    {
+      "asset": "monastery_stone_floor",
+      "map": "rough",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/monastery_stone_floor/monastery_stone_floor_rough_2k.jpg",
+      "md5": "ef1df6aacd1ca6ca404ac0b927662a65",
+      "file": "monastery_stone_floor_rough.jpg"
+    },
+    {
+      "asset": "wood_planks",
+      "map": "base",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/wood_planks/wood_planks_diff_2k.jpg",
+      "md5": "29f2d08d585433fb54034a0e8fa79adc",
+      "file": "wood_planks_base.jpg"
+    },
+    {
+      "asset": "wood_planks",
+      "map": "normal",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/wood_planks/wood_planks_nor_gl_2k.jpg",
+      "md5": "61c0a752deaa8fda789a31e4fc1427d8",
+      "file": "wood_planks_normal.jpg"
+    },
+    {
+      "asset": "wood_planks",
+      "map": "rough",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/wood_planks/wood_planks_rough_2k.jpg",
+      "md5": "461754cb0181e562be384e2acc2fc8d2",
+      "file": "wood_planks_rough.jpg"
+    },
+    {
+      "asset": "roof_slates_03",
+      "map": "base",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/roof_slates_03/roof_slates_03_diff_2k.jpg",
+      "md5": "ac4940aeb369dd8c8919d3233cb42023",
+      "file": "roof_slates_03_base.jpg"
+    },
+    {
+      "asset": "roof_slates_03",
+      "map": "normal",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/roof_slates_03/roof_slates_03_nor_gl_2k.jpg",
+      "md5": "3d52d34312b0e44096ce0db7ad9ee3d2",
+      "file": "roof_slates_03_normal.jpg"
+    },
+    {
+      "asset": "roof_slates_03",
+      "map": "rough",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/roof_slates_03/roof_slates_03_rough_2k.jpg",
+      "md5": "3e42485a10fe9ff894b2da4587146dc4",
+      "file": "roof_slates_03_rough.jpg"
+    }
+  ]
+}

@@ -11,7 +11,7 @@ class Texture
 public:
 	Texture();
 	virtual ~Texture();
-	HRESULT Create(const char* fileName);
+	HRESULT Create(const char* fileName, bool srgb = true);
 	HRESULT Create(DXGI_FORMAT format, UINT width, UINT height, const void* pData = nullptr);
 
 	UINT GetWidth() const;

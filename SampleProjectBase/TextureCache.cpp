@@ -12,16 +12,16 @@ namespace
 
 namespace TextureCache
 {
-	std::shared_ptr<Texture> Get(const char* path)
+	std::shared_ptr<Texture> Get(const char* path, bool srgb)
 	{
 		if (!path || !path[0]) return nullptr;
 
-		std::string key(path);
+		std::string key = std::string(path) + (srgb ? "|srgb" : "|linear");
 		auto it = g_cache.find(key);
 		if (it != g_cache.end()) return it->second;	// cache hit: no re-decode
 
 		auto tex = std::make_shared<Texture>();
-		if (FAILED(tex->Create(path))) return nullptr;	// don't cache a failed load
+		if (FAILED(tex->Create(path, srgb))) return nullptr;	// don't cache a failed load
 		g_cache[key] = tex;
 		return tex;
 	}

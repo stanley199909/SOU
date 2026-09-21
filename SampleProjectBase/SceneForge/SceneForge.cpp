@@ -1,4 +1,6 @@
-﻿#include "SceneForge.h"
+﻿#include "CottageRender.h"
+#include "OutdoorStage.h"
+#include "SceneForge.h"
 #include "DirectX.h"
 #include "MeshBuffer.h"
 #include "Shader.h"
@@ -171,7 +173,7 @@ void SceneForge::Init()
 	m_vtx.resize(Particles::MAX_SPARKS * 6);	// 火花描画の頂点バッファ(粒子上限×6頂点)
 
 	// 一人称プレイヤ: 砧の手前(−Z側)に立たせ、砧の方(+Z)を向かせる。走動速度を設定。
-	m_player.Init(DirectX::XMFLOAT3(0.0f, 0.0f, -2.0f), 0.0f);
+	m_player.Init(DirectX::XMFLOAT3(0.0f, m_walkFloorY, -2.0f), 0.0f);
 	m_player.SetMoveSpeed(m_walkSpeed);	// 単位/秒(歩き)。F1「Walk / Player」で調整
 
 	// 火花/余燼用パーティクルシェーダー(.hlsl → fxc → .cso をLoad)
@@ -393,8 +395,15 @@ void SceneForge::Init()
 
 	// 編集シーンで作った配置(Assets/stage_layout.txt)を反映。無ければ上の既定のまま。
 	// StCottage も普通のプロップとして round-trip する(編集シーンで大きさ/位置を決めれば此処が読む)。
+	for (const auto& e : OutdoorStage::Read()) {
+		LoadProp(e.key.c_str(),e.path.c_str(),"",1.0f,e.x,e.y,e.z,e.yaw,false);
+		for(auto& p:m_props) if(p.key==e.key) {p.scale=e.scale;p.pos[1]=e.y;p.groundSnap=false;}
+	}
 	LoadLayout();
+	CottageRender::Load();
 	LoadTuning();	// F1で調整したハンマー/カメラ値(forge_tuning.txt)を復元
+	// Layout/tuning must be loaded before assigning the walking spawn height.
+	m_player.Init(DirectX::XMFLOAT3(0.0f, m_walkFloorY, -2.0f), 0.0f);
 	SnapshotTuning();	// ↑復元直後の値を「起動時の姿」として記録(F8/ボタンでここへ戻せる)
 
 	SetupSteps();	// 工程(step)状態を生成し状態機へ登録(遷移は StartGame で開始)
@@ -459,7 +468,7 @@ void SceneForge::StartGame()
 	// ゲーム開始時は「走動モード」から。工坊を歩いて工位に着き、Eで鍛造に入る。
 	m_walkMode = true;
 	m_walkPitch = 0.0f;
-	m_player.Init(DirectX::XMFLOAT3(0.0f, 0.0f, -2.0f), 0.0f);	// 開始位置/向きを戻す
+	m_player.Init(DirectX::XMFLOAT3(0.0f, m_walkFloorY, -2.0f), 0.0f);	// 開始位置/向きを戻す
 	m_score    = 0;
 	m_heat     = 0.0f;
 	m_forging.Reset();		// 鉄を厚板・無傷・進捗0へ(目標形状も再生成)
@@ -868,6 +877,7 @@ void SceneForge::Update(float tick)
 
 void SceneForge::Draw()
 {
+    CottageRender::ClearExterior();
 	if (m_walkMode) ApplyWalkCamera();	// 走動: 玩家目線(Updateと同じ規約でDrawでも適用)
 	else            ApplyCamera();		// 工位: 固定カメラを適用(GetViewの前に)
 	DrawModelsTest();	// 先に不透明な3Dモデル(金床)を描く
