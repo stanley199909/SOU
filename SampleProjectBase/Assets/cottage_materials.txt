@@ -17,5 +17,8 @@ ambient 0.38 0.43 0.52 48.0
 window 0 170 285 28.4 38.4 0 0
 
 # Readable interior and daylight outside the real window opening.
-fill 0.95
+fill 4.0
 sky 0.45 0.65 0.95
+
+# Diffuse sky strength outside, independent of the indoor artistic fill.
+outdoor_fill 2.4

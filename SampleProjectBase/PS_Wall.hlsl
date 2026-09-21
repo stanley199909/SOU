@@ -25,6 +25,7 @@ cbuffer WallParam : register(b0)
     float4x4 worldToLocal;
     float4x4 lightVP;
     float4 shadow; // enabled, texel size, depth bias, world normal offset
+    float4 lighting; // x outdoor diffuse sky strength
 };
 static const float PI=3.14159265;
 static const float EPSILON=0.0001;
@@ -42,7 +43,8 @@ float3 DetailNormal(float3 n,float3 position,float2 uv)
     float invScale=rsqrt(max(max(dot(t,t),dot(b,b)),EPSILON));
     float3 map=normalMap.Sample(samp,uv).xyz*2-1;
     // nor_gl: +green follows increasing V in this derivative frame.
-    return normalize(t*invScale*map.x+b*invScale*map.y+n*map.z);
+    float3 detail=t*invScale*map.x+b*invScale*map.y+n*map.z;
+    return dot(detail,detail)>EPSILON?normalize(detail):n;
 }
 float3 BRDF(float3 base,float rough,float metal,float3 n,float3 v,float3 l)
 {
@@ -110,7 +112,7 @@ float4 main(PS_IN pin, bool front:SV_IsFrontFace) : SV_TARGET
     const float ROOM_HALF_WIDTH_CM=255, ROOM_HALF_DEPTH_CM=255, ROOM_RIDGE_CM=414;
     bool indoors=material.w<1.5 && abs(local.x)<ROOM_HALF_WIDTH_CM && abs(local.z)<ROOM_HALF_DEPTH_CM && local.y<ROOM_RIDGE_CM;
     float visibility=shadow.x>0.5?SunVisibility(pin.worldPos,geometryNormal):(indoors?WindowVisibility(pin.worldPos,l):1);
-    float fill=indoors?windowExtra.w:.8;
+    float fill=indoors?windowExtra.w:lighting.x;
     float3 col=base*ambient.rgb*fill*(1-material.z);
     [branch] if (visibility>0 && sun.w>0)
         col+=BRDF(base,rough,material.z,n,v,l)*sun.w*visibility;

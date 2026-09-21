@@ -3,6 +3,7 @@
 #include "DebugLog.h"
 
 #include <assimp/postprocess.h>
+#include <cmath>
 
 #if _MSC_VER >= 1920
 #ifdef _DEBUG
@@ -119,6 +120,35 @@ bool Model::Load(const char* file, float scaleBase, bool flip, bool simpleMode)
 		// 衝突用メッシュ(UCX_)は描画しない=破図(Z-fighting)防止。全モデル共通。
 		if (IsCollisionMeshName(m_pScene->mMeshes[i]->mName.C_Str())) continue;
 
+        // Some FBX files contain a normal stream filled with zero vectors.
+        // Reconstruct only invalid entries from area-weighted triangle normals;
+        // preserve valid authored normals and their existing hard/smooth seams.
+        const aiMesh* sourceMesh = m_pScene->mMeshes[i];
+        constexpr float kMinimumNormalLengthSquared = 1e-12f;
+        auto validNormal = [kMinimumNormalLengthSquared](const aiVector3D& n) {
+            return std::isfinite(n.x) && std::isfinite(n.y) && std::isfinite(n.z)
+                && n.SquareLength() > kMinimumNormalLengthSquared;
+        };
+        std::vector<aiVector3D> repairedNormals;
+        bool needsRepair = !sourceMesh->HasNormals();
+        if (!needsRepair) for (unsigned int v=0;v<sourceMesh->mNumVertices;++v)
+            if (!validNormal(sourceMesh->mNormals[v])) { needsRepair=true; break; }
+        if (needsRepair)
+        {
+            repairedNormals.resize(sourceMesh->mNumVertices);
+            for (unsigned int f=0;f<sourceMesh->mNumFaces;++f)
+            {
+                const aiFace& face=sourceMesh->mFaces[f];
+                if (face.mNumIndices!=3) continue;
+                const auto a=face.mIndices[0], c=face.mIndices[1], d=face.mIndices[2];
+                const aiVector3D normal=(sourceMesh->mVertices[c]-sourceMesh->mVertices[a])
+                    ^ (sourceMesh->mVertices[d]-sourceMesh->mVertices[a]);
+                if (!validNormal(normal)) continue;
+                repairedNormals[a]+=normal; repairedNormals[c]+=normal; repairedNormals[d]+=normal;
+            }
+            for (auto& n:repairedNormals)
+                if (validNormal(n)) n.Normalize(); else n=aiVector3D(0,1,0);
+        }
 		Mesh mesh = {};
 
 		// 頂点の作成
@@ -132,6 +162,7 @@ bool Model::Load(const char* file, float scaleBase, bool flip, bool simpleMode)
 				m_pScene->mMeshes[i]->mTextureCoords[0][j] : zero;
 			aiVector3D normal = m_pScene->mMeshes[i]->HasNormals() ?
 				m_pScene->mMeshes[i]->mNormals[j] : zero;
+            if (!validNormal(normal)) normal = repairedNormals[j];
 			// 値を設定
 			vtx[j] = {
 				DirectX::XMFLOAT3(pos.x, pos.y, pos.z),

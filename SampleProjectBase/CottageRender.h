@@ -40,6 +40,7 @@ struct Settings
     // Direction points from the surface toward the sun. w is radiance.
     XMFLOAT4 sun{0.25f,0.60f,0.76f,3.0f};
     XMFLOAT4 ambient{0.38f,0.43f,0.52f,16.0f}; // rgb sky fill, w fire intensity
+    float outdoorFill=2.4f; // Readable diffuse sky light outdoors.
     XMFLOAT4 exteriorSky{0.45f,0.65f,0.95f,1.0f};
     // Source FBX units (centimeters), measured from the glass pane.
     XMFLOAT4 window{0,170,285,28.4f}; // xyz center, w half width
@@ -67,6 +68,7 @@ inline void Load()
                         m = next;
             }
         }
+        else if (kind == "outdoor_fill") row >> s.outdoorFill;
         else if (kind == "fill") row >> s.windowExtra.w;
         else if (kind == "sky") row >> s.exteriorSky.x >> s.exteriorSky.y >> s.exteriorSky.z;
         else if (kind == "sun") row >> s.sun.x >> s.sun.y >> s.sun.z >> s.sun.w;
@@ -118,8 +120,9 @@ struct Params
     XMFLOAT4X4 worldToLocal;
     XMFLOAT4X4 lightVP;
     XMFLOAT4 shadow;
+    XMFLOAT4 lighting;
 };
-static_assert(sizeof(Params)==272, "PS_Wall constant buffer layout");
+static_assert(sizeof(Params)==288, "PS_Wall constant buffer layout");
 inline void Draw(Model* model, FXMMATRIX world, CameraBase* camera,
                  VertexShader* vs, PixelShader* ps, const float* firePos, bool glassPass, bool outdoor=false)
 {
@@ -140,6 +143,7 @@ inline void Draw(Model* model, FXMMATRIX world, CameraBase* camera,
     params.eye={eye.x,eye.y,eye.z,uvScale};
     params.sun=settings.sun; params.ambient=settings.ambient;
     params.fire={firePos[0],firePos[1],firePos[2],settings.ambient.w};
+    params.lighting={settings.outdoorFill,0,0,0};
     params.lightVP=SunStage::Data().lightVP;
     params.shadow={SunStage::Data().hasShadow?1.0f:0.0f,1.0f/SunStage::ShadowSize,SunStage::ShadowDepthBias,SunStage::ReceiverOffset};
     params.window=settings.window; params.windowExtra=settings.windowExtra;
@@ -205,6 +209,7 @@ inline bool Save()
     out << "ambient " << s.ambient.x << ' ' << s.ambient.y << ' ' << s.ambient.z << ' ' << s.ambient.w << '\n';
     out << "window " << s.window.x << ' ' << s.window.y << ' ' << s.window.z << ' '
         << s.window.w << ' ' << s.windowExtra.x << ' ' << s.windowExtra.y << ' ' << s.windowExtra.z << '\n';
+    out << "outdoor_fill " << s.outdoorFill << '\n';
     out << "fill " << s.windowExtra.w << '\n';
     out << "sky " << s.exteriorSky.x << ' ' << s.exteriorSky.y << ' ' << s.exteriorSky.z << '\n';
     out.flush();
@@ -221,6 +226,7 @@ inline void Controls()
     ImGui::ColorEdit3("Sky fill color",&s.ambient.x);
     constexpr float kMaxFill=8.0f;
     ImGui::SliderFloat("Indoor fill strength",&s.windowExtra.w,0.0f,kMaxFill);
+    ImGui::SliderFloat("Outdoor fill strength",&s.outdoorFill,0.0f,kMaxFill);
     ImGui::ColorEdit3("Exterior sky",&s.exteriorSky.x);
     bool vsync=GetVSyncEnabled();
     if (ImGui::Checkbox("VSync (limit GPU load)",&vsync)) SetVSyncEnabled(vsync);

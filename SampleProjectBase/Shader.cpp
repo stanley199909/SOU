@@ -117,7 +117,20 @@ HRESULT Shader::Make(void* pData, UINT size)
 		if (FAILED(hr)) { return hr; }
 	}
 	// テクスチャ領域作成
-	m_pTextures.resize(shaderDesc.BoundResources, nullptr);
+	// Resource count is NOT the highest texture register: optimized shaders may
+    // retain t4 while removing t1/t2. Allocate by reflected binding range.
+    UINT textureSlots = 0;
+    for (UINT i = 0; i < shaderDesc.BoundResources; ++i)
+    {
+        D3D11_SHADER_INPUT_BIND_DESC binding = {};
+        if (SUCCEEDED(pReflection->GetResourceBindingDesc(i, &binding)) &&
+            (binding.Type == D3D_SIT_TEXTURE || binding.Type == D3D_SIT_STRUCTURED || binding.Type == D3D_SIT_BYTEADDRESS))
+        {
+            const UINT end = binding.BindPoint + binding.BindCount;
+            if (end > textureSlots) textureSlots = end;
+        }
+    }
+    m_pTextures.resize(textureSlots, nullptr);
 
 	return MakeShader(pData, size);
 }
