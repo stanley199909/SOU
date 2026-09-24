@@ -178,17 +178,6 @@ void SceneForge::DrawPlayUI()
 		dl->AddRect(ImVec2(bx0, by), ImVec2(bx1, by + bh), IM_COL32(200, 200, 200, 120), 3.0f);
 	}
 
-	// 廃件率(左上, SHAPE MATCHの下)。過熱/冷打/完成済みの段を叩くと溜まり、満ちると失敗。減らない。
-	{
-		float pct = m_spoil; if (pct > 1.0f) pct = 1.0f;
-		sprintf_s(sb, sizeof(sb), "SPOIL  %d%%", (int)(pct * 100));
-		dl->AddText(ImVec2(40, 80), IM_COL32(255, 150, 120, 255), sb);
-		float bx0 = 130.0f, bx1 = 300.0f, by = 84.0f, bh = 10.0f;
-		dl->AddRectFilled(ImVec2(bx0, by), ImVec2(bx1, by + bh), IM_COL32(30, 30, 34, 220), 2.0f);
-		ImU32 sc = (pct > 0.6f) ? IM_COL32(255, 70, 50, 255) : IM_COL32(230, 140, 60, 255);
-		dl->AddRectFilled(ImVec2(bx0, by), ImVec2(bx0 + (bx1 - bx0) * pct, by + bh), sc, 2.0f);
-	}
-
 	// KCD式: 「叩く場所」は指示しない。誤打時だけ主人公の独白(m_popupText)で知らせる。
 	//   デバッグ時のみ Pキーで瞄準区域の可視化ON(状態表示)。
 	if (m_showAimHi)
@@ -204,12 +193,13 @@ void SceneForge::DrawPlayUI()
 		0.93f, 1.0f, IM_COL32(255, 255, 255, 170));
 }
 
-//--- 出来栄え 0..1: 形の一致度と打撃品質の平均を重み合成し、廃件率を罰として引く。
+//--- 出来栄え 0..1: 形の一致度と打撃品質の平均を重み合成する。
+//    誤打(冷打/過熱/完成済みを叩く)は品質0の打撃として平均を下げる=罰でなく「腕前」として自然に効く。
 float SceneForge::GradeScore() const
 {
 	// 打撃品質の平均(1打も打たずに淬火した場合は0扱い=除算回避)。
 	float qAvg = (m_strikeCount > 0) ? (m_qualitySum / (float)m_strikeCount) : 0.0f;
-	float s = GRADE_W_MATCH * m_match + GRADE_W_QUALITY * qAvg - GRADE_SPOIL_PEN * m_spoil;
+	float s = GRADE_W_MATCH * m_match + GRADE_W_QUALITY * qAvg;
 	if (s < 0.0f) s = 0.0f;
 	if (s > 1.0f) s = 1.0f;
 	return s;
@@ -255,20 +245,6 @@ void SceneForge::DrawResultUI()
 	CenterText("PRESS  SPACE  TO  RETURN", 0.76f, 0.80f, IM_COL32(90, 55, 30, 255), body);
 }
 
-//--- 廃件(失敗)画面: 鋼を叩き損じて台無しにした。分数は出すが低評価。
-void SceneForge::DrawGameOverUI()
-{
-	ImFont* title = DebugUI::FontTitle();
-	ImFont* body  = DebugUI::FontBody();
-	float p = 0.5f + 0.5f * sinf(m_time * 6.0f);
-	CenterText("RUINED",               0.32f, 1.35f, IM_COL32(200, 50, 40, (int)(180 + p * 75)), title);
-	CenterText("You spoiled the steel", 0.46f, 0.95f, IM_COL32(230, 160, 150, 255), body);
-	char buf[64];
-	sprintf_s(buf, sizeof(buf), "SCORE   %d", m_score);
-	CenterText(buf,                    0.56f, 0.95f, IM_COL32(235, 235, 235, 255), body);
-	CenterText("PRESS  SPACE  TO  RETRY", 0.68f, 0.85f, IM_COL32(235, 235, 235, 220), body);
-}
-
 void SceneForge::DrawUI()
 {
 	// 配置/材質/炭火/カメラの編集はすべて SCENE_STAGE_EDITOR に移設。
@@ -279,7 +255,6 @@ void SceneForge::DrawUI()
 	case GAME_TITLE:  DrawTitleUI();  break;
 	case GAME_PLAY:   DrawPlayUI();   break;
 	case GAME_RESULT: DrawResultUI(); break;
-	case GAME_OVER:   DrawGameOverUI(); break;
 	}
 
 	// F1中: 調整パネルは「1つの窓 + 折叠見出し(CollapsingHeader)」にまとめる。

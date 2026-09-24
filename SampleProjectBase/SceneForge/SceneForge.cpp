@@ -497,7 +497,6 @@ void SceneForge::StartGame()
 	m_sizzleTimer  = 0.0f;
 	m_qualitySum   = 0.0f;
 	m_strikeCount  = 0;
-	m_spoil        = 0.0f;		// 廃件率リセット
 
 	// 工程(step)状態機を最初の工程から開始する。
 	//   遷移先の名前は「配方(m_recipe)の順序」から取る=データ駆動(chase は名前を状態に直書きだった)。
@@ -691,16 +690,6 @@ void SceneForge::FinishGame()
 	Audio::PlayLoop(Audio::BGM_RESULT, 0.5f);	// 結果画面BGM
 	m_state = GAME_RESULT;
 	m_walkMode = false;	// 結果画面は通常カメラで見せる(走動カメラを解除)
-}
-
-void SceneForge::GameOverGame()
-{
-	// PLAY中の音を全て止め、廃件の合図を一回。以後は静寂で失敗を際立たせる。
-	Audio::Stop(Audio::BGM_PLAY);		// ゲーム中BGMを止める
-	if (m_heatSndOn) { Audio::Stop(Audio::SE_FORGE_LOOP); m_heatSndOn = false; }
-	Audio::Play(Audio::SE_FAIL, 0.9f);	// 廃件(失敗)の合図
-	m_state = GAME_OVER;				// 分数はそのまま結果画面で見せる
-	m_walkMode = false;					// 失敗画面も通常カメラで見せる(走動カメラを解除)
 }
 
 //--- タイトル: 雰囲気で自動的に火花を出しつつ、SPACEで開始
@@ -903,20 +892,20 @@ void SceneForge::DoStrike()
 	// 打撃=錘を接触位置(lift=0)まで沈め、反発の上向き初速をバネに与える(以後は物理で跳ね返る)
 	m_hammer.Strike();
 
-	// 評価 & 廃件率: KCD式に「指示せず、誤りだけ知らせる」。負向フィードバックは日本語(主人公の独白)。
-	//   廃件率は不可逆(減らない)。過熱/冷打/完成済みの区域を叩く=誤り→廃件率↑。
+	// 評価: KCD式に「指示せず、誤りだけ知らせる」。負向フィードバックは日本語(主人公の独白)。
+	//   過熱/冷打/完成済みの区域を叩く=誤り→独白で知らせるだけ(罰は無し=誰でも最後まで遊べる)。
 	//   ForgingSim が返した「鉄がどうなったか」で分岐する(cold/over/完成済みの再判定は不要)。
 	const char* label; unsigned int col; float quality = 0.0f;
 	// u8"" は C++20 では char8_t。ImGuiはUTF-8バイトを要求するので(const char*)へ再解釈する。
 	switch (outcome)
 	{
 	case ForgingSim::StrikeOutcome::ColdHit:
-		label = (const char*)u8"まだ冷たい…赤くなるまで熱して"; col = IM_COL32(120, 170, 255, 255); m_spoil += SPOIL_COLD; break;
+		label = (const char*)u8"まだ冷たい…赤くなるまで熱して"; col = IM_COL32(120, 170, 255, 255); break;
 	case ForgingSim::StrikeOutcome::OverHit:
-		label = (const char*)u8"熱しすぎだ！鋼が焼ける";       col = IM_COL32(255, 120, 120, 255); m_spoil += SPOIL_BURN; break;
+		label = (const char*)u8"熱しすぎだ！鋼が焼ける";       col = IM_COL32(255, 120, 120, 255); break;
 	case ForgingSim::StrikeOutcome::AlreadyDone:
-		label = (const char*)u8"ここはもう完成済みだ";         col = IM_COL32(255, 200,  90, 255); m_spoil += SPOIL_WASTE; break;
-	default:	// Shaped = 適温 & 未完成の区域に命中 = 成功。得点のみ(廃件率は回復しない)
+		label = (const char*)u8"ここはもう完成済みだ";         col = IM_COL32(255, 200,  90, 255); break;
+	default:	// Shaped = 適温 & 未完成の区域に命中 = 成功。得点のみ
 		if      (power > POWER_PERFECT) { label = "PERFECT!"; col = IM_COL32(255, 220, 120, 255); quality = QUALITY_PERFECT; }
 		else if (power > POWER_GOOD)    { label = "GOOD";     col = IM_COL32(180, 255, 150, 255); quality = QUALITY_GOOD; }
 		else                            { label = "WEAK";     col = IM_COL32(200, 200, 200, 255); quality = QUALITY_WEAK; }
@@ -926,16 +915,12 @@ void SceneForge::DoStrike()
 		break;
 	}
 	m_strikeCount++;
-	if (m_spoil > 1.0f) m_spoil = 1.0f;	// 上限のみ(下限クランプ不要=減らないので)
 
 	// ポップアップ表示
 	if (inGroove && quality > 0.0f) sprintf_s(m_popupText, sizeof(m_popupText), "%s  (in rhythm)", label);
 	else                            strcpy_s(m_popupText, sizeof(m_popupText), label);
 	m_popupLife = POPUP_LIFE;
 	m_popupCol  = col;
-
-	// 廃件槽が満ちたら失敗 → GameOver
-	if (m_spoil >= 1.0f) GameOverGame();
 }
 
 //--- 結果: SPACEでタイトルへ戻る
@@ -946,18 +931,6 @@ void SceneForge::UpdateResult(float /*tick*/)
 		m_fade.Transition([this] {
 			m_state = GAME_TITLE;
 			Audio::Stop(Audio::BGM_RESULT);				// 結果BGMを止める
-			Audio::PlayLoop(Audio::BGM_TITLE, 0.40f);	// タイトルBGMを再開
-		});
-	}
-}
-
-//--- 廃件(失敗): SPACEでタイトルへ戻る(=もう一度挑戦)
-void SceneForge::UpdateGameOver(float /*tick*/)
-{
-	if (IsKeyTrigger(VK_SPACE) && !m_fade.IsBusy())
-	{
-		m_fade.Transition([this] {
-			m_state = GAME_TITLE;
 			Audio::PlayLoop(Audio::BGM_TITLE, 0.40f);	// タイトルBGMを再開
 		});
 	}
@@ -1037,7 +1010,6 @@ void SceneForge::Update(float tick)
 	case GAME_TITLE:  UpdateTitle(tick);  break;
 	case GAME_PLAY:   UpdatePlay(tick);   break;
 	case GAME_RESULT: UpdateResult(tick); break;
-	case GAME_OVER:   UpdateGameOver(tick); break;
 	}
 
 	// 火花・余燼の粒子シミュ(重力/バウンド, 浮力/上昇/淡出)はどの状態でも動かす。

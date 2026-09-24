@@ -19,6 +19,7 @@
 #include "Audio.h"
 #include "PostProcess.h"
 #include "AimSystem.h"
+#include "Lerp.h"
 #include <cstdlib>
 #include <cmath>
 #include <cstdio>
@@ -220,6 +221,22 @@ void SceneForge::LoadWeaponStages()
 
 	if (m_wpStage.size() < 2 || m_wpN <= 0) return;	// 最低2段必要
 
+	// 厚み軸 = 長軸以外の2軸のうち、完成形(stage_final)で一番薄い軸(刃の表裏を貫く方向)。
+	// 粗坯(鉄条)は幅と厚みが近く紛らわしいので、薄さがはっきりしている完成形で判定する。
+	{
+		XMFLOAT3 fmin(1e9f, 1e9f, 1e9f), fmax(-1e9f, -1e9f, -1e9f);
+		for (auto& p : m_wpStage.back().pos)
+		{
+			fmin.x = fminf(fmin.x, p.x); fmin.y = fminf(fmin.y, p.y); fmin.z = fminf(fmin.z, p.z);
+			fmax.x = fmaxf(fmax.x, p.x); fmax.y = fmaxf(fmax.y, p.y); fmax.z = fmaxf(fmax.z, p.z);
+		}
+		const float ext[3] = { fmax.x - fmin.x, fmax.y - fmin.y, fmax.z - fmin.z };
+		const int longAx = AimSystem::LongAxis(m_wpMin, m_wpMax);
+		m_wpThickAxis = -1;
+		for (int a = 0; a < 3; ++a)
+			if (a != longAx && (m_wpThickAxis < 0 || ext[a] < ext[m_wpThickAxis])) m_wpThickAxis = a;
+	}
+
 	m_wpVtx.resize(m_wpN);
 	MeshBuffer::Description d = {};
 	d.pVtx = m_wpVtx.data(); d.vtxSize = sizeof(WpVtx); d.vtxCount = (UINT)m_wpN;
@@ -284,12 +301,38 @@ void SceneForge::BuildWeaponMorph()
 	const float pulse   = 0.5f + 0.5f * sinf(m_time * 8.0f);
 	XMFLOAT4 heat = HeatRGB(m_heat, 0.0f);
 
+	// 進捗 p(0..1) → 段チェーン(stage_0..final)上の頂点 i の補間位置/法線(ローカル)。
+	auto morphAt = [&](int i, float p, XMVECTOR& outPos, XMVECTOR& outNrm)
+	{
+		if (p < 0) p = 0; if (p > 1) p = 1;
+		float g = p * (ns - 1);
+		int   k = (int)g; if (k < 0) k = 0; if (k > ns - 2) k = ns - 2;
+		float t = g - k; if (t < 0) t = 0; if (t > 1) t = 1;
+		const WpStage& A = m_wpStage[k];
+		const WpStage& B = m_wpStage[k + 1];
+		outPos = XMVectorLerp(XMLoadFloat3(&A.pos[i]), XMLoadFloat3(&B.pos[i]), t);
+		outNrm = XMVectorLerp(XMLoadFloat3(&A.nrm[i]), XMLoadFloat3(&B.nrm[i]), t);
+	};
+
+	// ローカル厚み軸の「+側の面」が表(面0)か裏(面1)か。翻面回転を除いた向き付けだけで
+	// +軸を回し、上(+Y)を向けば +側=表(面0=角0で上を向く面)。
+	const int ta = m_wpThickAxis;
+	bool plusIsFront = true;
+	if (ta >= 0)
+	{
+		XMVECTOR axis = XMVectorSet(ta == 0 ? 1.0f : 0.0f, ta == 1 ? 1.0f : 0.0f, ta == 2 ? 1.0f : 0.0f, 0.0f);
+		XMVECTOR up = XMVector3TransformNormal(axis, XMMatrixRotationRollPitchYaw(m_wpPitch, m_wpYaw, m_wpRoll));
+		plusIsFront = (XMVectorGetY(up) >= 0.0f);
+	}
+	const float* mn = &m_wpMin.x;	// stage0 AABB を軸番号で引くための別名
+	const float* mx = &m_wpMax.x;
+
 	for (int i = 0; i < m_wpN; ++i)
 	{
 		// 頂点のローカル長手位置 → 区域(AimSystemと同一規約)。境界は隣とブレンドして滑らかに。
 		const XMFLOAT3& a0 = m_wpStage[0].pos[i];
 		int   thisSeg;
-		float p;
+		float pFront, pBack;	// この頂点位置での表(面0)/裏(面1)それぞれの進捗
 		if (playing)
 		{
 			float sc = AimSystem::SegCoordLocal(a0, m_wpMin, m_wpMax, NSEG);	// 0..NSEG
@@ -298,24 +341,41 @@ void SceneForge::BuildWeaponMorph()
 			float ft = fpos - s0;
 			int   sa = s0 < 0 ? 0 : (s0 >= NSEG ? NSEG - 1 : s0);
 			int   sb = (s0 + 1) < 0 ? 0 : ((s0 + 1) >= NSEG ? NSEG - 1 : (s0 + 1));
-			p = m_forging.SegProg(sa) + (m_forging.SegProg(sb) - m_forging.SegProg(sa)) * ft;
+			auto segBlend = [&](int side) {
+				float a = m_forging.SegProgOf(side, sa), b = m_forging.SegProgOf(side, sb);
+				return a + (b - a) * ft;
+			};
+			pFront = segBlend(0);
+			pBack  = segBlend(1);
 			thisSeg = (int)sc; if (thisSeg >= NSEG) thisSeg = NSEG - 1;
 		}
-		else { p = m_forgeProg; thisSeg = -1; }
-		if (p < 0) p = 0; if (p > 1) p = 1;
+		else { pFront = pBack = m_forgeProg; thisSeg = -1; }
 
-		// 進捗 p → 段チェーン(stage_0..final)の補間位置
-		float g = p * (ns - 1);
-		int   k = (int)g; if (k < 0) k = 0; if (k > ns - 2) k = ns - 2;
-		float t = g - k; if (t < 0) t = 0; if (t > 1) t = 1;
-		const WpStage& A = m_wpStage[k];
-		const WpStage& B = m_wpStage[k + 1];
+		// ★軸分解モーフ: 輪郭(長さ/幅)は両面で共有 → 両面の平均進捗で動かす(翻しても輪郭が残る)。
+		//   厚み方向は「この頂点が属する面」の進捗で動かす(叩いた面だけ斜面が付き、裏はまだ平ら)。
+		const float pOutline = (pFront + pBack) * 0.5f;
+		float pFace = pOutline;
+		if (ta >= 0)
+		{
+			// 頂点の厚み座標を stage0 の中心面基準で -1..+1 に正規化 → +側の面に属する重み。
+			const float c  = (mn[ta] + mx[ta]) * 0.5f;
+			const float hh = (mx[ta] - mn[ta]) * 0.5f;
+			const float dn = (hh > 1e-6f) ? ((&a0.x)[ta] - c) / hh : 0.0f;
+			const float wPlus = Lerp::SmoothStep(0.5f + dn / FACE_BLEND_BAND);	// 中心面付近(刃先・側面)は両面を混ぜる
+			const float pPlus  = plusIsFront ? pFront : pBack;
+			const float pMinus = plusIsFront ? pBack  : pFront;
+			pFace = pMinus + (pPlus - pMinus) * wPlus;
+		}
 
-		XMVECTOR pa = XMLoadFloat3(&A.pos[i]), pb = XMLoadFloat3(&B.pos[i]);
-		XMVECTOR pp = XMVectorLerp(pa, pb, t);
-		pp = XMVector3TransformCoord(pp, world);
-		XMVECTOR na = XMLoadFloat3(&A.nrm[i]), nb = XMLoadFloat3(&B.nrm[i]);
-		XMVECTOR n = XMVector3Normalize(XMVector3TransformNormal(XMVectorLerp(na, nb, t), rot));
+		XMVECTOR posO, nrmO, posF, nrmF;
+		morphAt(i, pOutline, posO, nrmO);
+		morphAt(i, pFace,    posF, nrmF);
+		// 輪郭側の位置を基に、厚み軸の成分だけ面側の値に差し替える。
+		XMFLOAT3 lp; XMStoreFloat3(&lp, posO);
+		if (ta >= 0) { XMFLOAT3 lf; XMStoreFloat3(&lf, posF); (&lp.x)[ta] = (&lf.x)[ta]; }
+		XMVECTOR pp = XMVector3TransformCoord(XMLoadFloat3(&lp), world);
+		// 法線は面側を使う: 陰影に効くのは表面の傾き(斜面の有無)で、それは厚み方向の変形が決める。
+		XMVECTOR n = XMVector3Normalize(XMVector3TransformNormal(ta >= 0 ? nrmF : nrmO, rot));
 		XMStoreFloat3(&m_wpVtx[i].pos, pp);
 		XMStoreFloat3(&m_wpVtx[i].nrm, n);
 		m_wpVtx[i].uv = m_wpStage[0].uv[i];		// UVは全段共通(morphで不変)

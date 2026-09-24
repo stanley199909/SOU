@@ -228,25 +228,6 @@ namespace
 			}
 			break;
 		}
-		case Audio::SE_FAIL:
-		{
-			// 廃件の合図: 下行する2音(沈んだ)。
-			const float NOTE[2] = { 330.0f, 220.0f };	// E4→A3(下降)
-			const float NOTE_DUR = 0.28f;
-			const float LEVEL    = 0.30f;
-			int per = (int)(sr * NOTE_DUR);
-			w.resize(per * 2);
-			for (int k = 0; k < 2; ++k)
-			for (int i = 0; i < per; ++i)
-			{
-				float t   = (float)i / sr;
-				float env = (1.0f - expf(-t * 40.0f)) * expf(-t * 3.0f);
-				float v   = sinf(6.2832f * NOTE[k] * t);
-				v += 0.5f * sinf(6.2832f * NOTE[k] * 0.5f * t);	// 一オクターブ下=重み
-				w[k * per + i] = v * env * LEVEL;
-			}
-			break;
-		}
 		default: break;
 		}
 		ToPCM16(w, s.data);
@@ -282,7 +263,6 @@ namespace Audio
 			"Assets/Sound/SE/quench.wav",		// SE_QUENCH(無ければ合成音)
 			"Assets/Sound/SE/forge_loop.wav",	// SE_FORGE_LOOP(無ければ合成音)
 			"Assets/Sound/SE/success.wav",		// SE_SUCCESS(無ければ合成音)
-			"Assets/Sound/SE/fail.wav",			// SE_FAIL(無ければ合成音)
 			"Assets/Sound/BGM/title_bgm.wav",	// BGM_TITLE(工場環境音。無ければ無音)
 			"Assets/Sound/BGM/play_bgm.wav",	// BGM_PLAY(medieval。無ければ無音)
 			"Assets/Sound/BGM/result_bgm.wav",	// BGM_RESULT(無ければ無音)

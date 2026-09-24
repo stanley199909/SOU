@@ -7,7 +7,7 @@
 //
 // Boundary: the player's ACTION (swinging the hammer) lives in the forge step;
 // this class only answers "given a strike, how does the iron react". Game rules
-// (scoring, rhythm, spoil, feedback) stay in the scene and are driven by the
+// (scoring, rhythm, feedback) stay in the scene and are driven by the
 // StrikeOutcome this returns.
 //
 // Grid: i = length (Z, 0 = tang .. NL-1 = tip), j = width (X, centre = ridge).
@@ -52,6 +52,7 @@ public:
     float Height(int i, int j) const { return m_h[m_side][i][j]; }
     float Damage(int i, int j) const { return m_dmgF[m_side][i][j]; }
     float SegProg(int s)       const { return m_segProg[m_side][s]; }
+    float SegProgOf(int side, int s) const { return m_segProg[side ? 1 : 0][s]; } // a specific face (renderer needs both)
     float Start()              const { return m_hStart; }
     bool  SegDone(int s)       const { return m_segProg[m_side][s] >= SEG_DONE; }
     bool  BothSidesDone()      const; // every segment of BOTH faces is shaped (ends the Forge step)

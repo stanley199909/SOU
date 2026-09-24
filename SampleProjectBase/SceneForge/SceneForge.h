@@ -48,8 +48,8 @@ private:
 	{
 		GAME_TITLE,		// タイトル画面
 		GAME_PLAY,		// 鍛造中
-		GAME_RESULT,	// 結果表示(成功)
-		GAME_OVER,		// 廃件(失敗)
+		GAME_RESULT,	// 結果表示(完成)
+		// ※失敗(廃件/GAME_OVER)は就職版では設けない=全員が最後まで鍛造を体験できる様に(§8 決定事項5)。
 	};
 
 	// 火花/余燼の粒子型は Physics/Particles が持つ(Particles::Particle)。
@@ -70,26 +70,19 @@ private:
 	void UpdateTitle(float tick);
 	void UpdatePlay(float tick);
 	void UpdateResult(float tick);
-	void UpdateGameOver(float tick);
 
 	//--- 状態ごとのUI
 	void DrawTitleUI();
 	void DrawPlayUI();
 	void DrawResultUI();
-	void DrawGameOverUI();
-	void DrawParchmentPanel(float yCenter, float heightRatio);	// 結果/失敗の下地(羊皮紙)
+	void DrawParchmentPanel(float yCenter, float heightRatio);	// 結果画面の下地(羊皮紙)
 
 	//--- ゲーム進行
 	void StartGame();	// タイトル → 鍛造開始
-	void FinishGame();	// 鍛造完了 → 結果へ(成功)
-	void GameOverGame();// 廃件 → GameOverへ(失敗)
+	void FinishGame();	// 鍛造完了 → 結果へ
 
-	//--- 廃件槽(失误で満ちると失敗)。KCD式: 「叩く場所」は指示しない。誤打だけ負向で知らせる。
-	//    廃件率 = 不可逆。良い打撃でも減らない。満(1.0)で武器が廃棄=GameOver。
-	float m_spoil   = 0.0f;			// 廃件率 0..1(過熱/冷打/完成済みの段を叩く=無用打撃で増える。減らない)
-	static constexpr float SPOIL_BURN  = 0.10f;	// 過熱打(焼け)      … 1打で+10%
-	static constexpr float SPOIL_COLD  = 0.05f;	// 冷打(赤くない鋼)  … 1打で+5%(開始時は冷たいので軽め)
-	static constexpr float SPOIL_WASTE = 0.08f;	// 無用打撃(完成段をまた叩く) … 1打で+8%
+	// KCD式: 「叩く場所」は指示しない。誤打(冷打/過熱/完成済みの段)は「検知して独白で知らせる」だけ。
+	//   罰(廃件率の累積→失敗)は無し。検知ロジックは DoStrike の StrikeOutcome 分岐に残す。
 	// 瞄準区域の可視化(デバッグ用)。既定OFF。Pキーでトグル。
 	bool  m_showAimHi = false;
 
@@ -235,6 +228,10 @@ private:
 	// 照準している区域番号。AimSystem(射線×区域ボックス)が決めた値をそのまま返す。
 	int   AimSeg() const { return m_aimSeg; }
 	DirectX::XMFLOAT3 m_wpMin = { 0,0,0 }, m_wpMax = { 0,0,0 };	// stage0のローカルAABB(配置用)
+	//--- 両面の形の分解(軸分解モーフ): 輪郭(長さ/幅)は両面で共有=両面進捗の平均、
+	//    厚み方向だけは各面が自分の進捗で動く(叩いた面だけ刃の斜面が付く)。
+	int   m_wpThickAxis = -1;					// 刃の表裏を貫くローカル軸(0=x,1=y,2=z)。Loadで完成形から判定
+	static constexpr float FACE_BLEND_BAND = 1.0f;	// 表/裏の面の混ぜ幅(厚みの正規化座標)。小=境目が急
 	//--- 配置調整(F1スライダ。向き/大きさをここで合わせて焼き込む)
 	float m_wpScale = 1.0f;						// 追加スケール倍率(AABBフィットにさらに掛ける)
 	float m_wpYaw = 0.0f, m_wpPitch = 0.0f, m_wpRoll = 0.0f;	// 向き(0=前後/屏幕奥行き。90°で左右横向き)
@@ -453,13 +450,12 @@ private:
 	static constexpr int   SCORE_PER_QUALITY = 100;	// 品質1.0あたりの得点
 	static constexpr float POPUP_LIFE = 0.8f;		// 打撃フィードバック文字の表示時間(秒)
 
-	//--- 結果評価(S/A/B/C): 完成度・打撃品質・廃件率を1本の「出来栄え」0..1へ合成し、閾値で等級化。
+	//--- 結果評価(S/A/B/C): 完成度・打撃品質を1本の「出来栄え」0..1へ合成し、閾値で等級化。
 	//    「注定成形」ゲームなので形は必ず完成に近づく→評価は「どれだけ綺麗に打てたか」を主にする。
-	float GradeScore() const;		// 出来栄え 0..1(=形の一致・打撃品質・廃件率の合成)
+	float GradeScore() const;		// 出来栄え 0..1(=形の一致・打撃品質の合成)
 	char  GradeLetter() const;		// GradeScore を S/A/B/C に量子化
 	static constexpr float GRADE_W_MATCH   = 0.45f;	// 出来栄えに占める「形の一致度」の重み
 	static constexpr float GRADE_W_QUALITY = 0.55f;	// 同「打撃品質の平均」の重み(綺麗な打鉄を主に評価)
-	static constexpr float GRADE_SPOIL_PEN = 0.60f;	// 廃件率1.0あたりで出来栄えから差し引く量(罰)
 	static constexpr float GRADE_S = 0.90f;	// この出来栄え以上で S
 	static constexpr float GRADE_A = 0.75f;	// 〃 A
 	static constexpr float GRADE_B = 0.55f;	// 〃 B (未満は C)
