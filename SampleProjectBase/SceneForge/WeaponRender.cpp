@@ -238,6 +238,19 @@ void SceneForge::LoadWeaponStages()
 
 //--- 武器ローカル→ワールドのフィット変換。照準(AimSystem)と描画(BuildWeaponMorph)で共用し、
 //    両者が必ず同じ配置を見るようにする(照準と見た目のズレを原理的に無くす)。
+//--- 翻面回転: 刃の「長軸」まわりに m_flipAngle だけ回す。長軸は stage0 AABB の最長辺
+//    (AimSystem::LongAxis と同一規約=段分割と一致)。中心を原点に寄せた後に掛けるので、
+//    刃はその場で裏返り、位置はずれない。0=表, π=裏。
+XMMATRIX SceneForge::WeaponSpin() const
+{
+	switch (AimSystem::LongAxis(m_wpMin, m_wpMax))
+	{
+	case 0:  return XMMatrixRotationX(m_flipAngle);
+	case 1:  return XMMatrixRotationY(m_flipAngle);
+	default: return XMMatrixRotationZ(m_flipAngle);
+	}
+}
+
 XMMATRIX SceneForge::WeaponWorld() const
 {
 	float ex = m_wpMax.x - m_wpMin.x, ey = m_wpMax.y - m_wpMin.y, ez = m_wpMax.z - m_wpMin.z;
@@ -247,6 +260,7 @@ XMMATRIX SceneForge::WeaponWorld() const
 	return
 		XMMatrixTranslation(-c.x, -c.y, -c.z) *
 		XMMatrixScaling(fit, fit, fit) *
+		WeaponSpin() *	// 翻面: 長軸まわりの裏返し回転(向き付け RPY の前=刃の自局所で裏返す)
 		XMMatrixRotationRollPitchYaw(m_wpPitch, m_wpYaw, m_wpRoll) *
 		XMMatrixTranslation(m_barAnchor.x + m_wpOff[0], m_barAnchor.y + m_wpOff[1], m_barAnchor.z + m_wpOff[2]);
 }
@@ -261,7 +275,8 @@ void SceneForge::BuildWeaponMorph()
 	int ns = (int)m_wpStage.size();
 
 	XMMATRIX world = WeaponWorld();
-	XMMATRIX rot   = XMMatrixRotationRollPitchYaw(m_wpPitch, m_wpYaw, m_wpRoll);
+	// 法線も本体と同じ回転(翻面 * 向き付け)で回す。世界変換と規約を揃える。
+	XMMATRIX rot   = WeaponSpin() * XMMatrixRotationRollPitchYaw(m_wpPitch, m_wpYaw, m_wpRoll);
 
 	// タイトル等(非プレイ)は全体を一様に m_forgeProg で見せる(F1スライダのプレビュー)。
 	const bool  playing = (m_state == GAME_PLAY);
@@ -371,7 +386,7 @@ void SceneForge::BuildGhostMesh()
 	if (!m_wpOk || m_wpStage.empty()) return;
 	const WpStage& F = m_wpStage.back();		// stage_final = 完成形
 	XMMATRIX world = WeaponWorld();
-	XMMATRIX rot   = XMMatrixRotationRollPitchYaw(m_wpPitch, m_wpYaw, m_wpRoll);
+	XMMATRIX rot   = WeaponSpin() * XMMatrixRotationRollPitchYaw(m_wpPitch, m_wpYaw, m_wpRoll);	// 翻面込み
 	const XMFLOAT4 tint = { 0.55f, 0.78f, 1.0f, 0.5f };	// 青白い半透明(a=基準)
 
 	for (int i = 0; i < m_wpN; ++i)
@@ -437,15 +452,18 @@ void SceneForge::DrawHammer3D()
 	// 凹むため、それを読むと「叩いた位置に戻ると錘が沈む」不具合になる。武器モーフの刃面は
 	// ほぼ平なので、位置に依らない一定の barTop にする(高さは回弾アニメ m_hammerLift のみで変える)。
 	float barTop = m_barAnchor.y + m_forging.Start();
+	// 翻面中はハンマーを置く: 構え位置から m_hammerStowOff だけずらし、m_hammerStowTilt だけ寝かせる(重みで補間)。
+	const float sw = m_hammerStowW;
 	XMFLOAT3 pos = {
-		m_hammerPos.x,
-		barTop + m_hammer.Lift() + m_hammerOff[1],
-		m_hammerPos.z - HAMMER_RECOIL_BACK * rp,		// 反作用で鉄匠側(-Z)へ後退
+		m_hammerPos.x + m_hammerStowOff[0] * sw,
+		barTop + m_hammer.Lift() + m_hammerOff[1] + m_hammerStowOff[1] * sw,
+		m_hammerPos.z - HAMMER_RECOIL_BACK * rp + m_hammerStowOff[2] * sw,		// 反作用で鉄匠側(-Z)へ後退
 	};
 
 	XMMATRIX world =
 		XMMatrixScaling(m_hammerScale, m_hammerScale, m_hammerScale) *
-		XMMatrixRotationRollPitchYaw(m_hammerRot[0] - HAMMER_RECOIL_TILT * rp,	// 錘頭が上へ翻る
+		XMMatrixRotationRollPitchYaw(m_hammerRot[0] - HAMMER_RECOIL_TILT * rp	// 錘頭が上へ翻る
+			+ m_hammerStowTilt * sw,											// 置く時は寝かせる
 			m_hammerRot[1], m_hammerRot[2]) *
 		XMMatrixTranslation(pos.x, pos.y, pos.z);
 	world = hammer->GetScaleBaseMatrix() * world;

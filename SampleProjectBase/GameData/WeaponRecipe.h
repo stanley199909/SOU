@@ -14,9 +14,8 @@
 enum class StepName
 {
     Heat,     // heat the iron in the forge
-    Forge,    // hammer it into shape while hot
+    Forge,    // hammer it into shape while hot (the player may flip the piece at will here)
     Quench,   // cool it in water to finish
-    Move,     // (future) reposition the workpiece
     Grind,    // (future) sharpen on the grindstone
 };
 

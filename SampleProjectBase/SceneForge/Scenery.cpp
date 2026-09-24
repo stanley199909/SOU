@@ -201,7 +201,7 @@ void SceneForge::DrawScenery()
     std::vector<SunStage::Item> casters;
     XMFLOAT3 shadowCenter(0,3,0);
     for(auto& p:m_props) {
-        if(p.key=="StGround") continue;
+        if(p.key=="StGround" || p.hidden) continue;
         auto world=PropWorld(p);
         if(p.key=="StCottage") XMStoreFloat3(&shadowCenter,XMVector3TransformCoord(XMVectorSet(0,150,0,1),world));
         casters.push_back(SunStage::MakeItem(GetObj<Model>(p.key.c_str()),world));
@@ -213,7 +213,7 @@ void SceneForge::DrawScenery()
 	ApplyForgeTextures();	// 炉の貼り分けを反映
 	for (auto& p : m_props)
 	{
-		if(p.key=="StGround") continue;
+		if(p.key=="StGround" || p.hidden) continue;	// hidden=手に取った火钳など
 		Model* m = GetObj<Model>(p.key.c_str());
 		if (!m) continue;
 		// 整屋は専用のPBRシェーダー(triplanar)で描く。他プロップは共通シェーダー。

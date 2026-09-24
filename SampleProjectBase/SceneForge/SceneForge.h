@@ -36,7 +36,7 @@ public:
 
 	//--- 工程(step)状態が呼び出す窓口(StateMachine/Player の各 Step から使う) ---
 	float HeatValue() const { return m_heat; }	// 現在の温度 0..1(HeatStep が完了判定に使う)
-	bool  AllSegmentsDone() const;				// 全区域が成形完了したか(ForgeStep の完了条件)
+	bool  BothSidesDone() const;				// 両面とも成形完了したか(鍛打工程の完了条件)
 	void  AdvanceStep();						// 次の工程へ進む(配方の順序で遷移。無ければ完成)
 	const StepSetting& CurrentStep() const;		// 今実行中の工程設定(HUD が instruction を表示)
 
@@ -163,6 +163,7 @@ private:
 	float m_lookYaw = 0.0f, m_lookPitch = 0.0f;	// 基準視線からのマウス累積回転(夹住)
 	DirectX::XMFLOAT3 m_camFwd = { 0, 0, 1 };	// 現在のカメラ正前方(照準射線に使う)
 	void  UpdateMouseLook();		// マウス移動を視角(yaw/pitch)へ累積(再センタリング方式)
+	bool  ReadMouseDelta(float& dx, float& dy);	// 光標のクライアント中心からの偏移を読み、中心へ戻す(look/翻面で共用)
 	void  UpdateAim();				// 準心射線を板と交差させ m_aimI/J/World を更新
 
 	//--- 一人称の「走動モード」(工位に着く前に工坊を歩く) ---
@@ -238,6 +239,46 @@ private:
 	float m_wpScale = 1.0f;						// 追加スケール倍率(AABBフィットにさらに掛ける)
 	float m_wpYaw = 0.0f, m_wpPitch = 0.0f, m_wpRoll = 0.0f;	// 向き(0=前後/屏幕奥行き。90°で左右横向き)
 	float m_wpOff[3] = { 0.0f, 0.0f, 0.0f };	// 砧面アンカーからの微調整
+	//--- 翻面(裏返し)の見た目: 長軸まわりに 0→180°を回転。
+	float m_flipAngle = 0.0f;					// 現在の回転角(rad)。0=表が上, π=裏が上
+	static constexpr float FLIP_TURN_LAMBDA = 8.0f;	// 定面後、清潔な角(0/π)へ落ち着く速さ(Damp率, 1/秒)
+
+	//--- 翻面の子状態機(鍛打工程の内部。玩家が随時 F で起動)。命名 enum + switch(軽量な下層FSM)。
+	//    None=鍛打中 / TongsOut=火钳を取り出す運鏡(約2.5s) / Ready=火钳待命(F=戻す, 左键=夹む)
+	//    Gripping=铁を夹む運鏡(約1s) / Flipping=マウス左右で铁を翻す(左键=面を確定) / PutBack=火钳を戻す運鏡
+	//    入力の規則: 運鏡ビート(TongsOut/Gripping/PutBack)は「再生中の動画」=取り消し不可。
+	//    その間のキー/マウスは読んで捨てる(後で暴発しない)。入力を受けるのは Ready/Flipping だけ。
+	enum class FlipPhase { None, TongsOut, Ready, Gripping, Flipping, PutBack };
+	FlipPhase m_flipPhase = FlipPhase::None;
+	float m_flipTimer = 0.0f;					// 運鏡ビート(TongsOut/Gripping/PutBack)の経過秒
+	float m_flipTurn  = 0.0f;					// Flipping中のマウス駆動の「手の狙い」0..1(1=裏返し切った)
+	void  UpdateFlip(float tick, bool inputOn);	// 翻面子状態機を駆動(運鏡ビート＋マウス翻し)
+	bool  FlipIsCutscene() const;				// 今が取り消し不可の運鏡ビートか(入力を捨てる区間)
+	static constexpr float FLIP_TONGS_OUT_TIME = 2.5f;	// 火钳を取り出す運鏡の長さ(秒。慢=映画的)
+	static constexpr float FLIP_GRIP_TIME      = 1.0f;	// 铁を夹む運鏡の長さ(秒)
+	static constexpr float FLIP_PUTBACK_TIME   = 2.0f;	// 火钳を戻す運鏡の長さ(秒)
+	//--- 翻す手感(F1「Flip」で調整・forge_tuning.txt に保存)
+	float m_flipSens     = 0.0006f;				// マウス横移動→手の狙い(1pxあたり)。小=大きく振らないと回らない
+	float m_flipMaxSpeed = 1.6f;				// 刃の最大回転速度(rad/秒)。熱い鉄塊は火钳で一瞬には返せない=重さ
+
+	//--- 翻面の運鏡(火钳アニメの代替)。カメラは2つの「寄り」を重み付きで混ぜる:
+	//    tongs=火钳(StPliers プロップ)の方へ振り向く / grip=刃(砧面アンカー)へ寄って見下ろす。
+	//    目標点はプロップ/アンカーから取る=配置を変えても運鏡が自動で追従(座標のベタ書き無し)。
+	float m_camTongsW = 0.0f;					// 火钳方向への重み 0..1(TongsOut/PutBack の曲線で決まる)
+	float m_camGripW  = 0.0f;					// 刃への寄りの重み 0..1(Gripping で上がり、Ready で戻る)
+	bool  m_tongsInHand = false;				// 火钳を手に取っている(=台上の火钳モデルを隠す)
+	float m_tongsLean = 0.20f;					// 火钳へ振り向く時、カメラ本体も寄る割合(体を傾ける)
+	float m_gripDolly = 0.30f;					// 夹む時、カメラ本体が刃へ寄る割合
+	float m_gripLambda = 5.0f;					// 寄り→元の視点へ戻る速さ(Damp率, 1/秒)
+	//--- 翻面中はハンマーを置く(火钳に持ち替える)。重み 0=構え / 1=置いた。
+	//    TongsOut の「振り向く」区間で置き、PutBack の「戻る」区間で取り上げる(火钳運鏡と同じ時間割)。
+	float m_hammerStowW = 0.0f;
+	float m_hammerStowOff[3] = { 0.45f, -0.55f, -0.25f };	// 置いた位置=構え位置からのずれ(F1「Flip」で調整)
+	float m_hammerStowTilt = 1.2f;				// 置く時に寝かせる角度(rad。錘頭の pitch に加算)
+	// 火钳運鏡の時間割(ビート長に対する比率 0..1): [0,REACH)=振り向く / [REACH,RETURN)=手に取る(静止) / [RETURN,1]=戻る
+	static constexpr float FLIP_REACH_FRAC  = 0.35f;
+	static constexpr float FLIP_RETURN_FRAC = 0.55f;
+	void  UpdateFlipCamera(float tick);			// 翻面の段階から運鏡の重みを更新(UpdateFlipの後)
 	//--- 金属の質感パラメータ(PS_Wpへ渡す。廉価IBL=高光+環境反射+菲涅尔。核显向けにGPU負荷は低く抑える)
 	//    UE5のPBR質感の主因は「環境反射」。HDRIを読まず、反射向きで空/地の2色を補間する擬似環境で代用する。
 	float m_wpRough   = 0.35f;					// 粗さ0..1(小=鏡面的で高光が鋭い/大=拡散的)
@@ -249,6 +290,7 @@ private:
 	float m_wpGround[3] = { 0.18f, 0.15f, 0.12f };	// 擬似環境の下方向(地面/炉床)の色
 	void  LoadWeaponStages();					// Assets/Model/weapon/stage_*.fbx を読む
 	DirectX::XMMATRIX WeaponWorld() const;		// 武器ローカル→ワールドのフィット変換(照準/描画で共用)
+	DirectX::XMMATRIX WeaponSpin() const;		// 翻面回転(長軸まわりに m_flipAngle)。WeaponWorld と法線変換で共用
 	void  BuildWeaponMorph();					// m_forgeProgから補間頂点を作る
 	void  DrawWeapon();							// 武器を描画(発光+簡易ライティング)
 	//--- 目標ゴースト: stage_final の形を半透明で重ねて「完成形」を示す(KCD2には無い自作要素)。
@@ -278,6 +320,7 @@ private:
 		float             pos[3] = { 0,0,0 };
 		float             yaw   = 0.0f;
 		bool              groundSnap = true;	// AABB下面を床の高さに合わせる
+		bool              hidden = false;		// 一時的に描かない(例: 火钳を手に取っている間の台上の火钳)
 		DirectX::XMFLOAT3 aabbMin = { 0,0,0 };	// モデル空間AABB(Loadでキャッシュ)
 		DirectX::XMFLOAT3 aabbMax = { 0,0,0 };
 	};

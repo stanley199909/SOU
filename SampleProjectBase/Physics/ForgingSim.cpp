@@ -3,10 +3,14 @@
 
 void ForgingSim::Reset()
 {
-    // Start as a uniform thick billet (progress 0) with no damage.
-    for (int i = 0; i < NL; ++i)
-    for (int j = 0; j < NW; ++j) { m_h[i][j] = m_hStart; m_dmgF[i][j] = 0.0f; }
-    for (int s = 0; s < NSEG; ++s) m_segProg[s] = 0.0f;
+    // Both faces start as a uniform thick billet (progress 0) with no damage, front up.
+    m_side = 0;
+    for (int s = 0; s < NSIDES; ++s)
+    {
+        for (int i = 0; i < NL; ++i)
+        for (int j = 0; j < NW; ++j) { m_h[s][i][j] = m_hStart; m_dmgF[s][i][j] = 0.0f; }
+        for (int k = 0; k < NSEG; ++k) m_segProg[s][k] = 0.0f;
+    }
     BuildTarget();
 }
 
@@ -77,7 +81,7 @@ float ForgingSim::ShapeMatch() const
 {
     float err = 0.0f;
     for (int i = 0; i < NL; ++i)
-    for (int j = 0; j < NW; ++j) err += fabsf(m_h[i][j] - m_hTgt[i][j]);
+    for (int j = 0; j < NW; ++j) err += fabsf(m_h[m_side][i][j] - m_hTgt[i][j]);
     // Reference: the error of the flat starting billet. We move from there toward 0.
     float ref = 0.0f;
     for (int i = 0; i < NL; ++i)
@@ -94,8 +98,12 @@ ForgingSim::StrikeOutcome ForgingSim::ApplyStrike(int ci, int cj, int seg,
     // Guided flow (volume-conserving, outcome-locked): the hit cell only drops
     // toward its target (never below), and the displaced material flows to the
     // neighbours the design wants more material at (smaller surplus e = h - target).
+    // Everything below works on the up face (m_side). A is a reference (alias) to
+    // that face's height field, so the flow maths reads exactly as the single-sided
+    // version did -- only the target of the writes changed, not the logic.
+    auto& A = m_h[m_side];
     float want = FLOW_DROP * power * heatFactor * grooveMult;
-    float eC = m_h[ci][cj] - m_hTgt[ci][cj]; // surplus at the hit cell
+    float eC = A[ci][cj] - m_hTgt[ci][cj]; // surplus at the hit cell
     float delta = want;
     if (delta > eC)   delta = eC;   // don't go below target (result can't be ruined)
     if (delta < 0.0f) delta = 0.0f; // already at/below target = nothing to shave
@@ -113,30 +121,32 @@ ForgingSim::StrikeOutcome ForgingSim::ApplyStrike(int ci, int cj, int seg,
             float w[4], wsum = 0.0f;
             for (int k = 0; k < n; ++k)
             {
-                float eK = m_h[ni[k]][nj[k]] - m_hTgt[ni[k]][nj[k]];
+                float eK = A[ni[k]][nj[k]] - m_hTgt[ni[k]][nj[k]];
                 float ww = eC - eK;
                 if (ww < 0.0f) ww = 0.0f;
                 w[k] = ww;
                 wsum += ww;
             }
             if (wsum < 1e-6f) { for (int k = 0; k < n; ++k) w[k] = 1.0f; wsum = (float)n; } // all surplus -> even
-            m_h[ci][cj] -= delta;                    // hit cell moves toward its target
+            A[ci][cj] -= delta;                      // hit cell moves toward its target
             for (int k = 0; k < n; ++k)              // displaced material flows to needy neighbours
-                m_h[ni[k]][nj[k]] += delta * (w[k] / wsum);
+                A[ni[k]][nj[k]] += delta * (w[k] / wsum);
         }
     }
 
     // Cold = crack, overheat = scorch: mark the damage and report the bad strike.
     if (cold)
     {
-        m_dmgF[ci][cj] += DMG_COLD_HIT;
-        if (m_dmgF[ci][cj] > 1.0f) m_dmgF[ci][cj] = 1.0f;
+        float& d = m_dmgF[m_side][ci][cj];
+        d += DMG_COLD_HIT;
+        if (d > 1.0f) d = 1.0f;
         return StrikeOutcome::ColdHit;
     }
     if (over)
     {
-        m_dmgF[ci][cj] += DMG_OVER_HIT;
-        if (m_dmgF[ci][cj] > 1.0f) m_dmgF[ci][cj] = 1.0f;
+        float& d = m_dmgF[m_side][ci][cj];
+        d += DMG_OVER_HIT;
+        if (d > 1.0f) d = 1.0f;
         return StrikeOutcome::OverHit;
     }
     if (SegDone(seg)) return StrikeOutcome::AlreadyDone; // striking a finished segment wastes it
@@ -144,30 +154,36 @@ ForgingSim::StrikeOutcome ForgingSim::ApplyStrike(int ci, int cj, int seg,
     // Good strike on an unfinished segment: advance its shaping (forward only).
     //   FORGE_STEP is "how much of the whole progresses"; a segment is 1/NSEG of the
     //   length, so scale by NSEG to keep hits-per-segment near the old whole-bar count.
-    m_segProg[seg] += FORGE_STEP * NSEG * power * grooveMult;
-    if (m_segProg[seg] > 1.0f) m_segProg[seg] = 1.0f;
+    float& prog = m_segProg[m_side][seg];
+    prog += FORGE_STEP * NSEG * power * grooveMult;
+    if (prog > 1.0f) prog = 1.0f;
     return StrikeOutcome::Shaped;
 }
 
 void ForgingSim::BurnAll(float amount)
 {
+    // Overheating is global (one iron temperature), so scorch both faces.
+    for (int s = 0; s < NSIDES; ++s)
     for (int i = 0; i < NL; ++i)
     for (int j = 0; j < NW; ++j)
     {
-        m_dmgF[i][j] += amount;
-        if (m_dmgF[i][j] > 1.0f) m_dmgF[i][j] = 1.0f;
+        m_dmgF[s][i][j] += amount;
+        if (m_dmgF[s][i][j] > 1.0f) m_dmgF[s][i][j] = 1.0f;
     }
 }
 
-bool ForgingSim::AllSegmentsDone() const
+bool ForgingSim::BothSidesDone() const
 {
-    for (int s = 0; s < NSEG; ++s) if (m_segProg[s] < SEG_DONE) return false;
+    // The Forge step ends only when every segment of BOTH faces is shaped. The
+    // player flips the piece at will during forging; this is what "finished" means.
+    for (int s = 0; s < NSIDES; ++s)
+    for (int k = 0; k < NSEG; ++k) if (m_segProg[s][k] < SEG_DONE) return false;
     return true;
 }
 
 float ForgingSim::SegAverage() const
 {
     float sum = 0.0f;
-    for (int s = 0; s < NSEG; ++s) sum += m_segProg[s];
+    for (int k = 0; k < NSEG; ++k) sum += m_segProg[m_side][k];
     return sum / NSEG;
 }

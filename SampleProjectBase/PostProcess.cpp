@@ -235,7 +235,7 @@ void PostProcess::Update(float tick)
 	if (IsKeyTrigger(VK_LEFT))  m_current = (m_current + EFFECT_MAX - 1) % EFFECT_MAX;
 	if (IsKeyTrigger(VK_RIGHT)) m_current = (m_current + 1) % EFFECT_MAX;
 	if (IsKeyTrigger('V')) m_split = !m_split;	// 分割一括表示の切り替え
-	if (IsKeyTrigger('F')) m_fade  = !m_fade;	// 時間による強度変化の切り替え
+	// ※F は鍛造の翻面キーと衝突する(押すたびブルームが明滅)ため撤去。Time fade は F1 のチェックボックスで切替。
 }
 
 void PostProcess::DrawUI()

@@ -110,9 +110,33 @@ void SceneForge::ApplyCamera()
 		oz += OrganicNoise(ct, kNoiseSeedTremor[2]) * cAmp;
 	}
 
+	// === 翻面の運鏡(火钳アニメの代替) ===================================
+	// 通常の機位/注視点を、重みで2つの目標へ寄せる(重み0なら従来と完全に同じ画)。
+	//   tongs: 注視点を火钳(StPliers)の中心へ、機位も m_tongsLean だけ火钳側へ(体を傾けて取る)。
+	//   grip : 注視点を刃(砧面アンカー)へ、機位を m_gripDolly だけ刃へ寄せる(夹む手元を覗き込む)。
+	// 目標はプロップ/アンカーから毎フレーム取る=配置を動かしても運鏡が追従する。
+	// ※照準の m_camFwd は上で保存済みの「通常の視線」のまま(翻面中は叩けないので影響なし)。
+	XMFLOAT3 eye(m_camPos[0], m_camPos[1], m_camPos[2]);
+	if (m_camTongsW > 0.0f)
+		if (Prop* pl = GetProp("StPliers"))
+		{
+			XMFLOAT3 c((pl->aabbMin.x + pl->aabbMax.x) * 0.5f, (pl->aabbMin.y + pl->aabbMax.y) * 0.5f, (pl->aabbMin.z + pl->aabbMax.z) * 0.5f);
+			XMFLOAT3 t; XMStoreFloat3(&t, XMVector3TransformCoord(XMLoadFloat3(&c), PropWorld(*pl)));	// 火钳のワールド中心
+			const float w = m_camTongsW, lean = m_tongsLean * m_camTongsW;
+			lf  = XMFLOAT3(lf.x + (t.x - lf.x) * w,     lf.y + (t.y - lf.y) * w,     lf.z + (t.z - lf.z) * w);
+			eye = XMFLOAT3(eye.x + (t.x - eye.x) * lean, eye.y + (t.y - eye.y) * lean, eye.z + (t.z - eye.z) * lean);
+		}
+	if (m_camGripW > 0.0f)
+	{
+		const XMFLOAT3& t = m_barAnchor;	// 刃が乗る砧面の点
+		const float w = m_camGripW, dolly = m_gripDolly * m_camGripW;
+		lf  = XMFLOAT3(lf.x + (t.x - lf.x) * w,      lf.y + (t.y - lf.y) * w,      lf.z + (t.z - lf.z) * w);
+		eye = XMFLOAT3(eye.x + (t.x - eye.x) * dolly, eye.y + (t.y - eye.y) * dolly, eye.z + (t.z - eye.z) * dolly);
+	}
+
 	// 機位は全量、注視点は m_camLookNoise 倍(=視線は概ね工件に残しつつ少しだけ飄る)。冲撃dyは framing。
 	const float LN = m_camLookNoise;
-	cam->SetPos (XMFLOAT3(m_camPos[0] + ox, m_camPos[1] + oy + dy, m_camPos[2] + oz));
+	cam->SetPos (XMFLOAT3(eye.x + ox, eye.y + oy + dy, eye.z + oz));
 	cam->SetLook(XMFLOAT3(lf.x + ox * LN,   lf.y + oy * LN + dy,   lf.z + oz * LN));
 	cam->SetUp  (XMFLOAT3(0.0f, 1.0f, 0.0f));
 }
@@ -167,19 +191,29 @@ void SceneForge::ApplyWalkCamera()
 
 //--- マウス移動を視角(yaw/pitch)へ累積する。FPS方式: 毎フレーム、カーソルを画面中心へ
 //    戻し(再センタリング)、その差分を回転量にする。範囲は板の周囲に夹住する。
-void SceneForge::UpdateMouseLook()
+//--- 光標のクライアント中心からの偏移(dx,dy)を読み、光標を中心へ戻す(相対マウスの基礎)。
+//    視角(UpdateMouseLook)と翻面(UpdateFlip)が同じ読み取りを共用する。中心へ戻すのは1回だけ
+//    にする(2回呼ぶと偏移が二重に消える)ので、同じフレームでは片方だけが呼ぶこと。
+bool SceneForge::ReadMouseDelta(float& dx, float& dy)
 {
+	dx = dy = 0.0f;
 	HWND hwnd = GetActiveWindow();
-	if (!hwnd) return;
+	if (!hwnd) return false;
 	RECT rc; GetClientRect(hwnd, &rc);
 	POINT center = { (rc.right - rc.left) / 2, (rc.bottom - rc.top) / 2 };
 	POINT cp; GetCursorPos(&cp);
 	POINT cs = center; ClientToScreen(hwnd, &cs);	// 画面座標の中心
-	POINT co = center; // クライアント基準
-	// 現在のカーソルをクライアント座標へ
-	POINT cc = cp; ScreenToClient(hwnd, &cc);
-	float dx = (float)(cc.x - co.x);
-	float dy = (float)(cc.y - co.y);
+	POINT cc = cp; ScreenToClient(hwnd, &cc);		// 現在のカーソルをクライアント座標へ
+	dx = (float)(cc.x - center.x);
+	dy = (float)(cc.y - center.y);
+	SetCursorPos(cs.x, cs.y);						// 中心へ戻す(累積の基準を保つ)
+	return true;
+}
+
+void SceneForge::UpdateMouseLook()
+{
+	float dx, dy;
+	if (!ReadMouseDelta(dx, dy)) return;
 
 	const float SENS = 0.0017f;			// 左右(yaw)の感度(rad/px)。低め=据わった視点
 	m_lookYaw += dx * SENS;
@@ -196,8 +230,7 @@ void SceneForge::UpdateMouseLook()
 	m_aimRail -= dy * m_aimSens;
 	if (m_aimRail < 0.0f) m_aimRail = 0.0f;
 	if (m_aimRail > 1.0f) m_aimRail = 1.0f;
-
-	SetCursorPos(cs.x, cs.y);			// 中心へ戻す(累積の基準を保つ)
+	// 中心へ戻す処理は ReadMouseDelta 内で済んでいる。
 }
 
 //--- FPS式ヒットスキャン照準。準心(画面中心=カメラ正前方 m_camFwd)から射線を飛ばし、
@@ -431,6 +464,14 @@ void SceneForge::SaveTuning()
 	fprintf(fp, "wproll %.5f\n",     m_wpRoll);
 	fprintf(fp, "wpscale %.5f\n",    m_wpScale);
 	fprintf(fp, "wpoff %.5f %.5f %.5f\n", m_wpOff[0], m_wpOff[1], m_wpOff[2]);
+	// -- 翻面 --
+	fprintf(fp, "flipsens %.6f\n",   m_flipSens);
+	fprintf(fp, "flipspeed %.5f\n",  m_flipMaxSpeed);
+	fprintf(fp, "tongslean %.5f\n",  m_tongsLean);
+	fprintf(fp, "gripdolly %.5f\n",  m_gripDolly);
+	fprintf(fp, "griplambda %.5f\n", m_gripLambda);
+	fprintf(fp, "stowoff %.5f %.5f %.5f\n", m_hammerStowOff[0], m_hammerStowOff[1], m_hammerStowOff[2]);
+	fprintf(fp, "stowtilt %.5f\n",   m_hammerStowTilt);
 
 	fclose(fp);
 }
@@ -463,6 +504,9 @@ void SceneForge::TuningRefs(std::vector<float*>& out)
 		// -- Weapon align --
 		&m_wpYaw, &m_wpPitch, &m_wpRoll, &m_wpScale,
 		&m_wpOff[0], &m_wpOff[1], &m_wpOff[2],
+		// -- Flip --
+		&m_flipSens, &m_flipMaxSpeed, &m_tongsLean, &m_gripDolly, &m_gripLambda,
+		&m_hammerStowOff[0], &m_hammerStowOff[1], &m_hammerStowOff[2], &m_hammerStowTilt,
 	};
 	out.assign(r, r + _countof(r));
 }
@@ -526,6 +570,13 @@ void SceneForge::LoadTuning()
 		else if (strcmp(key, "wproll")     == 0) sscanf_s(v, "%f", &m_wpRoll);
 		else if (strcmp(key, "wpscale")    == 0) sscanf_s(v, "%f", &m_wpScale);
 		else if (strcmp(key, "wpoff")      == 0) sscanf_s(v, "%f %f %f", &m_wpOff[0], &m_wpOff[1], &m_wpOff[2]);
+		else if (strcmp(key, "flipsens")   == 0) sscanf_s(v, "%f", &m_flipSens);
+		else if (strcmp(key, "flipspeed")  == 0) sscanf_s(v, "%f", &m_flipMaxSpeed);
+		else if (strcmp(key, "tongslean")  == 0) sscanf_s(v, "%f", &m_tongsLean);
+		else if (strcmp(key, "gripdolly")  == 0) sscanf_s(v, "%f", &m_gripDolly);
+		else if (strcmp(key, "griplambda") == 0) sscanf_s(v, "%f", &m_gripLambda);
+		else if (strcmp(key, "stowoff")    == 0) sscanf_s(v, "%f %f %f", &m_hammerStowOff[0], &m_hammerStowOff[1], &m_hammerStowOff[2]);
+		else if (strcmp(key, "stowtilt")   == 0) sscanf_s(v, "%f", &m_hammerStowTilt);
 	}
 	fclose(fp);
 }

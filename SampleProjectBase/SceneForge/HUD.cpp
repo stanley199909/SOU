@@ -129,6 +129,18 @@ void SceneForge::DrawPlayUI()
 	//   文言は配方(GameData/WeaponRecipe)が持つ=換武器で自動的に差し替わる(コードにベタ書きしない)。
 	CenterText(CurrentStep().instruction, 0.12f, 1.3f, IM_COL32(255, 240, 200, 255));
 
+	// 翻面の子状態ごとの操作ヒント(宏観チュートリアル)。運鏡ビート中は状況説明、
+	// 操作待ちの Ready/Flipping では「何のキーで何が起きるか」を明示する。
+	switch (m_flipPhase)
+	{
+	case FlipPhase::TongsOut: CenterText("Reaching for the tongs...", 0.24f, 1.1f, IM_COL32(255, 230, 180, 220)); break;
+	case FlipPhase::Ready:    CenterText("Tongs ready --  LMB: grip the blade    F: put tongs back", 0.24f, 1.1f, IM_COL32(255, 240, 200, 255)); break;
+	case FlipPhase::Gripping: CenterText("Gripping the blade...", 0.24f, 1.1f, IM_COL32(255, 230, 180, 220)); break;
+	case FlipPhase::Flipping: CenterText("Move the mouse to turn the blade    LMB: set this face", 0.24f, 1.1f, IM_COL32(255, 240, 200, 255)); break;
+	case FlipPhase::PutBack:  CenterText("Setting the tongs back...", 0.24f, 1.1f, IM_COL32(255, 230, 180, 220)); break;
+	default: break;
+	}
+
 	// ※KCD2式: 画面中心の準心は「置かない」。第一人称に固定十字は不自然で、しかも屏幕中央に
 	//   死んでいて動かせない。狙いの提示は「動くハンマー＋刃の高亮段」で行う(下の WeaponRender)。
 
@@ -329,6 +341,21 @@ void SceneForge::DrawUI()
 			ImGui::SliderFloat("Tremor speed",&m_camTremorSpeed, 8.0f, 40.0f, "%.0f");	// 微顫の速さ
 			ImGui::SliderFloat("Tremor ramp", &m_camTremorRamp,  1.0f, 6.0f,  "%.1f");	// 立ち上がりの遅さ(大=満蓄直前で効く)
 			ImGui::SliderFloat("Look noise",  &m_camLookNoise,   0.0f, 1.0f,  "%.2f");	// 注視点への伝達
+		}
+
+		// --- Flip: 翻面の手感と運鏡 ---
+		if (ImGui::CollapsingHeader("Flip"))
+		{
+			ImGui::TextDisabled("-- Turning feel --");
+			ImGui::SliderFloat("Flip sens",      &m_flipSens,     0.0001f, 0.003f, "%.4f");	// マウス→手の狙い(小=大きく振る)
+			ImGui::SliderFloat("Flip max speed", &m_flipMaxSpeed, 0.3f, 6.0f, "%.2f rad/s");	// 刃の最大回転速度(小=重い)
+			ImGui::TextDisabled("-- Camera choreography --");
+			ImGui::SliderFloat("Tongs lean",  &m_tongsLean,  0.0f, 0.6f, "%.2f");	// 火钳へ体を寄せる割合
+			ImGui::SliderFloat("Grip dolly",  &m_gripDolly,  0.0f, 0.7f, "%.2f");	// 夹む時に刃へ寄る割合
+			ImGui::SliderFloat("Grip return", &m_gripLambda, 1.0f, 15.0f, "%.1f");	// 元の視点へ戻る速さ
+			ImGui::TextDisabled("-- Hammer set down --");
+			ImGui::SliderFloat3("Stow offset", m_hammerStowOff, -1.5f, 1.5f, "%.2f");	// 置いた位置(構えからのずれ)
+			ImGui::SliderFloat("Stow tilt",   &m_hammerStowTilt, -3.1416f, 3.1416f, "%.2f");	// 寝かせる角度
 		}
 
 		// --- Hammer: 鎚モデルの姿勢と反冲 ---

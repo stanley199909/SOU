@@ -471,9 +471,16 @@ void SceneForge::StartGame()
 	m_player.Init(DirectX::XMFLOAT3(0.0f, m_walkFloorY, -2.0f), 0.0f);	// 開始位置/向きを戻す
 	m_score    = 0;
 	m_heat     = 0.0f;
-	m_forging.Reset();		// 鉄を厚板・無傷・進捗0へ(目標形状も再生成)
+	m_forging.Reset();		// 鉄を厚板・無傷・進捗0へ(表面が上に戻る。目標形状も再生成)
 	m_forgeProg = 0.0f;		// 武器モーフのプレビュー進捗も戻す
 	m_match = 0.0f;
+	m_flipAngle = 0.0f;		// 翻面回転も表(0)へ戻す
+	m_flipPhase = FlipPhase::None;	// 翻面子状態機も初期化(鍛打中に戻す)
+	m_flipTurn  = 0.0f;
+	m_camTongsW = 0.0f; m_camGripW = 0.0f;	// 運鏡の寄りも解除
+	m_hammerStowW = 0.0f;					// ハンマーは構え位置へ
+	m_tongsInHand = false;					// 火钳は台の上へ
+	if (Prop* pl = GetProp("StPliers")) pl->hidden = false;
 
 	m_charging    = false;
 	m_charge      = 0.0f;
@@ -528,11 +535,150 @@ const StepSetting& SceneForge::CurrentStep() const
 	return m_recipe->steps[i];
 }
 
-//--- 全区域が成形完了したか(ForgeStep の完了条件)。武器FBXが無い時は自動完成しない(要素材)。
-bool SceneForge::AllSegmentsDone() const
+//--- 両面とも成形完了したか(鍛打工程の完了条件)。武器FBXが無い時は自動完成しない(要素材)。
+bool SceneForge::BothSidesDone() const
 {
 	if (!m_wpOk) return false;
-	return m_forging.AllSegmentsDone();
+	return m_forging.BothSidesDone();
+}
+
+//--- 翻面の子状態機(鍛打工程の内部)。玩家が F で起動→火钳運鏡→夹む→マウスで翻す→面を確定。
+//    命名 enum + switch の軽量な下層FSM。上層(工程FSM)は触らない=翻面は鍛打の内部交互。
+//    ※呼び出し側(UpdatePlay)は、None 以外の間はハンマー入力を止める(火钳を扱っている最中)。
+//--- 取り消し不可の運鏡ビートか。ここが true の間は F/左键/マウスを一切受け付けない
+//    (「再生中の動画は途中で止められない」= 火钳が空中で消える様な破綻を構造的に防ぐ)。
+bool SceneForge::FlipIsCutscene() const
+{
+	return m_flipPhase == FlipPhase::TongsOut
+		|| m_flipPhase == FlipPhase::Gripping
+		|| m_flipPhase == FlipPhase::PutBack;
+}
+
+void SceneForge::UpdateFlip(float tick, bool inputOn)
+{
+	const bool forgePhase = (CurrentStep().type == StepName::Forge);
+	// 鍛打工程でない時(=安全策)だけ翻面を打ち切る。
+	if (!forgePhase) { m_flipPhase = FlipPhase::None; m_tongsInHand = false; return; }
+	// 入力凍結中(F1/遷移)は「一時停止」: 段階も計時も進めない。打ち切らない=動画は取り消されない。
+	if (!inputOn) return;
+
+	// 運鏡ビート中に押されたキーは「読んで捨てる」。IsKeyTrigger は押した瞬間の1フレームだけ true なので、
+	// ビート中に判定しなければ、そのキーはビート明けに持ち越されない(=バッファされず暴発しない)。
+	switch (m_flipPhase)
+	{
+	case FlipPhase::None:									// 鍛打中: F で翻面を起動
+		if (IsKeyTrigger('F')) { m_flipPhase = FlipPhase::TongsOut; m_flipTimer = 0.0f; }
+		break;
+
+	case FlipPhase::TongsOut:								// 火钳を取り出す運鏡(慢い)
+	{
+		m_flipTimer += tick;
+		// 振り向いて静止している区間の中点=「手に取った」瞬間。台上の火钳を消す。
+		const float grabAt = FLIP_TONGS_OUT_TIME * (FLIP_REACH_FRAC + FLIP_RETURN_FRAC) * 0.5f;
+		if (m_flipTimer >= grabAt) m_tongsInHand = true;
+		if (m_flipTimer >= FLIP_TONGS_OUT_TIME) m_flipPhase = FlipPhase::Ready;
+		break;
+	}
+
+	case FlipPhase::Ready:									// 火钳待命: F=戻す / 左键=夹む
+		if      (IsKeyTrigger('F'))       { m_flipPhase = FlipPhase::PutBack;  m_flipTimer = 0.0f; }
+		else if (IsKeyTrigger(VK_LBUTTON)){ m_flipPhase = FlipPhase::Gripping; m_flipTimer = 0.0f; }
+		break;
+
+	case FlipPhase::Gripping:								// 铁を夹む運鏡→翻し開始(今の面から)
+		m_flipTimer += tick;
+		if (m_flipTimer >= FLIP_GRIP_TIME)
+		{
+			m_flipPhase = FlipPhase::Flipping;
+			m_flipTurn  = m_flipAngle / DirectX::XM_PI;	// 今の刃の角度から翻し始める(1=半回転)
+		}
+		break;
+
+	case FlipPhase::Flipping:								// マウス左右で铁を翻す。左键で面を確定
+	{
+		// 二段構え: マウス→「手の狙い」m_flipTurn(0..1)、刃の角度はそれを最大角速度つきで追う。
+		//   旧: 角度=マウス直結 → 軽すぎて非現実。新: 速く振っても刃は m_flipMaxSpeed 以上では回らない
+		//   =火钳で重い熱鉄を返す「重さ」。止めれば狙いの角度で止まる(追いつく)。
+		//   狙いは上限なし=同じ方向へ回し続ければ何回でも翻る(左へ回せば逆回転)。
+		float dx, dy; ReadMouseDelta(dx, dy);			// 相対マウス(ここで光標を中心へ戻す)
+		m_flipTurn += dx * m_flipSens;
+
+		const float target = m_flipTurn * DirectX::XM_PI;
+		const float maxStep = m_flipMaxSpeed * tick;	// このフレームで回せる上限(rad)
+		float diff = target - m_flipAngle;
+		if (diff >  maxStep) diff =  maxStep;
+		if (diff < -maxStep) diff = -maxStep;
+		m_flipAngle += diff;
+
+		// 面の判定: 刃角を「最も近い半回転の番号」k に丸める(境界=π/2, 3π/2, ...=半回転ごとに0.5の線)。
+		//   k が偶数=表, 奇数=裏。0.5 を越えるたびに k が1つ進む=一回ずつ翻る。見た目の刃と必ず一致。
+		const int k = (int)floorf(m_flipAngle / DirectX::XM_PI + 0.5f);
+		m_forging.SetSide(((k % 2) + 2) % 2);			// 負の k(逆回転)でも 0/1 に正規化
+		if (IsKeyTrigger(VK_LBUTTON))					// 現在の面を確定→待命へ
+		{
+			// 角度を「今の面の清潔な角」(0 か π)の近くへ巻き戻す。2π の倍数を引くだけなので見た目は不変。
+			// これで確定後の Damp(目標=面×π)が最短で落ち着き、回し続けても角度が無限に増えない。
+			const int wrap = k - m_forging.Side();		// 2 の倍数
+			m_flipAngle -= wrap * DirectX::XM_PI;
+			m_flipTurn  -= (float)wrap;
+			m_flipPhase = FlipPhase::Ready;
+		}
+		break;
+	}
+
+	case FlipPhase::PutBack:								// 火钳を戻す運鏡→鍛打へ復帰
+	{
+		m_flipTimer += tick;
+		// TongsOut と対称: 振り向いた静止区間の中点で火钳を台へ置く(モデルを再表示)。
+		const float putAt = FLIP_PUTBACK_TIME * (FLIP_REACH_FRAC + FLIP_RETURN_FRAC) * 0.5f;
+		if (m_flipTimer >= putAt) m_tongsInHand = false;
+		if (m_flipTimer >= FLIP_PUTBACK_TIME) m_flipPhase = FlipPhase::None;
+		break;
+	}
+	}
+}
+
+//--- 翻面の運鏡。段階(と計時)から2つの重みを決める。カメラへの適用は ApplyCamera が行う。
+//    火钳の曲線は計時の純関数(同じ時刻なら同じ画)=決定論的で、途中で揺れない。
+void SceneForge::UpdateFlipCamera(float tick)
+{
+	// 火钳へ振り向く曲線: 0→1(振り向く)→1(手に取る)→0(元の視点へ)。両端は SmoothStep で緩急。
+	auto tongsCurve = [](float t01) {
+		if (t01 < FLIP_REACH_FRAC)  return Lerp::SmoothStep(t01 / FLIP_REACH_FRAC);
+		if (t01 < FLIP_RETURN_FRAC) return 1.0f;
+		return 1.0f - Lerp::SmoothStep((t01 - FLIP_RETURN_FRAC) / (1.0f - FLIP_RETURN_FRAC));
+	};
+
+	switch (m_flipPhase)
+	{
+	case FlipPhase::TongsOut: m_camTongsW = tongsCurve(m_flipTimer / FLIP_TONGS_OUT_TIME); break;
+	case FlipPhase::PutBack:  m_camTongsW = tongsCurve(m_flipTimer / FLIP_PUTBACK_TIME);   break;
+	default:                  m_camTongsW = 0.0f; break;
+	}
+
+	switch (m_flipPhase)
+	{
+	case FlipPhase::Gripping: m_camGripW = Lerp::SmoothStep(m_flipTimer / FLIP_GRIP_TIME); break;	// 刃へ寄る
+	case FlipPhase::Flipping: m_camGripW = 1.0f; break;								// 寄ったまま刃を見て翻す
+	default: m_camGripW = Lerp::Damp(m_camGripW, 0.0f, m_gripLambda, tick); break;	// 面確定後、元の視点へ戻る
+	}
+
+	// ハンマーを置く/取る。火钳へ振り向く間に置き、戻ってくる間に取り上げる(同じ時間割を再利用)。
+	switch (m_flipPhase)
+	{
+	case FlipPhase::TongsOut: m_hammerStowW = Lerp::SmoothStep((m_flipTimer / FLIP_TONGS_OUT_TIME) / FLIP_REACH_FRAC); break;
+	case FlipPhase::PutBack:
+	{
+		const float t01 = m_flipTimer / FLIP_PUTBACK_TIME;
+		m_hammerStowW = 1.0f - Lerp::SmoothStep((t01 - FLIP_RETURN_FRAC) / (1.0f - FLIP_RETURN_FRAC));
+		break;
+	}
+	case FlipPhase::None:     m_hammerStowW = 0.0f; break;
+	default:                  m_hammerStowW = 1.0f; break;	// Ready/Gripping/Flipping=火钳を持っている
+	}
+
+	// 台上の火钳モデルの表示は「手に持っているか」に従う。
+	if (Prop* pl = GetProp("StPliers")) pl->hidden = m_tongsInHand;
 }
 
 void SceneForge::FinishGame()
@@ -579,6 +725,12 @@ void SceneForge::UpdatePlay(float tick)
 	if (inputOn && IsKeyTrigger('G')) m_showGhost = !m_showGhost;	// 目標ゴースト表示切替
 	if (inputOn && IsKeyTrigger('K')) m_hideCoalTest = !m_hideCoalTest;	// 【診断】炭床の表示/非表示(炉の跳動切り分け)
 
+	// --- 翻面の子状態機を先に駆動(F起動→火钳運鏡→夹む→マウス翻し→面確定) ---
+	//   None 以外の間はこの後のハンマー入力を止める(火钳を扱っている＝叩けない)。
+	UpdateFlip(tick, inputOn);
+	if (inputOn) UpdateFlipCamera(tick);	// 段階→運鏡の重み(F1中は一時停止=画も止まる)
+	const bool flipping = (m_flipPhase != FlipPhase::None);
+
 	// --- 加熱: R長押しで炉で加熱 / 常にゆっくり自然冷却 ---
 	bool heating = inputOn && IsKeyPress('R');
 	if (inputOn)
@@ -608,7 +760,7 @@ void SceneForge::UpdatePlay(float tick)
 
 	// --- 照準(FPS方式): 画面中心の準心=カメラ正前方の射線を板と交差させ、当たったセルを求める ---
 	//   マウス移動はUpdateMouseLook(Updateの先頭)で視角に累積済み。ApplyCameraがm_camFwdを更新。
-	if (inputOn) UpdateAim();
+	if (inputOn && !flipping) UpdateAim();	// 翻面中はハンマーを置いている=照準判定もしない
 
 	// --- 蓄力ハンマー: 左クリック押しっぱなしで蓄力、離すと打撃。打撃後はクールダウン ---
 	if (m_strikeCD > 0.0f) m_strikeCD -= tick;	// クールダウン消化
@@ -618,11 +770,13 @@ void SceneForge::UpdatePlay(float tick)
 	//   コンパイルエラーで即座に弾ける(文字列 "Forge" だと綴り間違いが黙って false になる)。
 	const bool forgePhase = (CurrentStep().type == StepName::Forge);
 
-	if (!inputOn || !forgePhase)
+	if (!inputOn || !forgePhase || flipping)
 	{
-		// F1操作中・鍛打工程でない=蓄力をキャンセル(暴発しないように)
+		// F1操作中・鍛打工程でない・翻面中=蓄力をキャンセル(暴発しないように)。
+		// 翻面中は左键を火钳に使うので、翻面明けは一度離すまで蓄力させない(m_canStrike=false)。
 		m_charging = false;
 		m_charge   = 0.0f;
+		if (flipping) m_canStrike = false;
 	}
 	// 開始直後の誤爆防止(一度ボタンを離すまで蓄力しない)
 	else if (!m_canStrike)
@@ -650,6 +804,15 @@ void SceneForge::UpdatePlay(float tick)
 		m_match = m_forgeProg;
 	}
 	else m_match = m_forging.ShapeMatch();
+
+	// --- 翻面の見た目 ---
+	//   Flipping 中はマウスが m_flipAngle を直接動かす(UpdateFlip 内)。それ以外の時は、確定済みの
+	//   面の清潔な角(0 か π)へ Damp で落ち着かせる。Damp はフレームレート非依存。
+	if (m_flipPhase != FlipPhase::Flipping)
+	{
+		float flipTarget = (float)m_forging.Side() * DirectX::XM_PI;	// 表=0, 裏=π
+		m_flipAngle = Lerp::Damp(m_flipAngle, flipTarget, FLIP_TURN_LAMBDA, tick);
+	}
 
 	// --- ハンマーの上下: 真の弾簧-阻尼(spring-damper)物理 ---
 	// 自然長 HAMMER_REST_LIFT のバネに質量 m の錘が付く模型(老師の SceneSpring と同じ流儀)。
@@ -824,6 +987,17 @@ void SceneForge::Update(float tick)
 			// E互動 → 工位(鍛造)モードへ。実行する工程は配方の現在工程(StartGameで step0 から進む)。
 			//   ※退出(工位→走動)のキー/処理は未定(ユーザー検討中)なので、ここでは入れない。
 			if (m_player.WantInteract()) m_walkMode = false;
+		}
+		else if (m_flipPhase == FlipPhase::Flipping)
+		{
+			// 翻面の「翻す」中はマウスを翻し量に使う(UpdatePlay→UpdateFlip が読む)。
+			// ここで視角を読むと同フレームで光標を二重に中心へ戻す=偏移が消えるので、視角は止める。
+		}
+		else if (m_flipPhase != FlipPhase::None)
+		{
+			// 翻面中(運鏡ビート/火钳待命)はハンマーを置いている=狙いも視角も動かさない。
+			// マウス移動は読んで捨てる(光標は中心へ戻す)=翻面明けに溜まった移動量で視点が跳ばない。
+			float dx, dy; ReadMouseDelta(dx, dy);
 		}
 		else
 		{

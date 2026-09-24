@@ -17,9 +17,10 @@
 class ForgingSim
 {
 public:
-    static const int NL = 20;   // cells along the length (Z)
-    static const int NW = 6;    // cells across the width (X)
-    static const int NSEG = 5;  // coarse length segments (per-segment morph progress)
+    static const int NL = 20;    // cells along the length (Z)
+    static const int NW = 6;     // cells across the width (X)
+    static const int NSEG = 5;   // coarse length segments (per-segment morph progress)
+    static const int NSIDES = 2; // the blade has two faces; each is forged independently
 
     // What one strike did to the iron. The scene switches on this for audio/score/
     // feedback (game rules), which are not this class's job.
@@ -38,14 +39,23 @@ public:
 
     void  BurnAll(float amount); // overheating scorches every cell (adds damage, clamped)
 
+    // Turn the workpiece over so the other face is up. The player triggers this in
+    // the flip step (tongs); after it, strikes and every read below refer to the
+    // newly-up face. State is untouched -- flipping only swaps which side is active.
+    void  Flip() { m_side ^= 1; }
+    void  SetSide(int s) { m_side = s ? 1 : 0; } // set which face is up directly (flip UI commits a face)
+    int   Side() const { return m_side; }        // which face is up (0 = front, 1 = back)
+
     // --- read-only views for rendering / aim / HUD ---
-    float Height(int i, int j) const { return m_h[i][j]; }
-    float Damage(int i, int j) const { return m_dmgF[i][j]; }
-    float SegProg(int s)       const { return m_segProg[s]; }
+    // These always report the face that is currently up (m_side), so callers that
+    // draw / aim at "the visible face" need no change when the piece is flipped.
+    float Height(int i, int j) const { return m_h[m_side][i][j]; }
+    float Damage(int i, int j) const { return m_dmgF[m_side][i][j]; }
+    float SegProg(int s)       const { return m_segProg[m_side][s]; }
     float Start()              const { return m_hStart; }
-    bool  SegDone(int s)       const { return m_segProg[s] >= SEG_DONE; }
-    bool  AllSegmentsDone()    const;
-    float SegAverage()         const; // mean segment progress (display / morph preview)
+    bool  SegDone(int s)       const { return m_segProg[m_side][s] >= SEG_DONE; }
+    bool  BothSidesDone()      const; // every segment of BOTH faces is shaped (ends the Forge step)
+    float SegAverage()         const; // mean segment progress of the up face (display / morph preview)
 
 private:
     // How strongly the iron reacts (physics magnitudes; the numbers you tune/defend).
@@ -55,9 +65,10 @@ private:
     static constexpr float DMG_COLD_HIT = 0.35f;  // crack from one cold strike
     static constexpr float DMG_OVER_HIT = 0.25f;  // scorch from one overheated strike
 
-    float m_hStart = 0.17f;     // uniform starting thickness = thickest part of the weapon
-    float m_h[NL][NW];          // current height (thickness) field
-    float m_hTgt[NL][NW];       // target (finished weapon) height field
-    float m_dmgF[NL][NW];       // per-cell damage 0..1 (cold crack / overheat scorch)
-    float m_segProg[NSEG] = {}; // per-segment shaping progress 0..1
+    int   m_side = 0;                 // which face is up right now (0 = front, 1 = back)
+    float m_hStart = 0.17f;           // uniform starting thickness = thickest part of the weapon
+    float m_h[NSIDES][NL][NW];        // current height (thickness) field, per face
+    float m_hTgt[NL][NW];             // target (finished weapon) height field (same shape for both faces)
+    float m_dmgF[NSIDES][NL][NW];     // per-cell damage 0..1 (cold crack / overheat scorch), per face
+    float m_segProg[NSIDES][NSEG] = {}; // per-segment shaping progress 0..1, per face
 };
