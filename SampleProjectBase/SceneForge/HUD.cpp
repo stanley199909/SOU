@@ -97,9 +97,9 @@ void SceneForge::DrawHeatGauge()
 	dl->AddRectFilled(ImVec2(lerpX(OVERHEAT), y), ImVec2(x1, y + hgt),
 		IM_COL32(180, 40, 40, 160));
 	// 現在温度の塗り
-	dl->AddRectFilled(ImVec2(x0, y), ImVec2(lerpX(m_heat), y + hgt), HeatColor(m_heat), 4.0f);
+	dl->AddRectFilled(ImVec2(x0, y), ImVec2(lerpX(m_forging.Heat()), y + hgt), HeatColor(m_forging.Heat()), 4.0f);
 	// マーカー
-	dl->AddLine(ImVec2(lerpX(m_heat), y - 5), ImVec2(lerpX(m_heat), y + hgt + 5),
+	dl->AddLine(ImVec2(lerpX(m_forging.Heat()), y - 5), ImVec2(lerpX(m_forging.Heat()), y + hgt + 5),
 		IM_COL32(255, 255, 255, 255), 2.0f);
 	// 枠
 	dl->AddRect(ImVec2(x0, y), ImVec2(x1, y + hgt), IM_COL32(200, 200, 200, 120), 4.0f);
@@ -145,7 +145,7 @@ void SceneForge::DrawPlayUI()
 	//   死んでいて動かせない。狙いの提示は「動くハンマー＋刃の高亮段」で行う(下の WeaponRender)。
 
 	// 過熱の警告(点滅)
-	if (m_heat > OVERHEAT)
+	if (m_forging.Heat() > OVERHEAT)
 	{
 		float p = 0.5f + 0.5f * sinf(m_time * 12.0f);
 		CenterText("!!  OVERHEAT  !!", 0.20f, 1.6f, IM_COL32(255, 70, 50, (int)(150 + p * 105)));
@@ -191,6 +191,9 @@ void SceneForge::DrawPlayUI()
 	// 操作ガイド
 	CenterText("Mouse : Aim    Hold L-MOUSE : Hammer    Hold R : Heat    Q : Quench",
 		0.93f, 1.0f, IM_COL32(255, 255, 255, 170));
+
+	// 互動提示(走動中、範囲内で物件を見ている時だけ「E」を物件の上に出す)
+	DrawInteractPrompt();
 }
 
 //--- 出来栄え 0..1: 形の一致度と打撃品質の平均を重み合成する。
@@ -323,7 +326,6 @@ void SceneForge::DrawUI()
 		{
 			ImGui::TextDisabled("-- Turning feel --");
 			ImGui::SliderFloat("Flip sens",      &m_flipSens,     0.0001f, 0.003f, "%.4f");	// マウス→手の狙い(小=大きく振る)
-			ImGui::SliderFloat("Flip max speed", &m_flipMaxSpeed, 0.3f, 6.0f, "%.2f rad/s");	// 刃の最大回転速度(小=重い)
 			ImGui::TextDisabled("-- Camera choreography --");
 			ImGui::SliderFloat("Tongs lean",  &m_tongsLean,  0.0f, 0.6f, "%.2f");	// 火钳へ体を寄せる割合
 			ImGui::SliderFloat("Grip dolly",  &m_gripDolly,  0.0f, 0.7f, "%.2f");	// 夹む時に刃へ寄る割合
@@ -364,6 +366,10 @@ void SceneForge::DrawUI()
 			ImGui::Text(m_walkMode ? "mode: WALK (press E to enter station)"
 			                       : "mode: STATION (forging)");
 			ImGui::SliderFloat("Walk speed",  &m_walkSpeed,    0.5f,  8.0f,   "%.2f");	// 移動速度(単位/秒)
+			ImGui::SliderFloat("Station move speed", &m_transSpeed,  0.5f, 6.0f, "%.2f");	// 工位への移動アニメの速さ(1..2秒に収まる)
+			ImGui::SliderFloat("Exit step back",     &m_exitStepBack, 0.0f, 2.0f, "%.2f");	// 退出時に金床から下がる距離
+			ImGui::SliderFloat("Interact look pad",  &m_lookPad,      0.0f, 0.5f, "%.2f");	// 視線判定の箱の膨らみ(大=狙いやすい)
+			ImGui::Text("interact focus: %s", m_focus >= 0 ? INTERACTABLES[m_focus].propKey : "-");
 			ImGui::SliderFloat("Mouse sens",  &m_walkSens,     0.0006f, 0.0050f, "%.4f");	// 視角感度(低=重い)
 			ImGui::SliderFloat("Pitch limit", &m_walkPitchLim, 0.3f,  1.55f,  "%.2f");	// 上下の振り切り制限(rad)
 			ImGui::SliderFloat("Eye height",  &m_walkEyeH,     0.8f,  2.2f,   "%.2f");	// 目線の高さ

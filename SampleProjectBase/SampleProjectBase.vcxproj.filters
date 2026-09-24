@@ -177,6 +177,9 @@
     <ClCompile Include="SceneForge\CameraAim.cpp">
       <Filter>ソース ファイル\App\Scene\SceneForge</Filter>
     </ClCompile>
+    <ClCompile Include="SceneForge\Interaction.cpp">
+      <Filter>ソース ファイル\App\Scene\SceneForge</Filter>
+    </ClCompile>
     <ClCompile Include="GameLogic\AimSystem.cpp">
       <Filter>ソース ファイル\App\GameLogic</Filter>
     </ClCompile>

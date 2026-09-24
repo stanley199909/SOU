@@ -193,6 +193,7 @@
     <ClCompile Include="SceneForge\Scenery.cpp" />
     <ClCompile Include="SceneForge\HUD.cpp" />
     <ClCompile Include="SceneForge\CameraAim.cpp" />
+    <ClCompile Include="SceneForge\Interaction.cpp" />
     <ClCompile Include="SceneParticleLab.cpp" />
     <ClCompile Include="Audio.cpp" />
     <ClCompile Include="DebugUI.cpp" />

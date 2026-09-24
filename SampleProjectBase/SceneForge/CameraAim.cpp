@@ -19,6 +19,7 @@
 #include "Audio.h"
 #include "PostProcess.h"
 #include "AimSystem.h"
+#include "Lerp.h"
 #include <cstdlib>
 #include <cmath>
 #include <cstdio>
@@ -187,6 +188,154 @@ void SceneForge::ApplyWalkCamera()
 	cam->SetPos (eye);
 	cam->SetLook(XMFLOAT3(eye.x + fwd.x, eye.y + fwd.y, eye.z + fwd.z));
 	cam->SetUp  (XMFLOAT3(0.0f, 1.0f, 0.0f));
+}
+
+//====================================================================
+//  走動 ⇔ 工位 の過渡(移動アニメ)
+//====================================================================
+namespace {
+	// 前方ベクトル ⇔ (yaw, pitch)。yaw=0 で +Z(Player/ApplyWalkCamera と同規約)。
+	void FwdToAngles(const XMFLOAT3& f, float& yaw, float& pitch)
+	{
+		yaw = atan2f(f.x, f.z);
+		float y = f.y; if (y > 1.0f) y = 1.0f; if (y < -1.0f) y = -1.0f;
+		pitch = asinf(y);
+	}
+	XMFLOAT3 AnglesToFwd(float yaw, float pitch)
+	{
+		float cp = cosf(pitch);
+		return XMFLOAT3(sinf(yaw) * cp, sinf(pitch), cosf(yaw) * cp);
+	}
+	// 角度差を -π..π に畳む=最短方向へ回る(350°→10° を 340°逆回りさせない)。
+	float WrapPi(float a)
+	{
+		while (a >  XM_PI) a -= XM_2PI;
+		while (a < -XM_PI) a += XM_2PI;
+		return a;
+	}
+}
+
+//--- 過渡の到着先の視点。実際のカメラ関数を呼んで結果を読む=到着後の画と必ず一致する。
+void SceneForge::TargetViewPose(XMFLOAT3& eye, XMFLOAT3& fwd)
+{
+	CameraBase* cam = GetObj<CameraBase>("Camera");
+	if (!cam) return;
+	if (m_modeTrans == ModeTrans::Enter) ApplyCamera();		// 工位の視点
+	else                                 ApplyWalkCamera();	// 走動の視点(玩家は BeginExitForge で配置済み)
+	eye = cam->GetPos();
+	XMFLOAT3 lk = cam->GetLook();
+	XMStoreFloat3(&fwd, XMVector3Normalize(XMVectorSubtract(XMLoadFloat3(&lk), XMLoadFloat3(&eye))));
+}
+
+//--- 開始時に画面に映っている視点を記録し、到着先までの距離から長さを決める(共通部)。
+static void BeginTransCommon(CameraBase* cam, XMFLOAT3& fromEye, XMFLOAT3& fromFwd)
+{
+	fromEye = cam->GetPos();
+	XMFLOAT3 lk = cam->GetLook();
+	XMStoreFloat3(&fromFwd, XMVector3Normalize(XMVectorSubtract(XMLoadFloat3(&lk), XMLoadFloat3(&fromEye))));
+}
+
+void SceneForge::BeginEnterForge()
+{
+	CameraBase* cam = GetObj<CameraBase>("Camera");
+	if (!cam || Transitioning()) return;
+	BeginTransCommon(cam, m_transFromEye, m_transFromFwd);
+
+	// 工位の視点は「正面の既定」から始める(前回の視角のずれを持ち越さない)。
+	m_lookYaw = 0.0f; m_lookPitch = 0.0f;
+	m_modeTrans  = ModeTrans::Enter;
+	m_transTimer = 0.0f;
+	m_transDur   = TransDuration();
+}
+
+//--- 過渡の長さ = 開始視点から到着先までの距離 / 速さ。MIN..MAX に収める(遠いほど長い)。
+float SceneForge::TransDuration()
+{
+	XMFLOAT3 toEye, toFwd; TargetViewPose(toEye, toFwd);
+	float dist = XMVectorGetX(XMVector3Length(XMVectorSubtract(XMLoadFloat3(&toEye), XMLoadFloat3(&m_transFromEye))));
+	float d = dist / m_transSpeed;
+	if (d < TRANS_MIN_TIME) d = TRANS_MIN_TIME;
+	if (d > TRANS_MAX_TIME) d = TRANS_MAX_TIME;
+	return d;
+}
+
+void SceneForge::BeginExitForge()
+{
+	CameraBase* cam = GetObj<CameraBase>("Camera");
+	if (!cam || Transitioning()) return;
+	BeginTransCommon(cam, m_transFromEye, m_transFromFwd);
+
+	// 退出先 = 工位の視点から、金床と反対側へ m_exitStepBack だけ下がった床の上。金床の方を向く。
+	//   位置は工位カメラ/鉄のアンカーから算出=配置を変えても「金床の一歩手前」に立つ。
+	float dx = m_barAnchor.x - m_camPos[0], dz = m_barAnchor.z - m_camPos[2];
+	float len = sqrtf(dx * dx + dz * dz); if (len < 1e-4f) { dx = 0.0f; dz = 1.0f; len = 1.0f; }
+	dx /= len; dz /= len;										// 金床への水平方向
+	XMFLOAT3 foot(m_camPos[0] - dx * m_exitStepBack, m_walkFloorY, m_camPos[2] - dz * m_exitStepBack);
+	m_player.Init(foot, atan2f(dx, dz));						// 金床の方を向いて立つ
+	float eyeY  = foot.y + m_walkEyeH;
+	float horiz = len + m_exitStepBack;							// 目から鉄までの水平距離
+	m_walkPitch = atan2f(m_barAnchor.y - eyeY, horiz);			// 金床を見下ろす角度
+	if (m_walkPitch >  m_walkPitchLim) m_walkPitch =  m_walkPitchLim;
+	if (m_walkPitch < -m_walkPitchLim) m_walkPitch = -m_walkPitchLim;
+
+	m_modeTrans  = ModeTrans::Exit;
+	m_transTimer = 0.0f;
+	m_transDur   = TransDuration();
+}
+
+//--- 計時を進め、終わったらモードを切り替える。過渡中のマウスは読んで捨てる(明けに視点が跳ばない)。
+void SceneForge::UpdateModeTrans(float tick)
+{
+	if (!Transitioning()) return;
+	float dx, dy; ReadMouseDelta(dx, dy);	// 捨てる
+
+	m_transTimer += tick;
+	// 火钳を持って向かっている時は、移動しながらハンマーを置く(着いた時に既に火钳に持ち替え済み)。
+	if (m_pendingFlip) m_hammerStowW = Lerp::SmoothStep(m_transTimer / m_transDur);
+	if (m_transTimer < m_transDur) return;
+
+	m_walkMode  = (m_modeTrans == ModeTrans::Exit);	// 到着: Exit=走動へ / Enter=工位へ
+	m_canStrike = false;							// 工位に入った直後の誤打防止(一度離すまで叩かない)
+	if (m_modeTrans == ModeTrans::Enter && m_pendingFlip)
+	{
+		// 火钳を取って来た=翻面の「火钳待命」から始める(取り出し運鏡は台の所で済んでいる)。
+		m_flipPhase   = FlipPhase::Ready;
+		m_pendingFlip = false;
+	}
+	m_modeTrans = ModeTrans::None;
+}
+
+//--- 過渡中のカメラ: 開始視点 → 到着先 を SmoothStep で補間(出だしと着地がなめらか)。
+void SceneForge::ApplyTransCamera()
+{
+	CameraBase* cam = GetObj<CameraBase>("Camera");
+	if (!cam) return;
+	XMFLOAT3 toEye, toFwd; TargetViewPose(toEye, toFwd);	// 到着先(これで cam は一旦上書きされる)
+
+	float s = Lerp::SmoothStep(m_transTimer / m_transDur);
+	XMFLOAT3 eye(
+		m_transFromEye.x + (toEye.x - m_transFromEye.x) * s,
+		m_transFromEye.y + (toEye.y - m_transFromEye.y) * s,
+		m_transFromEye.z + (toEye.z - m_transFromEye.z) * s);
+
+	float y0, p0, y1, p1;
+	FwdToAngles(m_transFromFwd, y0, p0);
+	FwdToAngles(toFwd, y1, p1);
+	float yaw   = y0 + WrapPi(y1 - y0) * s;					// 最短方向へ振り向く
+	float pitch = p0 + (p1 - p0) * s;
+	XMFLOAT3 f = AnglesToFwd(yaw, pitch);
+
+	cam->SetPos(eye);
+	cam->SetLook(XMFLOAT3(eye.x + f.x, eye.y + f.y, eye.z + f.z));
+	cam->SetUp(XMFLOAT3(0.0f, 1.0f, 0.0f));
+}
+
+//--- 今の状態に応じたカメラを適用(Update/Draw の両方から呼ぶ)。
+void SceneForge::ApplyViewCamera()
+{
+	if (Transitioning()) ApplyTransCamera();
+	else if (m_walkMode) ApplyWalkCamera();	// 走動: 玩家目線の一人称カメラ
+	else                 ApplyCamera();		// 工位: FPS式受限環視カメラ
 }
 
 //--- マウス移動を視角(yaw/pitch)へ累積する。FPS方式: 毎フレーム、カーソルを画面中心へ
@@ -466,12 +615,15 @@ void SceneForge::SaveTuning()
 	fprintf(fp, "wpoff %.5f %.5f %.5f\n", m_wpOff[0], m_wpOff[1], m_wpOff[2]);
 	// -- 翻面 --
 	fprintf(fp, "flipsens %.6f\n",   m_flipSens);
-	fprintf(fp, "flipspeed %.5f\n",  m_flipMaxSpeed);
 	fprintf(fp, "tongslean %.5f\n",  m_tongsLean);
 	fprintf(fp, "gripdolly %.5f\n",  m_gripDolly);
 	fprintf(fp, "griplambda %.5f\n", m_gripLambda);
 	fprintf(fp, "stowoff %.5f %.5f %.5f\n", m_hammerStowOff[0], m_hammerStowOff[1], m_hammerStowOff[2]);
 	fprintf(fp, "stowtilt %.5f\n",   m_hammerStowTilt);
+	// -- 走動⇔工位の移動アニメ --
+	fprintf(fp, "transspeed %.5f\n", m_transSpeed);
+	fprintf(fp, "exitstep %.5f\n",   m_exitStepBack);
+	fprintf(fp, "lookpad %.5f\n",    m_lookPad);
 
 	fclose(fp);
 }
@@ -505,8 +657,10 @@ void SceneForge::TuningRefs(std::vector<float*>& out)
 		&m_wpYaw, &m_wpPitch, &m_wpRoll, &m_wpScale,
 		&m_wpOff[0], &m_wpOff[1], &m_wpOff[2],
 		// -- Flip --
-		&m_flipSens, &m_flipMaxSpeed, &m_tongsLean, &m_gripDolly, &m_gripLambda,
+		&m_flipSens, &m_tongsLean, &m_gripDolly, &m_gripLambda,
 		&m_hammerStowOff[0], &m_hammerStowOff[1], &m_hammerStowOff[2], &m_hammerStowTilt,
+		// -- Station transition --
+		&m_transSpeed, &m_exitStepBack, &m_lookPad,
 	};
 	out.assign(r, r + _countof(r));
 }
@@ -571,12 +725,14 @@ void SceneForge::LoadTuning()
 		else if (strcmp(key, "wpscale")    == 0) sscanf_s(v, "%f", &m_wpScale);
 		else if (strcmp(key, "wpoff")      == 0) sscanf_s(v, "%f %f %f", &m_wpOff[0], &m_wpOff[1], &m_wpOff[2]);
 		else if (strcmp(key, "flipsens")   == 0) sscanf_s(v, "%f", &m_flipSens);
-		else if (strcmp(key, "flipspeed")  == 0) sscanf_s(v, "%f", &m_flipMaxSpeed);
 		else if (strcmp(key, "tongslean")  == 0) sscanf_s(v, "%f", &m_tongsLean);
 		else if (strcmp(key, "gripdolly")  == 0) sscanf_s(v, "%f", &m_gripDolly);
 		else if (strcmp(key, "griplambda") == 0) sscanf_s(v, "%f", &m_gripLambda);
 		else if (strcmp(key, "stowoff")    == 0) sscanf_s(v, "%f %f %f", &m_hammerStowOff[0], &m_hammerStowOff[1], &m_hammerStowOff[2]);
 		else if (strcmp(key, "stowtilt")   == 0) sscanf_s(v, "%f", &m_hammerStowTilt);
+		else if (strcmp(key, "transspeed") == 0) sscanf_s(v, "%f", &m_transSpeed);
+		else if (strcmp(key, "exitstep")   == 0) sscanf_s(v, "%f", &m_exitStepBack);
+		else if (strcmp(key, "lookpad")    == 0) sscanf_s(v, "%f", &m_lookPad);
 	}
 	fclose(fp);
 }

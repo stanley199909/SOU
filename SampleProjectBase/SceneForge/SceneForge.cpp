@@ -37,7 +37,7 @@ struct VIN  { float3 pos:POSITION0; float3 nrm:NORMAL0; float2 uv:TEXCOORD0; flo
 struct VOUT { float4 pos:SV_POSITION; float3 nrm:TEXCOORD0; float2 uv:TEXCOORD3; float4 col:TEXCOORD1; float3 wp:TEXCOORD2; };
 VOUT main(VIN v){ VOUT o; o.pos=mul(float4(v.pos,1),view); o.pos=mul(o.pos,proj); o.nrm=v.nrm; o.uv=v.uv; o.col=v.col; o.wp=v.pos; return o; }
 )EOT";
-//--- 武器PS: 真の鋼テクスチャ(BaseColor)を地色にし、発光はゲームの実時温度 m_heat で駆動する。
+//--- 武器PS: 真の鋼テクスチャ(BaseColor)を地色にし、発光はゲームの実時温度 m_forging.Heat() で駆動する。
 //    col.rgb = 温度勾配色(HeatRGB)、col.a = 温度スカラー m_heat。
 //    冷たい時=鋼テクスチャをライティングした金属色。熱い時=温度色で発光(テクスチャの陰影は残す)。
 static const char* g_wpPS = R"EOT(
@@ -241,7 +241,7 @@ void SceneForge::Init()
 	PixelShader*  gps  = CreateObj<PixelShader>("PS_Ghost"); gps->Compile(g_ghostPS);
 	LoadWeaponStages();
 
-	// 武器の鋼テクスチャ(BaseColor=冷鋼の地色)。発光は m_heat で駆動するので Emissive は直貼りしない。
+	// 武器の鋼テクスチャ(BaseColor=冷鋼の地色)。発光は温度 m_forging.Heat() で駆動するので Emissive は直貼りしない。
 	{
 		m_wpTex = TextureCache::Get("Assets/MM_Blacksmith_Pack/Medieval_Sword_Blade/Blade_BaseColor.png");
 	}
@@ -467,16 +467,16 @@ void SceneForge::StartGame()
 	m_state    = GAME_PLAY;
 	// ゲーム開始時は「走動モード」から。工坊を歩いて工位に着き、Eで鍛造に入る。
 	m_walkMode = true;
+	m_modeTrans = ModeTrans::None;	// 走動⇔工位の移動アニメも解除
+	m_pendingFlip = false; m_focus = -1; m_promptAlpha = 0.0f;	// 互動の状態も初期化
 	m_walkPitch = 0.0f;
 	m_player.Init(DirectX::XMFLOAT3(0.0f, m_walkFloorY, -2.0f), 0.0f);	// 開始位置/向きを戻す
 	m_score    = 0;
-	m_heat     = 0.0f;
 	m_forging.Reset();		// 鉄を厚板・無傷・進捗0へ(表面が上に戻る。目標形状も再生成)
 	m_forgeProg = 0.0f;		// 武器モーフのプレビュー進捗も戻す
 	m_match = 0.0f;
 	m_flipAngle = 0.0f;		// 翻面回転も表(0)へ戻す
 	m_flipPhase = FlipPhase::None;	// 翻面子状態機も初期化(鍛打中に戻す)
-	m_flipTurn  = 0.0f;
 	m_camTongsW = 0.0f; m_camGripW = 0.0f;	// 運鏡の寄りも解除
 	m_hammerStowW = 0.0f;					// ハンマーは構え位置へ
 	m_tongsInHand = false;					// 火钳は台の上へ
@@ -555,9 +555,9 @@ bool SceneForge::FlipIsCutscene() const
 
 void SceneForge::UpdateFlip(float tick, bool inputOn)
 {
+	// 工程の制限は「F で火钳を取る」入口だけ(下の None)。台の火钳を取って来た場合は加熱工程でも
+	// 翻面が始まるので、翻面そのものは工程に関係なく最後まで進める(途中で打ち切ると火钳が手に残る)。
 	const bool forgePhase = (CurrentStep().type == StepName::Forge);
-	// 鍛打工程でない時(=安全策)だけ翻面を打ち切る。
-	if (!forgePhase) { m_flipPhase = FlipPhase::None; m_tongsInHand = false; return; }
 	// 入力凍結中(F1/遷移)は「一時停止」: 段階も計時も進めない。打ち切らない=動画は取り消されない。
 	if (!inputOn) return;
 
@@ -565,8 +565,8 @@ void SceneForge::UpdateFlip(float tick, bool inputOn)
 	// ビート中に判定しなければ、そのキーはビート明けに持ち越されない(=バッファされず暴発しない)。
 	switch (m_flipPhase)
 	{
-	case FlipPhase::None:									// 鍛打中: F で翻面を起動
-		if (IsKeyTrigger('F')) { m_flipPhase = FlipPhase::TongsOut; m_flipTimer = 0.0f; }
+	case FlipPhase::None:									// 鍛打工程の工位でだけ: F で火钳を取って翻面を起動
+		if (forgePhase && IsKeyTrigger('F')) { m_flipPhase = FlipPhase::TongsOut; m_flipTimer = 0.0f; }
 		break;
 
 	case FlipPhase::TongsOut:								// 火钳を取り出す運鏡(慢い)
@@ -579,47 +579,36 @@ void SceneForge::UpdateFlip(float tick, bool inputOn)
 		break;
 	}
 
-	case FlipPhase::Ready:									// 火钳待命: F=戻す / 左键=夹む
-		if      (IsKeyTrigger('F'))       { m_flipPhase = FlipPhase::PutBack;  m_flipTimer = 0.0f; }
+	case FlipPhase::Ready:									// 火钳待命: F/ESC=戻す / 左键=夹む
+		if      (IsKeyTrigger('F') || IsKeyTrigger(VK_ESCAPE)) { m_flipPhase = FlipPhase::PutBack; m_flipTimer = 0.0f; }
 		else if (IsKeyTrigger(VK_LBUTTON)){ m_flipPhase = FlipPhase::Gripping; m_flipTimer = 0.0f; }
 		break;
 
 	case FlipPhase::Gripping:								// 铁を夹む運鏡→翻し開始(今の面から)
 		m_flipTimer += tick;
-		if (m_flipTimer >= FLIP_GRIP_TIME)
-		{
-			m_flipPhase = FlipPhase::Flipping;
-			m_flipTurn  = m_flipAngle / DirectX::XM_PI;	// 今の刃の角度から翻し始める(1=半回転)
-		}
+		if (m_flipTimer >= FLIP_GRIP_TIME) m_flipPhase = FlipPhase::Flipping;	// 今の刃の角度から翻し始める
 		break;
 
 	case FlipPhase::Flipping:								// マウス左右で铁を翻す。左键で面を確定
 	{
-		// 二段構え: マウス→「手の狙い」m_flipTurn(0..1)、刃の角度はそれを最大角速度つきで追う。
-		//   旧: 角度=マウス直結 → 軽すぎて非現実。新: 速く振っても刃は m_flipMaxSpeed 以上では回らない
-		//   =火钳で重い熱鉄を返す「重さ」。止めれば狙いの角度で止まる(追いつく)。
-		//   狙いは上限なし=同じ方向へ回し続ければ何回でも翻る(左へ回せば逆回転)。
+		// マウス移動量をそのまま角度へ(1:1, FPS の視点操作と同じ raw input)。
+		//   マウスが止まれば刃も止まる=入力が溜まらない。「重さ」は低い感度(m_flipSens)で出す。
+		//   ※旧方式(狙い角を最大角速度で追う)は、速く振ると狙いが先行して溜まり、手を止めても
+		//     刃が回り続けた(入力のバックログ)。加速/平滑/上限は手感を裏切るので使わない。
+		//   上限なし=同じ方向へ回し続ければ何回でも翻る(左へ回せば逆回転)。
 		float dx, dy; ReadMouseDelta(dx, dy);			// 相対マウス(ここで光標を中心へ戻す)
-		m_flipTurn += dx * m_flipSens;
-
-		const float target = m_flipTurn * DirectX::XM_PI;
-		const float maxStep = m_flipMaxSpeed * tick;	// このフレームで回せる上限(rad)
-		float diff = target - m_flipAngle;
-		if (diff >  maxStep) diff =  maxStep;
-		if (diff < -maxStep) diff = -maxStep;
-		m_flipAngle += diff;
+		m_flipAngle += dx * m_flipSens * DirectX::XM_PI;	// 感度の単位=「1pxあたり何半回転」
 
 		// 面の判定: 刃角を「最も近い半回転の番号」k に丸める(境界=π/2, 3π/2, ...=半回転ごとに0.5の線)。
 		//   k が偶数=表, 奇数=裏。0.5 を越えるたびに k が1つ進む=一回ずつ翻る。見た目の刃と必ず一致。
 		const int k = (int)floorf(m_flipAngle / DirectX::XM_PI + 0.5f);
 		m_forging.SetSide(((k % 2) + 2) % 2);			// 負の k(逆回転)でも 0/1 に正規化
-		if (IsKeyTrigger(VK_LBUTTON))					// 現在の面を確定→待命へ
+		if (IsKeyTrigger(VK_LBUTTON) || IsKeyTrigger(VK_ESCAPE))	// 現在の面を確定→待命へ(ESC=一段戻る)
 		{
 			// 角度を「今の面の清潔な角」(0 か π)の近くへ巻き戻す。2π の倍数を引くだけなので見た目は不変。
 			// これで確定後の Damp(目標=面×π)が最短で落ち着き、回し続けても角度が無限に増えない。
 			const int wrap = k - m_forging.Side();		// 2 の倍数
 			m_flipAngle -= wrap * DirectX::XM_PI;
-			m_flipTurn  -= (float)wrap;
 			m_flipPhase = FlipPhase::Ready;
 		}
 		break;
@@ -690,6 +679,7 @@ void SceneForge::FinishGame()
 	Audio::PlayLoop(Audio::BGM_RESULT, 0.5f);	// 結果画面BGM
 	m_state = GAME_RESULT;
 	m_walkMode = false;	// 結果画面は通常カメラで見せる(走動カメラを解除)
+	m_modeTrans = ModeTrans::None;
 }
 
 //--- タイトル: 雰囲気で自動的に火花を出しつつ、SPACEで開始
@@ -706,8 +696,17 @@ void SceneForge::UpdateTitle(float /*tick*/)
 void SceneForge::UpdatePlay(float tick)
 {
 	// F1(デバッグUI)を開いている間、画面フェード(遷移)中、および走動モード中はゲーム入力を凍結する。
-	// ※走動中に打鉄/加熱/工程FSMが動かないよう !m_walkMode を条件に含める。
-	bool inputOn = !DebugUI::IsVisible() && !m_fade.IsBusy() && !m_walkMode;
+	// ※走動中・走動⇔工位の移動アニメ中に打鉄/加熱/工程FSMが動かないよう条件に含める。
+	bool inputOn = !DebugUI::IsVisible() && !m_fade.IsBusy() && !m_walkMode && !Transitioning();
+
+	// --- 工位から出る: E または ESC(汎用の「戻る」)。翻面中は出ない(火钳を持ったまま離れない)。
+	//   翻面中の ESC は UpdateFlip が「一段戻る」として扱う(Flipping→Ready→火钳を戻す)。
+	if (inputOn && m_flipPhase == FlipPhase::None && (IsKeyTrigger('E') || IsKeyTrigger(VK_ESCAPE)))
+	{
+		m_charging = false; m_charge = 0.0f;	// 蓄力中なら破棄(暴発させない)
+		BeginExitForge();
+		return;
+	}
 
 	// Pキー: 瞄準区域の可視化トグル(デバッグ用。既定OFF=KCD式に「叩く場所」を示さない)
 	if (inputOn && IsKeyTrigger('P')) m_showAimHi = !m_showAimHi;
@@ -720,21 +719,25 @@ void SceneForge::UpdatePlay(float tick)
 	if (inputOn) UpdateFlipCamera(tick);	// 段階→運鏡の重み(F1中は一時停止=画も止まる)
 	const bool flipping = (m_flipPhase != FlipPhase::None);
 
-	// --- 加熱: R長押しで炉で加熱 / 常にゆっくり自然冷却 ---
+	// --- 温度: 「入力」と「世界の時間」を分ける ---
+	//   simOn  = 世界の時間が流れているか(F1デバッグ中・画面フェード中だけ止まる)。
+	//   inputOn= 玩家が工位で操作できるか(走動中/移動アニメ中は false)。
+	//   自然冷却は鉄そのものの物理なので simOn で毎フレーム進める=走動中も冷める。
+	//   加熱(R)は炉の前で玩家が行う行為なので inputOn の時だけ。
+	const bool simOn = !DebugUI::IsVisible() && !m_fade.IsBusy();
 	bool heating = inputOn && IsKeyPress('R');
-	if (inputOn)
+	if (simOn)
 	{
-		if (heating) m_heat += HEAT_RATE * tick;
-		m_heat -= m_coolRate * tick;
-		if (m_heat < 0.0f) m_heat = 0.0f;
-		if (m_heat > 1.0f) m_heat = 1.0f;
+		if (heating) m_forging.AddHeat(HEAT_RATE * tick);	// 熱源=炉(外から熱を入れる)
+		m_forging.Cool(tick);								// 鉄が自分で冷める
 	}
 	// 加熱中は炉火/風箱の持続音をループ。離した(またはF1/遷移で入力停止)瞬間に停止。
 	if (heating && !m_heatSndOn)      { Audio::PlayLoop(Audio::SE_FORGE_LOOP, 0.5f); m_heatSndOn = true; }
 	else if (!heating && m_heatSndOn) { Audio::Stop(Audio::SE_FORGE_LOOP);           m_heatSndOn = false; }
 
 	// --- 過熱で放置すると鋼全体が焼けていく(損傷が蓄積)＋ジュー音 ---
-	if (m_heat > OVERHEAT)
+	//   冷却と同じく鉄の物理なので simOn で進める(F1中は温度と一緒に止まる)。
+	if (simOn && m_forging.Heat() > OVERHEAT)
 	{
 		m_forging.BurnAll(BURN_RATE * tick);	// 過熱で鉄全体が焼ける(損傷が蓄積)
 		m_sizzleTimer -= tick;
@@ -844,8 +847,9 @@ void SceneForge::UpdatePlay(float tick)
 void SceneForge::DoStrike()
 {
 	float power = m_charge;			// 0..1
-	bool cold = (m_heat < COLD_LIMIT);
-	bool over = (m_heat > OVERHEAT);
+	const float heat = m_forging.Heat();
+	bool cold = (heat < COLD_LIMIT);
+	bool over = (heat > OVERHEAT);
 
 	// --- リズム判定: 前回打撃からの間隔が「速すぎず遅すぎず」なら良いテンポ ---
 	float interval = m_sinceStrike;
@@ -875,8 +879,7 @@ void SceneForge::DoStrike()
 		m_forging.ApplyStrike(ci, cj, seg, power, heatFactor, grooveMult, cold, over);
 
 	// 温度が下がる / 火花 / 振動
-	m_heat -= STRIKE_COOL;
-	if (m_heat < 0.0f) m_heat = 0.0f;
+	m_forging.AddHeat(-STRIKE_COOL);	// 打撃で熱が金床/鎚へ逃げる
 	float sparkScale = (0.4f + power * 1.2f) * (over ? 0.7f : 1.0f);
 	if (!cold) Strike(sparkScale);
 
@@ -947,7 +950,15 @@ void SceneForge::Update(float tick)
 	bool canControl = (m_state == GAME_PLAY && !DebugUI::IsVisible() && !m_fade.IsBusy());
 	if (canControl)
 	{
-		if (m_walkMode)
+		// 互動の注視判定(①範囲 ②視線)。走動中以外(工位/移動アニメ中)は対象なし=提示がフェードアウト。
+		UpdateInteract(tick);
+
+		if (Transitioning())
+		{
+			// 走動⇔工位の移動アニメ中: 取り消し不可。計時だけ進め、入力は捨てる(F1中は一時停止)。
+			UpdateModeTrans(tick);
+		}
+		else if (m_walkMode)
 		{
 			// --- 走動モード: 一人称で工坊を歩く ---
 			UpdateWalkLook();				// マウス→玩家yaw(左右)/カメラpitch(上下)
@@ -955,11 +966,9 @@ void SceneForge::Update(float tick)
 			std::vector<Box> walls;			// TODO(Step3): シーンのプロップから壁を組む。今は衝突なし
 			m_player.Update(tick, walls);	// WASDで一人称移動
 
-			// TODO(Step3): 本来は各工位(砧/炉/水槽)への距離で可互動を判定する。今は常に可互動。
-			m_player.SetCanInteract(true);
-			// E互動 → 工位(鍛造)モードへ。実行する工程は配方の現在工程(StartGameで step0 から進む)。
-			//   ※退出(工位→走動)のキー/処理は未定(ユーザー検討中)なので、ここでは入れない。
-			if (m_player.WantInteract()) m_walkMode = false;
+			// 互動: ①範囲 ②視線 の両方が true の物件だけ E が効く(Interaction.cpp)。
+			//   金床=工位へ移動 / 火钳=取って工位へ移動→翻面。退出(工位→走動)は UpdatePlay 側で E/ESC。
+			if (m_player.WantInteract() && m_focus >= 0) DoInteract(INTERACTABLES[m_focus].action);
 		}
 		else if (m_flipPhase == FlipPhase::Flipping)
 		{
@@ -987,10 +996,8 @@ void SceneForge::Update(float tick)
 		float k = tick * m_camLerpRate; if (k > 1.0f) k = 1.0f;	// 速さは F1「Cam lerp」で調整
 		m_aimRailSmooth += (railCam - m_aimRailSmooth) * k;	// 停位へ滑らかに切替(リアリティ)
 	}
-	// デバッグUI表示中はカメラ固定を外し、DCCの自由カメラ(ALT+ドラッグでオービット)を許可。
-	// 非表示時(=プレイ中)はKCD風の固定カメラに上書きする。
-	if (m_walkMode) ApplyWalkCamera();	// 走動: 玩家目線の一人称カメラ
-	else            ApplyCamera();		// 工位: FPS式受限環視カメラ(編集は STAGESETTING シーンで行う)
+	// 過渡中=補間カメラ / 走動=玩家目線 / 工位=FPS式受限環視カメラ(編集は STAGESETTING シーンで行う)。
+	ApplyViewCamera();
 	UpdateBarAnchor();	// 金床の砧面の高さに鉄条を自動配置
 
 	// PLAY中はOSカーソルを隠す(照準は光るセグメントで示す)。デバッグUI表示中は出す
@@ -1024,14 +1031,13 @@ void SceneForge::Update(float tick)
 void SceneForge::Draw()
 {
     CottageRender::ClearExterior();
-	if (m_walkMode) ApplyWalkCamera();	// 走動: 玩家目線(Updateと同じ規約でDrawでも適用)
-	else            ApplyCamera();		// 工位: 固定カメラを適用(GetViewの前に)
+	ApplyViewCamera();	// Update と同じ規約でDrawでも適用(GetViewの前に)
 	DrawModelsTest();	// 先に不透明な3Dモデル(金床)を描く
 	if (m_wpOk) DrawWeapon();	// Blender武器モデルを進捗でモーフ(あれば優先)
 	else        Draw3DBillet();	// 無ければ従来の高さ場メッシュ
 	if (m_wpOk) DrawGhostTarget();	// 実体の後に完成形の半透明ゴーストを重ねる
 	DrawWater();		// 水槽の水面(屈折。背後のシーンを撮ってから描く=不透明の後)
-	if (DebugUI::IsVisible()) DrawDebugBoxes();	// F1中はAABB/箱を線で表示
+	if (DebugUI::IsVisible()) { DrawDebugBoxes(); DrawInteractBoxes(); }	// F1中はAABB/箱・互動範囲を線で表示
 
 	DrawEmbers();		// 炭火から立ち上る余燼(火花描画より前に。火花が無くても出す)
 

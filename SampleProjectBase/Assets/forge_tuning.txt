@@ -30,10 +30,12 @@ wppitch 0.00000
 wproll 0.00000
 wpscale 1.00000
 wpoff 0.00000 0.00000 0.00000
-flipsens 0.000600
-flipspeed 1.60000
+flipsens 0.000100
 tongslean 0.20000
 gripdolly 0.30000
 griplambda 5.00000
 stowoff 0.45000 -0.55000 -0.25000
 stowtilt 1.20000
+transspeed 2.00000
+exitstep 0.60000
+lookpad 0.12000

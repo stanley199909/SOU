@@ -5,6 +5,7 @@ void ForgingSim::Reset()
 {
     // Both faces start as a uniform thick billet (progress 0) with no damage, front up.
     m_side = 0;
+    m_heat = 0.0f;   // a fresh billet starts cold
     for (int s = 0; s < NSIDES; ++s)
     {
         for (int i = 0; i < NL; ++i)
@@ -12,6 +13,18 @@ void ForgingSim::Reset()
         for (int k = 0; k < NSEG; ++k) m_segProg[s][k] = 0.0f;
     }
     BuildTarget();
+}
+
+void ForgingSim::Cool(float dt)
+{
+    AddHeat(-coolRate * dt);
+}
+
+void ForgingSim::AddHeat(float amount)
+{
+    m_heat += amount;
+    if (m_heat < 0.0f) m_heat = 0.0f;
+    if (m_heat > 1.0f) m_heat = 1.0f;
 }
 
 // Define the finished weapon's target height field (a short sword).

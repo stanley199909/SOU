@@ -39,6 +39,16 @@ public:
 
     void  BurnAll(float amount); // overheating scorches every cell (adds damage, clamped)
 
+    // --- temperature of the iron (0 = cold .. 1 = white hot) ---
+    // Temperature belongs to the iron, not to what the player is doing: it keeps
+    // cooling every frame of play, whether the player is at the anvil or walking.
+    // Heat SOURCES (the forge, a strike soaking heat into the anvil) live outside
+    // and push heat in/out through AddHeat.
+    void  Cool(float dt);        // natural cooling over time (call every simulated frame)
+    void  AddHeat(float amount); // +heat from the forge, -heat lost to a strike (clamped 0..1)
+    float Heat() const { return m_heat; }
+    float coolRate = 0.03f;      // natural cooling speed (/sec). Tunable, like Hammer's public params
+
     // Turn the workpiece over so the other face is up. The player triggers this in
     // the flip step (tongs); after it, strikes and every read below refer to the
     // newly-up face. State is untouched -- flipping only swaps which side is active.
@@ -67,6 +77,7 @@ private:
     static constexpr float DMG_OVER_HIT = 0.25f;  // scorch from one overheated strike
 
     int   m_side = 0;                 // which face is up right now (0 = front, 1 = back)
+    float m_heat = 0.0f;              // temperature 0..1 (one value for the whole piece)
     float m_hStart = 0.17f;           // uniform starting thickness = thickest part of the weapon
     float m_h[NSIDES][NL][NW];        // current height (thickness) field, per face
     float m_hTgt[NL][NW];             // target (finished weapon) height field (same shape for both faces)

@@ -75,7 +75,7 @@ int SceneForge::BuildBarMesh()
 			if (ci < 0 || ci >= NL || cj < 0 || cj >= NW) continue;
 			float d = m_forging.Damage(ci, cj); if (d > dmg) dmg = d;
 		}
-		XMFLOAT4 c = HeatRGB(m_heat, dmg);
+		XMFLOAT4 c = HeatRGB(m_forging.Heat(), dmg);
 		float norm = h / m_forging.Start();
 		if (norm < 0.0f) norm = 0.0f; if (norm > 1.0f) norm = 1.0f;
 		float b = 0.26f + 0.74f * norm;
@@ -299,7 +299,7 @@ void SceneForge::BuildWeaponMorph()
 	const bool  playing = (m_state == GAME_PLAY);
 	const int   segAim  = (playing && m_aimValid) ? AimSeg() : -1;	// 準心が鉄の上に無ければ高亮なし
 	const float pulse   = 0.5f + 0.5f * sinf(m_time * 8.0f);
-	XMFLOAT4 heat = HeatRGB(m_heat, 0.0f);
+	XMFLOAT4 heat = HeatRGB(m_forging.Heat(), 0.0f);
 
 	// 進捗 p(0..1) → 段チェーン(stage_0..final)上の頂点 i の補間位置/法線(ローカル)。
 	auto morphAt = [&](int i, float p, XMVECTOR& outPos, XMVECTOR& outNrm)
@@ -390,7 +390,7 @@ void SceneForge::BuildWeaponMorph()
 			col.y = col.y + (1.0f - col.y) * b;
 			col.z = col.z + (1.0f - col.z) * b;
 		}
-		col.w = m_heat;			// PSへ温度スカラーを渡す(冷→熱のブレンドに使う)
+		col.w = m_forging.Heat();			// PSへ温度スカラーを渡す(冷→熱のブレンドに使う)
 		m_wpVtx[i].col = col;
 	}
 }

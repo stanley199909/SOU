@@ -35,7 +35,7 @@ public:
 	void DrawUI();
 
 	//--- 工程(step)状態が呼び出す窓口(StateMachine/Player の各 Step から使う) ---
-	float HeatValue() const { return m_heat; }	// 現在の温度 0..1(HeatStep が完了判定に使う)
+	float HeatValue() const { return m_forging.Heat(); }	// 現在の温度 0..1(HeatStep が完了判定に使う)
 	bool  BothSidesDone() const;				// 両面とも成形完了したか(鍛打工程の完了条件)
 	void  AdvanceStep();						// 次の工程へ進む(配方の順序で遷移。無ければ完成)
 	const StepSetting& CurrentStep() const;		// 今実行中の工程設定(HUD が instruction を表示)
@@ -140,8 +140,8 @@ private:
 	std::unique_ptr<QuenchStep> m_quenchStep;
 	void SetupSteps();								// 各状態を生成し m_stepMachine へ登録(Init で一度)
 
-	//--- 温度(0=冷たい 〜 1=白熱)
-	float m_heat = 0.0f;
+	//--- 温度(0=冷たい 〜 1=白熱)は鉄そのものの状態なので m_forging(ForgingSim)が所有する。
+	//    読むのは m_forging.Heat()。玩家がどこに居ても(走動中も)自然冷却が進む。
 
 	//--- 鍛造される鉄の状態＋物理は Physics/ForgingSim に切り出した。
 	//    (格子・高さ場・目標形・成形進捗・損傷、および打撃による変形演算を全て所有)
@@ -171,6 +171,55 @@ private:
 	float  m_walkSpeed  = 3.0f;			// 走動速度(単位/秒)。毎フレーム m_player へ渡す(F1で調整)
 	void   UpdateWalkLook();			// 走動時: マウスを玩家yaw(左右)とカメラpitch(上下)へ
 	void   ApplyWalkCamera();			// 走動時: カメラを玩家の目線に置く一人称カメラ
+
+	//--- 走動 ⇔ 工位 の過渡(移動アニメ)。E で入る/E・ESC で出る。取り消し不可(入力は捨てる)。
+	//    カメラを「開始時に画面に映っていた視点」から「到着先の視点」へ補間する。
+	//    位置は線形補間、向きは yaw/pitch 角で補間(ベクトルの線形補間だと真後ろ向き時に潰れて跳ぶ)。
+	//    到着先は毎フレーム実際のカメラ関数(ApplyCamera/ApplyWalkCamera)から取る=着いた瞬間に画が跳ばない。
+	enum class ModeTrans { None, Enter, Exit };
+	ModeTrans m_modeTrans = ModeTrans::None;
+	float  m_transTimer = 0.0f;				// 経過秒
+	float  m_transDur   = 1.0f;				// 今回の長さ(秒)=距離 / m_transSpeed を MIN..MAX に収める
+	DirectX::XMFLOAT3 m_transFromEye = { 0,0,0 }, m_transFromFwd = { 0,0,1 };	// 開始時の視点(スナップショット)
+	float  m_transSpeed    = 2.0f;			// 過渡の移動速さ(単位/秒)。遠いほど長くなる
+	float  m_exitStepBack  = 0.6f;			// 退出時、工位の視点から金床と反対側へ下がる距離(=一歩)
+	static constexpr float TRANS_MIN_TIME = 1.0f;	// 過渡の最短(秒。近くても一瞬で飛ばない)
+	static constexpr float TRANS_MAX_TIME = 2.0f;	// 過渡の最長(秒。遠くても待たせすぎない)
+	bool   Transitioning() const { return m_modeTrans != ModeTrans::None; }
+	void   BeginEnterForge();			// 走動→工位の過渡を開始
+	void   BeginExitForge();			// 工位→走動の過渡を開始(玩家を金床の一歩手前へ置く)
+	void   UpdateModeTrans(float tick);	// 計時を進め、終わったら walkMode を切り替える
+	void   ApplyViewCamera();			// 今の状態のカメラを適用(過渡中は補間、他は走動/工位)
+	void   ApplyTransCamera();			// 過渡中のカメラ(開始視点→到着先の補間)
+	void   TargetViewPose(DirectX::XMFLOAT3& eye, DirectX::XMFLOAT3& fwd);	// 過渡の到着先の視点を計算
+	float  TransDuration();				// 開始視点→到着先の距離から過渡の長さを決める
+
+	//--- 走動中の互動(インタラクト, SceneForge/Interaction.cpp)。
+	//    2つの判定が両方 true の物件だけ「E」提示を出し、E で互動できる:
+	//      ①範囲: 玩家の足元が物件の「互動範囲の箱」(物件のワールドAABBを水平に reach だけ広げた箱)の中
+	//      ②視線: 目線の射線が物件の箱(m_lookPad だけ膨らませた)に当たる(照準と同じ AimSystem::Raycast)
+	//    物件と行為の対応は表 INTERACTABLES(データ)。新しい互動は表に1行足す+行為を1つ書くだけ。
+	enum class InteractAction { EnterForge, TakeTongs };
+	struct Interactable
+	{
+		const char*    propKey;	// どのプロップか(配置は stage_layout.txt に従う=箱も自動で追従)
+		InteractAction action;	// E で何をするか
+		float          reach;	// 互動範囲: 物件の箱から水平にどこまで離れても届くか(単位)
+	};
+	static const Interactable INTERACTABLES[];
+	static const int          NUM_INTERACTABLES;
+	int   m_focus = -1;							// 今 E で互動できる物件(INTERACTABLES の番号)。-1=無し
+	DirectX::XMFLOAT3 m_promptPoint = { 0,0,0 };	// 提示を出すワールド点(最後に注視した物件の中心)
+	float m_promptAlpha  = 0.0f;				// 提示のフェード 0..1(出る/消えるをなめらかに)
+	float m_promptLambda = 12.0f;				// フェードの速さ(Damp率, 1/秒)
+	float m_lookPad      = 0.12f;				// 視線判定の箱を膨らませる量(細い火钳でも狙える様に)
+	bool  m_pendingFlip  = false;				// 火钳を取って工位へ移動中=着いたら翻面(火钳待命)から始める
+	bool  InteractEnabled(InteractAction a) const;	// 今この互動ができる状況か(例: 火钳は鍛打工程だけ)
+	bool  PropWorldBox(Prop& p, DirectX::XMFLOAT3& mn, DirectX::XMFLOAT3& mx);	// プロップのワールドAABB
+	void  UpdateInteract(float tick);			// 2判定→m_focus を決める(走動中のみ)
+	void  DoInteract(InteractAction a);			// E を押された物件の行為を実行
+	void  DrawInteractPrompt();					// 物件の上に「E」ボタンを描く(HUD)
+	void  DrawInteractBoxes();					// F1: 互動範囲の箱を線で表示(範囲内=緑)
 
 	//--- F1調整値の永続化(Assets/forge_tuning.txt)。Initで読み, Uninit/Saveボタンで書く。
 	void  LoadTuning();
@@ -208,7 +257,7 @@ private:
 
 	//--- 調整用パラメータ(F1デバッグでスライダ変更可)
 	float m_strikeCDMax = 1.25f;	// 打撃後クールダウン(秒)
-	float m_coolRate    = 0.03f;	// 自然冷却速度(/秒)
+	// 自然冷却速度は鉄の物理なので m_forging.coolRate に移した。
 
 	//--- 武器モーフ(Blenderで作った同拓扑の各段FBXを頂点補間して成形する) ---
 	// uv は真の鋼テクスチャ採样用。morphでUVは不変なので stage0 の値を全段で使う。
@@ -219,7 +268,7 @@ private:
 	std::vector<unsigned int>   m_wpIdx;		// インデックス(全段共通)
 	std::vector<WpVtx>          m_wpVtx;		// 補間後の頂点(毎フレーム再構築)
 	std::shared_ptr<MeshBuffer> m_wpMesh;
-	std::shared_ptr<Texture>    m_wpTex;		// 真の鋼テクスチャ(BaseColor=冷鋼の地色)。発光は m_heat 駆動
+	std::shared_ptr<Texture>    m_wpTex;		// 真の鋼テクスチャ(BaseColor=冷鋼の地色)。発光は温度(m_forging.Heat())駆動
 	int   m_wpN = 0;							// 1段の頂点数
 	bool  m_wpOk = false;						// 読み込み成功&段間で頂点数一致
 	float m_forgeProg = 0.0f;					// 全体進捗 0..1(=各区域の平均。F1のプレビュー用)
@@ -248,15 +297,13 @@ private:
 	enum class FlipPhase { None, TongsOut, Ready, Gripping, Flipping, PutBack };
 	FlipPhase m_flipPhase = FlipPhase::None;
 	float m_flipTimer = 0.0f;					// 運鏡ビート(TongsOut/Gripping/PutBack)の経過秒
-	float m_flipTurn  = 0.0f;					// Flipping中のマウス駆動の「手の狙い」0..1(1=裏返し切った)
 	void  UpdateFlip(float tick, bool inputOn);	// 翻面子状態機を駆動(運鏡ビート＋マウス翻し)
 	bool  FlipIsCutscene() const;				// 今が取り消し不可の運鏡ビートか(入力を捨てる区間)
 	static constexpr float FLIP_TONGS_OUT_TIME = 2.5f;	// 火钳を取り出す運鏡の長さ(秒。慢=映画的)
 	static constexpr float FLIP_GRIP_TIME      = 1.0f;	// 铁を夹む運鏡の長さ(秒)
 	static constexpr float FLIP_PUTBACK_TIME   = 2.0f;	// 火钳を戻す運鏡の長さ(秒)
 	//--- 翻す手感(F1「Flip」で調整・forge_tuning.txt に保存)
-	float m_flipSens     = 0.0006f;				// マウス横移動→手の狙い(1pxあたり)。小=大きく振らないと回らない
-	float m_flipMaxSpeed = 1.6f;				// 刃の最大回転速度(rad/秒)。熱い鉄塊は火钳で一瞬には返せない=重さ
+	float m_flipSens     = 0.0002f;				// マウス横移動→刃の回転(1pxあたり何半回転, 1:1 raw)。小=大きく振らないと回らない=重さ
 
 	//--- 翻面の運鏡(火钳アニメの代替)。カメラは2つの「寄り」を重み付きで混ぜる:
 	//    tongs=火钳(StPliers プロップ)の方へ振り向く / grip=刃(砧面アンカー)へ寄って見下ろす。
@@ -423,7 +470,7 @@ private:
 
 	//--- 温度パラメータ
 	static constexpr float HEAT_RATE = 0.55f;	// 加熱速度(R長押しで炉で加熱, /秒)
-	// 自然冷却速度と打撃CDは調整しやすいようメンバー変数(m_coolRate / m_strikeCDMax)にした
+	// 打撃CDは調整しやすいようメンバー変数(m_strikeCDMax)。自然冷却速度は m_forging.coolRate
 	static constexpr float IDEAL_MIN = 0.55f;	// 最適温度帯(下限)
 	static constexpr float IDEAL_MAX = 0.85f;	// 最適温度帯(上限)
 	static constexpr float OVERHEAT  = 0.92f;	// これ以上は過熱(鋼を痛める)
