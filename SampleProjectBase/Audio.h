@@ -29,6 +29,7 @@ namespace Audio
 	void Play(SoundId id, float volume = 1.0f);		// 一回再生(効果音)
 	void PlayLoop(SoundId id, float volume = 1.0f);	// 無限ループ再生(BGM/タイトル)
 	void Stop(SoundId id);							// ループ停止
+	void ToggleBgmMute();							// BGMだけミュート切替(SEは鳴る)。録画用
 }
 
 #endif // __AUDIO_H__

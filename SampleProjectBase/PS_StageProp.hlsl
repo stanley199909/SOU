@@ -8,8 +8,20 @@ static const float PI=3.14159265;
 static const float FIRE_SOFTENING=1;
 static const float3 FIRE_COLOR=float3(1,.30,.065);
 static const float SPECULAR_POWER=24, SPECULAR_STRENGTH=.03;
+// World-space scale keeps the stone size stable across UV/material seams.
+static const float FORGE_TILE_METERS=2.0,PROJECTION_SHARPNESS=4;
+static const float SOOT_RADIUS=.80,SOOT_DARKENING=.65;
 float4 main(PS_IN p):SV_TARGET {
- float4 tex=baseMap.Sample(samp,p.uv);float3 base=tex.rgb*tint.rgb;
+ float4 tex=baseMap.Sample(samp,p.uv);
+ if(tint.a<0) {
+  float3 weights=pow(abs(normalize(p.normal)),PROJECTION_SHARPNESS);
+  weights/=dot(weights,float3(1,1,1));
+  float3 coord=p.worldPos/FORGE_TILE_METERS;
+  tex=baseMap.Sample(samp,coord.zy)*weights.x+baseMap.Sample(samp,coord.xz)*weights.y+baseMap.Sample(samp,coord.xy)*weights.z;
+  float soot=1-saturate(length(p.worldPos-fire.xyz)/SOOT_RADIUS);
+  tex.rgb*=1-soot*SOOT_DARKENING;
+ }
+ float3 base=tex.rgb*tint.rgb;
  float3 n=normalize(p.normal),v=normalize(eye.xyz-p.worldPos),l=normalize(sun.xyz+float3(0,.00001,0));
  float visible=shadow.x>.5?SunVisibility(p.worldPos,n):1;
  float3 col=base*ambient.rgb*ambient.w;

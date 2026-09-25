@@ -245,6 +245,15 @@ namespace
 	}
 }
 
+namespace
+{
+	// BGMミュート(録画用)。止めずに音量0で再生を続ける＝解除時に途中から自然に戻る
+	bool  g_bgmMuted = false;
+	float g_loopVolume[Audio::SE_MAX] = {};	// PlayLoop で指定された本来の音量(解除時に戻す)
+
+	bool IsBgm(Audio::SoundId id) { return id >= Audio::BGM_TITLE && id <= Audio::BGM_RESULT; }
+}
+
 namespace Audio
 {
 	void Init()
@@ -324,8 +333,22 @@ namespace Audio
 		b.pAudioData = s.data.data();
 		b.LoopCount  = XAUDIO2_LOOP_INFINITE;	// 閉じるまでループ
 		v->SubmitSourceBuffer(&b);
-		v->SetVolume(volume);
+		g_loopVolume[id] = volume;
+		v->SetVolume((IsBgm(id) && g_bgmMuted) ? 0.0f : volume);	// ミュート中は無音で開始
 		v->Start(0);
+	}
+
+	//--- BGMだけミュート切替。SE(Play/加熱ループ)には影響しない
+	void ToggleBgmMute()
+	{
+		g_bgmMuted = !g_bgmMuted;
+		if (!g_xa) return;
+		for (int i = BGM_TITLE; i <= BGM_RESULT; ++i)
+		{
+			Sound& s = g_sound[i];
+			if (s.voices.empty()) continue;
+			s.voices[0]->SetVolume(g_bgmMuted ? 0.0f : g_loopVolume[i]);
+		}
 	}
 
 	//--- ループ停止(タイトル→ゲーム移行時など)

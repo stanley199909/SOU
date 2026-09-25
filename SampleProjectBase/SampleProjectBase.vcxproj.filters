@@ -275,6 +275,12 @@
     <ClInclude Include="Model.h">
       <Filter>ヘッダー ファイル\System</Filter>
     </ClInclude>
+    <ClInclude Include="ModelImport.h">
+      <Filter>ヘッダー ファイル\System</Filter>
+    </ClInclude>
+    <ClInclude Include="CoalBedMesh.h">
+      <Filter>ヘッダー ファイル\System</Filter>
+    </ClInclude>
     <ClInclude Include="Sprite.h">
       <Filter>ヘッダー ファイル\System</Filter>
     </ClInclude>

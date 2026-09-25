@@ -2,6 +2,7 @@
 #include "Model.h"
 #include "Shader.h"
 #include "CameraBase.h"
+#include "TextureCache.h"
 #include <wrl/client.h>
 #include <vector>
 #include <cstdint>
@@ -88,13 +89,16 @@ inline void Sky(CameraBase* camera,const XMFLOAT4& sun,const XMFLOAT4& color) {
 struct PropParams {XMFLOAT4 tint,eye,sun,ambient,fire;XMFLOAT4X4 lightVP;XMFLOAT4 shadow;};
 static_assert(sizeof(PropParams)==160,"PS_StageProp constants");
 inline void LitProp(Model* model,FXMMATRIX world,CameraBase* camera,const XMFLOAT4& tint,
-                    const XMFLOAT4& sun,const XMFLOAT4& ambient,const float* fire,float fill) {
+                    const XMFLOAT4& sun,const XMFLOAT4& ambient,const float* fire,float fill,bool stoneProjection=false) {
  if(!model || !camera || !Init())return;auto& r=Data();auto eye=camera->GetPos();
  XMFLOAT4X4 mat[3];XMStoreFloat4x4(&mat[0],XMMatrixTranspose(world));mat[1]=camera->GetView();mat[2]=camera->GetProj();r.vs.WriteBuffer(0,mat);
  PropParams p{};p.tint=tint;p.eye={eye.x,eye.y,eye.z,0};p.sun=sun;p.ambient={ambient.x,ambient.y,ambient.z,fill};p.fire={fire[0],fire[1],fire[2],ambient.w};p.lightVP=r.lightVP;
+ constexpr float kTriplanarMaterialFlag=-1.0f;
+ static auto stoneTile=TextureCache::Get("Assets/PolyHaven_RockWall17/rock_wall_17_Diffuse_2k.png");
+ if(stoneProjection && stoneTile) p.tint.w=kTriplanarMaterialFlag;
  p.shadow={r.hasShadow?1.0f:0.0f,1.0f/ShadowSize,ShadowDepthBias,ReceiverOffset};
  r.propPS.WriteBuffer(0,&p);r.vs.Bind();SetDepthTest(DEPTH_ENABLE_WRITE_TEST);SetBlendMode(BLEND_NONE);
- for(unsigned i=0;i<model->GetMeshNum();++i){auto* mesh=model->GetMesh(i);r.propPS.SetTexture(0,model->GetTextureAt(mesh->materialID));r.propPS.Bind();BindShadow();mesh->mesh->Draw();}
+ for(unsigned i=0;i<model->GetMeshNum();++i){auto* mesh=model->GetMesh(i);r.propPS.SetTexture(0,stoneProjection && stoneTile?stoneTile.get():model->GetTextureAt(mesh->materialID));r.propPS.Bind();BindShadow();mesh->mesh->Draw();}
  SetBlendMode(BLEND_ALPHA);
 }
 

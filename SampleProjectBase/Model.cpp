@@ -1,6 +1,7 @@
 ﻿#include "Model.h"
 #include "Defines.h"
 #include "DebugLog.h"
+#include "ModelImport.h"
 
 #include <assimp/postprocess.h>
 #include <cmath>
@@ -94,7 +95,13 @@ bool Model::Load(const char* file, float scaleBase, bool flip, bool simpleMode)
 	}
 	
 	// assimpで読み込み
-	m_pScene = importer->ReadFile(file, flag);
+	// Inspect original FBX node names before static geometry is merged.
+	m_pScene = importer->ReadFile(file, flag & ~aiProcess_PreTransformVertices);
+	if (m_pScene && simpleMode)
+	{
+		ModelImport::RemoveCollision(const_cast<aiScene*>(m_pScene));
+		m_pScene = importer->ApplyPostProcessing(aiProcess_PreTransformVertices);
+	}
 	if (!m_pScene) {
 		Error(importer->GetErrorString());
 		DebugLog::log(DebugLog::INFO_LOG, "Assimpモデルロード失敗", file);

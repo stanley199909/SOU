@@ -382,14 +382,10 @@ private:
 
 	//--- 炉のマテリアル別テクスチャ(4UVタイル: 石/レンガ/火室/金属)。
 	//    F1で各マテリアルにどのテクスチャを当てるか選び、正解の割当を焼き込む。
-	std::vector<std::shared_ptr<Texture>> m_forgeTex;	// 候補テクスチャ
-	std::vector<std::string>              m_forgeTexName;// F1表示名
-	std::vector<int>                      m_forgeMatPick;// マテリアルindex -> m_forgeTex index
-	void ApplyForgeTextures();	// m_forgeMatPickに従って炉のマテリアルへ割当
 
 	//--- 自作の光る炭ベッド(FBXに頼らず、狙った位置に確実に炭火を出す。明滅する)
+	std::shared_ptr<MeshBuffer> m_coalBedMesh;
 	std::shared_ptr<MeshBuffer> m_coalMesh;	// 水平の板(2枚=両面)
-	std::shared_ptr<Texture>    m_coalTex;	// 合成した炭テクスチャ
 	bool  m_coalOn     = true;
 	float m_coalPos[3] = { 3.20f, 0.55f, 1.80f };	// 炉の火床の位置(F1で合わせる)
 	float m_coalYaw    = 0.0f;

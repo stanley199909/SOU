@@ -6,13 +6,15 @@ struct VS_IN
 {
     float3 pos : POSITION0;
     float2 uv  : TEXCOORD0;
-    float4 col : TEXCOORD1;   // unused here, kept so the layout matches the vertex buffer
+    float4 col : TEXCOORD1;   // charcoal facet shade (rgb), glowing gap flag (a)
 };
 
 struct VS_OUT
 {
     float4 pos : SV_POSITION;
     float2 uv  : TEXCOORD0;
+    float3 worldPos : TEXCOORD1;
+    float4 coalShade : TEXCOORD2;
 };
 
 // World / View / Projection, written from the CPU via WriteBuffer(0, mat).
@@ -28,6 +30,8 @@ VS_OUT main(VS_IN vin)
     VS_OUT vout;
     float4 p = float4(vin.pos, 1.0f);   // local space
     p = mul(p, world);                  // -> world space
+    vout.worldPos = p.xyz;
+    vout.coalShade = vin.col;
     p = mul(p, view);                   // -> view space
     vout.pos = mul(p, proj);            // -> clip / screen space
     vout.uv  = vin.uv;                  // pass UV to the pixel shader (interpolated)

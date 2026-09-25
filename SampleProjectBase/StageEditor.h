@@ -1,4 +1,4 @@
-#ifndef __STAGE_EDITOR_H__
+﻿#ifndef __STAGE_EDITOR_H__
 #define __STAGE_EDITOR_H__
 
 #include "SceneBase.hpp"
@@ -48,13 +48,10 @@ private:
 	void DrawScenery();
 
 	//--- forge material auto-assign (by FBX material name) so the forge looks right
-	std::vector<std::shared_ptr<Texture>> m_forgeTex;
-	std::vector<int> m_forgeMatPick;
-	void ApplyForgeTextures();
 
 	//--- glowing coal bed (self-made)
+	std::shared_ptr<MeshBuffer> m_coalBedMesh;
 	std::shared_ptr<MeshBuffer> m_coalMesh;
-	std::shared_ptr<Texture>    m_coalTex;
 	bool  m_coalOn = true;
 	float m_coalPos[3] = { 1.80f, 0.55f, 0.60f };	// aligned with StForge initial pos
 	float m_coalYaw = 0.0f;

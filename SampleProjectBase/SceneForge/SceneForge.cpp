@@ -1,4 +1,5 @@
-﻿#include "CottageRender.h"
+﻿#include "CoalBedMesh.h"
+#include "CottageRender.h"
 #include "OutdoorStage.h"
 #include "SceneForge.h"
 #include "DirectX.h"
@@ -301,7 +302,6 @@ void SceneForge::Init()
 	const std::string kSharp    = P + "Sharpner/Textures/T_Sharpner_V1_BaseColor.png";
 	const std::string kTools    = P + "Tools/Textures/1024x512/T_BS_Tools_BaseColor.png";
 	const std::string kMetal    = P + "Metal Parts/Textures/T_Metal_parts_BaseColor.png";
-	const char* kForgeDir   = "Assets/MM_Blacksmith_Pack/Forges/Textures/";
 	const char* kForgeStone = "Assets/MM_Blacksmith_Pack/Forges/Textures/T_Forge_1_UV1_BaseColor.PNG";
 
 	LoadProp("StGround",   "Assets/Model/plane/plane.fbx", "Assets/Model/field/wooden-plank-textured-background-material.jpg", 12.0f, 0.0f, 0.0f, 0.0f, 0.0f, true);
@@ -340,42 +340,6 @@ void SceneForge::Init()
 		if (Prop* m2 = GetProp("StMetal2")) if (table) { m2->pos[0] = table->pos[0] + 0.0f; m2->pos[2] = table->pos[2] - 0.2f; m2->pos[1] = tableH; }
 	}
 
-	// 炉のマテリアル別貼り分け用に、候補テクスチャを全部読んでおく
-	// ※ImGui標準フォントはCJK非対応なので名前は英数字で
-	struct { const char* file; const char* name; } forgeTexList[] = {
-		{ "T_Forge_1_UV1_BaseColor.PNG", "UV1 Stone(blocks)" },
-		{ "T_Forge_1_UV2_BaseColor.PNG", "UV2" },
-		{ "T_Forge_1_UV3_BaseColor.PNG", "UV3 Firebox(ash/coal)" },
-		{ "T_Forge_1_UV4_BaseColor.PNG", "UV4" },
-		{ "T_Forge_1_UV3_Emissive.PNG",  "UV3 Ember(glow)" },
-		{ "T_Forge_1_UV3_Combined.PNG",  "UV3 Fire(ash+glow)" },	// 灰炭+発光を合成した1枚(Bloomで光る)
-	};
-	for (auto& t : forgeTexList)
-	{
-		std::string path = std::string(kForgeDir) + t.file;
-		auto tex = TextureCache::Get(path.c_str());	// 一度だけ解码、以後は同じ実体を共有
-		if (tex)
-		{
-			m_forgeTex.push_back(tex);
-			m_forgeTexName.push_back(t.name);
-		}
-	}
-	// マテリアル割当を「作者が付けた材質名(MI_Forge_1_UVx)」から自動判定する。
-	//   m_forgeTex index: 0=UV1石 1=UV2 2=UV3火室 3=UV4 4=UV3炭(発光) 5=UV3合成(灰炭+発光)
-	if (Model* forge = GetObj<Model>("StForge"))
-	{
-		size_t mc = forge->GetMaterialCount();
-		m_forgeMatPick.assign(mc, 0);				// 既定は石(該当なしの保険)
-		for (size_t i = 0; i < mc; ++i)
-		{
-			std::string n = forge->GetMaterialName(i);	// 例 "MI_Forge_1_UV1"
-			if      (n.find("UV1") != std::string::npos) m_forgeMatPick[i] = 0;			// 石
-			else if (n.find("UV2") != std::string::npos) m_forgeMatPick[i] = 1;
-			else if (n.find("UV3") != std::string::npos) m_forgeMatPick[i] = 2;			// 火室=煤けた灰石(発光は自作の炭ベッドが担当)
-			else if (n.find("UV4") != std::string::npos) m_forgeMatPick[i] = 3;
-		}
-	}
-
 	// --- 自作の光る炭ベッド(水平な板。両面。合成炭テクスチャを貼る) ---
 	{
 		float h = 1.0f;	// 単位板(±1)。実サイズはDrawCoalBedのworldで拡縮
@@ -389,8 +353,7 @@ void SceneForge::Init()
 		cd.pVtx = q; cd.vtxSize = sizeof(Vertex); cd.vtxCount = 12;
 		cd.topology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		m_coalMesh = std::make_shared<MeshBuffer>(cd);
-		// 炭テクスチャは合成済みのものを流用(m_forgeTexの最後)
-		if (!m_forgeTex.empty()) m_coalTex = m_forgeTex.back();
+		m_coalBedMesh = CoalBedMesh::Create();
 	}
 
 	// 編集シーンで作った配置(Assets/stage_layout.txt)を反映。無ければ上の既定のまま。
@@ -427,7 +390,7 @@ void SceneForge::Uninit()
 	DestroyObj("PS_Coal");
 	DestroyObj("PS_Water");
 	m_coalMesh.reset();
-	m_coalTex.reset();
+	m_coalBedMesh.reset();
 	// プロップのモデル(St...)とハンマーは破棄しない = static map に常駐させ、編集シーンと
 	// 共有する。両シーンはキー(St...)を統一済みなので、片方が読んだモデルをもう片方が
 	// そのまま再利用でき、シーン切替の再インポート(数秒)が消える。摩擦: 常駐メモリ(許容)。

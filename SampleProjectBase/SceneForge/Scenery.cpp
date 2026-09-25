@@ -182,19 +182,6 @@ void SceneForge::LoadLayout()
 	fclose(fp);
 }
 
-//--- 炉のマテリアルへ、F1で選んだテクスチャを割り当てる
-void SceneForge::ApplyForgeTextures()
-{
-	Model* forge = GetObj<Model>("StForge");
-	if (!forge || m_forgeTex.empty()) return;
-	for (size_t i = 0; i < m_forgeMatPick.size(); ++i)
-	{
-		int pick = m_forgeMatPick[i];
-		if (pick >= 0 && pick < (int)m_forgeTex.size())
-			forge->SetTextureAt(i, m_forgeTex[pick]);
-	}
-}
-
 //--- 装飾モデルをまとめて描画(不透明。鉄条より先に)
 void SceneForge::DrawScenery()
 {
@@ -210,7 +197,6 @@ void SceneForge::DrawScenery()
     SunStage::Sky(GetObj<CameraBase>("Camera"),CottageRender::Data().sun,CottageRender::Data().exteriorSky);
 
 	if (!m_showScenery) return;
-	ApplyForgeTextures();	// 炉の貼り分けを反映
 	for (auto& p : m_props)
 	{
 		if(p.key=="StGround" || p.hidden) continue;	// hidden=手に取った火钳など
@@ -226,7 +212,7 @@ void SceneForge::DrawScenery()
 		XMFLOAT4 tint = (p.key == "StForge")
 			? XMFLOAT4(0.80f, 0.76f, 0.72f, 1.0f)
 			: XMFLOAT4(1, 1, 1, 1);
-		SunStage::LitProp(m,PropWorld(p),GetObj<CameraBase>("Camera"),tint,CottageRender::Data().sun,CottageRender::Data().ambient,m_coalPos,CottageRender::Data().windowExtra.w);
+		SunStage::LitProp(m,PropWorld(p),GetObj<CameraBase>("Camera"),tint,CottageRender::Data().sun,CottageRender::Data().ambient,m_coalPos,CottageRender::Data().windowExtra.w,p.key=="StForge");
 	}
 	DrawCoalBed();	// 光る炭ベッド(自作)
     if (Prop* house = GetProp("StCottage"))
@@ -240,7 +226,7 @@ void SceneForge::DrawScenery()
 void SceneForge::DrawCoalBed()
 {
 	if (m_hideCoalTest) return;	// 【診断】Kキーで炭を隠して炉のtexture跳動を切り分ける
-	if (!m_coalOn || !m_coalMesh || !m_coalTex) return;
+	if (!m_coalOn || !m_coalBedMesh) return;
 	CameraBase*   cam = GetObj<CameraBase>("Camera");
 	VertexShader* vs  = GetObj<VertexShader>("VS_Coal");
 	PixelShader*  ps  = GetObj<PixelShader>("PS_Coal");
@@ -264,8 +250,8 @@ void SceneForge::DrawCoalBed()
 	SetBlendMode(BLEND_ALPHA);
 	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
 	vs->Bind(); ps->Bind();
-	ps->SetTexture(0, m_coalTex.get());
-	m_coalMesh->Draw();
+	// Geometry-driven charcoal needs no atlas texture.
+	m_coalBedMesh->Draw();
 }
 
 //--- 水槽の水面を描画(真の屈折)。
@@ -300,10 +286,15 @@ void SceneForge::DrawWater()
 
 	// 深度を線形化する係数(A=proj._33, B=proj._43)。転置していない生の投影行列から取る。
 	XMFLOAT4X4 projNT = cam->GetProj(false);
-	XMFLOAT4 cb[2];
+	XMFLOAT4 cb[4];
 	cb[0] = XMFLOAT4(m_time, (float)refr->GetWidth(), (float)refr->GetHeight(), m_waterBump);
 	cb[1] = XMFLOAT4(projNT._33, projNT._43, m_waterFoam, m_waterDepthFade);
-	ps->WriteBuffer(0, cb);
+	const auto waterEye = cam->GetPos();
+    constexpr float kMinimumSurfaceWidth = 0.001f;
+    cb[2] = XMFLOAT4(waterEye.x,waterEye.y,waterEye.z,m_waterSize[0]/std::max(m_waterSize[1],kMinimumSurfaceWidth));
+    const auto& lighting = CottageRender::Data();
+    cb[3] = XMFLOAT4(lighting.ambient.x,lighting.ambient.y,lighting.ambient.z,lighting.windowExtra.w);
+    ps->WriteBuffer(0, cb);
 
 	// 深度バッファをテクスチャとして読むため、一旦DSVをOMから外す(sceneRTだけ描画先に)。
 	// これで「同一リソースを深度書き込みとSRV読みに同時使用」する競合を避ける。

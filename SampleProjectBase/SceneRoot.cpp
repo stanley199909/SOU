@@ -8,6 +8,7 @@
 #include "Texture.h"
 #include "TextureCache.h"
 #include "Input.h"
+#include "Audio.h"	// Mキーで BGM ミュート切替
 #include "Geometory.h"
 
 #include "StageEditor.h"	// = 鍛冶場ステージ配置エディタ(SCENE_STAGE_EDITOR)
@@ -223,6 +224,10 @@ void SceneRoot::Update(float tick)
 	m_isChangeScene = false;
 	CameraBase* pCamera = GetObj<CameraBase>("Camera");
 	LightBase* pLight = GetObj<LightBase>("Light");
+
+	// M = BGMミュート切替(紹介動画の録画用。SEは残す)。全シーン共通なのでルートで処理
+	if (IsKeyTrigger('M')) Audio::ToggleBgmMute();
+
 	if (!IsKeyPress(VK_SHIFT))
 	{
 		pCamera->Update();

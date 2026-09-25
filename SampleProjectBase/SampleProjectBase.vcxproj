@@ -261,6 +261,8 @@
     <ClInclude Include="Geometory.h" />
     <ClInclude Include="Main.h" />
     <ClInclude Include="Model.h" />
+    <ClInclude Include="ModelImport.h" />
+    <ClInclude Include="CoalBedMesh.h" />
     <ClInclude Include="CottageRender.h" />
     <ClInclude Include="MoveLight.h" />
     <ClInclude Include="SceneBase.hpp" />

@@ -1,3 +1,4 @@
+﻿#include "CoalBedMesh.h"
 #include "CottageRender.h"
 #include "OutdoorStage.h"
 #include "math.h"
@@ -137,31 +138,6 @@ void SceneStageEditor::Init()
 		if (Prop* m2 = getP("StMetal2")) if (table) { m2->pos[0] = table->pos[0] + 0.0f; m2->pos[2] = table->pos[2] - 0.2f; m2->pos[1] = tableH; }
 	}
 
-	// forge material auto-assign textures (UV1 stone / UV2 / UV3 firebox / UV4 / ember / combined)
-	const char* forgeTexFiles[] = {
-		"T_Forge_1_UV1_BaseColor.PNG", "T_Forge_1_UV2_BaseColor.PNG",
-		"T_Forge_1_UV3_BaseColor.PNG", "T_Forge_1_UV4_BaseColor.PNG",
-		"T_Forge_1_UV3_Emissive.PNG",  "T_Forge_1_UV3_Combined.PNG",
-	};
-	for (auto* f : forgeTexFiles)
-	{
-		auto tex = TextureCache::Get((P + "Forges/Textures/" + f).c_str());	// decode once, share
-		if (tex) m_forgeTex.push_back(tex);
-	}
-	if (Model* forge = GetObj<Model>("StForge"))
-	{
-		size_t mc = forge->GetMaterialCount();
-		m_forgeMatPick.assign(mc, 0);
-		for (size_t i = 0; i < mc; ++i)
-		{
-			std::string n = forge->GetMaterialName(i);
-			if      (n.find("UV1") != std::string::npos) m_forgeMatPick[i] = 0;
-			else if (n.find("UV2") != std::string::npos) m_forgeMatPick[i] = 1;
-			else if (n.find("UV3") != std::string::npos) m_forgeMatPick[i] = 2;
-			else if (n.find("UV4") != std::string::npos) m_forgeMatPick[i] = 3;
-		}
-	}
-
 	// coal bed mesh (two-sided horizontal quad) + combined coal texture
 	{
 		float h = 1.0f;
@@ -172,7 +148,7 @@ void SceneStageEditor::Init()
 		cd.pVtx = q; cd.vtxSize = sizeof(Vertex); cd.vtxCount = 12;
 		cd.topology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		m_coalMesh = std::make_shared<MeshBuffer>(cd);
-		if (!m_forgeTex.empty()) m_coalTex = m_forgeTex.back();
+		m_coalBedMesh = CoalBedMesh::Create();
 	}
 	// water surface texture (subtle stone tinted blue = water in the trough)
 	{
@@ -382,7 +358,7 @@ void SceneStageEditor::Uninit()
 	// next visit reuses them (LoadProp's cache hit) instead of re-importing 14 FBX = the 4-5s
 	// stall. Cost: those models stay resident in memory after the first visit (acceptable).
 	m_props.clear();
-	m_coalMesh.reset(); m_coalTex.reset();
+	m_coalMesh.reset(); m_coalBedMesh.reset();
 	m_emberMesh.reset(); m_emberGlow.reset(); m_embers.clear();
 }
 
@@ -432,21 +408,11 @@ void SceneStageEditor::DrawModelWorld(Model* m, const XMMATRIX& world, const XMF
 	m->Draw();
 }
 
-void SceneStageEditor::ApplyForgeTextures()
-{
-	Model* forge = GetObj<Model>("StForge");
-	if (!forge || m_forgeTex.empty()) return;
-	for (size_t i = 0; i < m_forgeMatPick.size(); ++i)
-	{
-		int pick = m_forgeMatPick[i];
-		if (pick >= 0 && pick < (int)m_forgeTex.size())
-			forge->SetTextureAt(i, m_forgeTex[pick]);
-	}
-}
+
 
 void SceneStageEditor::DrawCoalBed()
 {
-	if (!m_coalOn || !m_coalMesh || !m_coalTex) return;
+	if (!m_coalOn || !m_coalBedMesh) return;
 	CameraBase*   cam = GetObj<CameraBase>("Camera");
 	VertexShader* vs  = GetObj<VertexShader>("StCoalVS");
 	PixelShader*  ps  = GetObj<PixelShader>("StCoalPS");
@@ -465,8 +431,8 @@ void SceneStageEditor::DrawCoalBed()
 	SetBlendMode(BLEND_ALPHA);
 	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
 	vs->Bind(); ps->Bind();
-	ps->SetTexture(0, m_coalTex.get());
-	m_coalMesh->Draw();
+	// Geometry-driven charcoal needs no atlas texture.
+	m_coalBedMesh->Draw();
 }
 
 //--- water surface for the trough: procedural moving water (PS_Water), not a flat texture
@@ -494,10 +460,15 @@ void SceneStageEditor::DrawWater()
 	vs->WriteBuffer(0, mat);
 
 	XMFLOAT4X4 projNT = cam->GetProj(false);
-	XMFLOAT4 cb[2];
+	XMFLOAT4 cb[4];
 	cb[0] = XMFLOAT4(m_time, (float)refr->GetWidth(), (float)refr->GetHeight(), 1.0f);
 	cb[1] = XMFLOAT4(projNT._33, projNT._43, 0.06f, 0.35f);	// A, B, foam, depthFade
-	ps->WriteBuffer(0, cb);
+	const auto waterEye = cam->GetPos();
+    constexpr float kMinimumSurfaceWidth = 0.001f;
+    cb[2] = XMFLOAT4(waterEye.x,waterEye.y,waterEye.z,m_waterSize[0]/std::max(m_waterSize[1],kMinimumSurfaceWidth));
+    const auto& lighting = CottageRender::Data();
+    cb[3] = XMFLOAT4(lighting.ambient.x,lighting.ambient.y,lighting.ambient.z,lighting.windowExtra.w);
+    ps->WriteBuffer(0, cb);
 
 	// Unbind the depth buffer from OM so we can read it as a texture; occlusion is
 	// done in the water PS via depth compare + discard (same as the game scene).
@@ -528,7 +499,6 @@ void SceneStageEditor::DrawScenery()
     SunStage::Prepare(casters,CottageRender::Data().sun,shadowCenter);
     SunStage::Sky(GetObj<CameraBase>("Camera"),CottageRender::Data().sun,CottageRender::Data().exteriorSky);
 
-	ApplyForgeTextures();
 	for (auto& p : m_props)
 	{
 		if(p.key=="StGround") continue;
@@ -542,7 +512,7 @@ void SceneStageEditor::DrawScenery()
         }
 
 		XMFLOAT4 tint = (p.key == "StForge") ? XMFLOAT4(0.80f, 0.76f, 0.72f, 1.0f) : XMFLOAT4(1, 1, 1, 1);
-		SunStage::LitProp(m,PropWorld(p),GetObj<CameraBase>("Camera"),tint,CottageRender::Data().sun,CottageRender::Data().ambient,m_coalPos,CottageRender::Data().windowExtra.w);
+		SunStage::LitProp(m,PropWorld(p),GetObj<CameraBase>("Camera"),tint,CottageRender::Data().sun,CottageRender::Data().ambient,m_coalPos,CottageRender::Data().windowExtra.w,p.key=="StForge");
 	}
 	DrawCoalBed();
     for (auto& p : m_props) if (p.key == "StCottage")
