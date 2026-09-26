@@ -18,6 +18,10 @@ namespace Audio
 		SE_QUENCH,	// 淬火(Q)＝水に入れる「ジュワ〜」(一回)
 		SE_FORGE_LOOP,	// 加熱(R長押し)中の炉火/風箱の持続音。離すと停止
 		SE_SUCCESS,	// 鍛造完了(成功)の合図(一回)
+		SE_BURN_LOOP,	// 鋼が燃えている(火花を噴く)間のパチパチ音。燃えている間ループ
+		SE_GRIND_LOOP,	// 砥石で研いでいる間の「シャー」。刃を押し当てている間ループ
+		SE_STEAM,	// 淬火の大量の蒸気「シュワーーッ」(一回・長め。SE_QUENCH の後ろに重ねる)
+		// ※BGM_* は必ず最後にまとめる(IsBgm が BGM_TITLE..BGM_RESULT の範囲で判定する)
 		BGM_TITLE,	// タイトル画面BGM(TITLE状態でループ)
 		BGM_PLAY,	// ゲーム中BGM(PLAY状態でループ)
 		BGM_RESULT,	// 結果画面BGM(RESULT状態でループ)

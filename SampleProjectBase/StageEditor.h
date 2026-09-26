@@ -47,11 +47,9 @@ private:
 	                    const DirectX::XMFLOAT4& tint = DirectX::XMFLOAT4(1, 1, 1, 1));
 	void DrawScenery();
 
-	//--- forge material auto-assign (by FBX material name) so the forge looks right
-
-	//--- glowing coal bed (self-made)
+	//--- glowing coal bed (self-made low-poly charcoal, CoalBedMesh::Create)
 	std::shared_ptr<MeshBuffer> m_coalBedMesh;
-	std::shared_ptr<MeshBuffer> m_coalMesh;
+	std::shared_ptr<MeshBuffer> m_waterMesh;	// +-1 two-sided quad for the water surface
 	bool  m_coalOn = true;
 	float m_coalPos[3] = { 1.80f, 0.55f, 0.60f };	// aligned with StForge initial pos
 	float m_coalYaw = 0.0f;

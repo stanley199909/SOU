@@ -228,6 +228,67 @@ namespace
 			}
 			break;
 		}
+		case Audio::SE_BURN_LOOP:
+		{
+			// 燃える鋼のパチパチ: 静かなシューという下地に、ランダムな短い破裂(クラックル)を散らす。
+			const float DUR        = 1.00f;	// 1秒(ループ単位)
+			const float HISS_LEVEL = 0.05f;	// 下地のシュー音
+			const float POP_CHANCE = 0.0009f;	// 1サンプルあたりの破裂の発生確率(≒40回/秒)
+			const float POP_DECAY  = 900.0f;	// 破裂の減衰(大=短いパチッ)
+			const float POP_LEVEL  = 0.35f;
+			int n = (int)(sr * DUR);
+			w.resize(n);
+			float pop = 0.0f;
+			for (int i = 0; i < n; ++i)
+			{
+				if ((float)rand() / RAND_MAX < POP_CHANCE) pop = 1.0f;	// 新しい破裂
+				w[i] = noise() * (HISS_LEVEL + POP_LEVEL * pop);
+				pop *= expf(-POP_DECAY / sr);
+			}
+			break;
+		}
+		case Audio::SE_GRIND_LOOP:
+		{
+			// 砥石の「シャー」: 明るいノイズ(高域寄り)を、砥石の回転周期で少し揺らす。
+			const float DUR     = 1.00f;
+			const float HP_COEF = 0.85f;	// 一次ハイパス(大=シャリシャリした高域)
+			const float WOB_HZ  = 6.0f;	// 回転の揺らぎ周期
+			const float WOB     = 0.25f;
+			const float LEVEL   = 0.22f;
+			int n = (int)(sr * DUR);
+			w.resize(n);
+			float prev = 0.0f, hp = 0.0f;
+			for (int i = 0; i < n; ++i)
+			{
+				float t = (float)i / sr;
+				float x = noise();
+				hp = HP_COEF * (hp + x - prev);	// 一次ハイパス
+				prev = x;
+				float wob = 1.0f - WOB + WOB * (0.5f + 0.5f * sinf(6.2832f * WOB_HZ * t));
+				w[i] = hp * wob * LEVEL;
+			}
+			break;
+		}
+		case Audio::SE_STEAM:
+		{
+			// 淬火の蒸気: SE_QUENCH より長く、最初に強く噴き出し、ゆっくり細くなる。
+			const float DUR     = 2.60f;
+			const float RISE    = 60.0f;
+			const float DECAY   = 1.3f;
+			const float LP_COEF = 0.35f;	// やや明るい(蒸気の噴出音)
+			const float LEVEL   = 0.40f;
+			int n = (int)(sr * DUR);
+			w.resize(n);
+			float lp = 0.0f;
+			for (int i = 0; i < n; ++i)
+			{
+				float t = (float)i / sr;
+				lp += LP_COEF * (noise() - lp);
+				float env = (1.0f - expf(-t * RISE)) * expf(-t * DECAY);
+				w[i] = lp * env * LEVEL;
+			}
+			break;
+		}
 		default: break;
 		}
 		ToPCM16(w, s.data);
@@ -272,6 +333,9 @@ namespace Audio
 			"Assets/Sound/SE/quench.wav",		// SE_QUENCH(無ければ合成音)
 			"Assets/Sound/SE/forge_loop.wav",	// SE_FORGE_LOOP(無ければ合成音)
 			"Assets/Sound/SE/success.wav",		// SE_SUCCESS(無ければ合成音)
+			"Assets/Sound/SE/burn_loop.wav",	// SE_BURN_LOOP(無ければ合成音)
+			"Assets/Sound/SE/grind_loop.wav",	// SE_GRIND_LOOP(無ければ合成音)
+			"Assets/Sound/SE/steam.wav",		// SE_STEAM(無ければ合成音)
 			"Assets/Sound/BGM/title_bgm.wav",	// BGM_TITLE(工場環境音。無ければ無音)
 			"Assets/Sound/BGM/play_bgm.wav",	// BGM_PLAY(medieval。無ければ無音)
 			"Assets/Sound/BGM/result_bgm.wav",	// BGM_RESULT(無ければ無音)

@@ -52,6 +52,27 @@ void Particles::EmitEmbers(const XMFLOAT3& centre, float areaX, float areaZ,
     }
 }
 
+void Particles::EmitSteam(const XMFLOAT3& centre, float radius, float rate, float dt)
+{
+    m_steamSpawn += dt * rate;
+    int n = (int)m_steamSpawn;
+    m_steamSpawn -= n;
+    for (int k = 0; k < n && (int)m_steam.size() < MAX_STEAM; ++k)
+    {
+        Particle p = {};
+        // Uniform point on the disc (sqrt keeps the density even, not bunched at the centre).
+        float a = rnd(0.0f, 6.2832f), r = sqrtf(rnd()) * radius;
+        p.pos     = XMFLOAT3(centre.x + cosf(a) * r, centre.y, centre.z + sinf(a) * r);
+        p.vel     = XMFLOAT3(rnd(-tune.steamDrift, tune.steamDrift),
+                             rnd(tune.steamRiseMin, tune.steamRiseMax),
+                             rnd(-tune.steamDrift, tune.steamDrift));
+        p.maxLife = rnd(tune.steamLifeMin, tune.steamLifeMax);
+        p.life    = p.maxLife;
+        p.size    = rnd(tune.steamSizeMin, tune.steamSizeMax);
+        m_steam.push_back(p);
+    }
+}
+
 void Particles::Update(float dt, float time)
 {
     // Sparks: gravity + bounce on the ground (y = 0).
@@ -88,10 +109,29 @@ void Particles::Update(float dt, float time)
         e.pos.z += e.vel.z * dt;
         ++i;
     }
+
+    // Steam: buoyancy pushes it up, air drag (exact exponential decay, like the grind wheel)
+    // slows it so puffs rise quickly then hang and spread; they grow while fading.
+    const float steamKeep = expf(-tune.steamDrag * dt);
+    for (size_t i = 0; i < m_steam.size(); )
+    {
+        Particle& p = m_steam[i];
+        p.life -= dt;
+        if (p.life <= 0.0f) { p = m_steam.back(); m_steam.pop_back(); continue; }
+        p.vel.y += tune.steamBuoyancy * dt;
+        p.vel.x *= steamKeep; p.vel.y *= steamKeep; p.vel.z *= steamKeep;
+        p.pos.x += p.vel.x * dt;
+        p.pos.y += p.vel.y * dt;
+        p.pos.z += p.vel.z * dt;
+        p.size  += tune.steamGrowth * dt;
+        ++i;
+    }
 }
 
 void Particles::Clear()
 {
+    m_steam.clear();
+    m_steamSpawn = 0.0f;
     m_sparks.clear();
     m_embers.clear();
     m_emberSpawn = 0.0f;

@@ -49,6 +49,20 @@ public:
     float Heat() const { return m_heat; }
     float coolRate = 0.03f;      // natural cooling speed (/sec). Tunable, like Hammer's public params
 
+    // At this temperature the steel starts to throw sparks from its surface ("burning").
+    // It is the visible signal a smith reads: the iron is ready (Heat step target).
+    // Kept below the scene's OVERHEAT line, so there is a window to pull it out in time.
+    static constexpr float BURN_TEMP = 0.80f;
+    bool  IsBurning() const { return m_heat >= BURN_TEMP; }
+
+    // --- edge sharpness (grinding) ---
+    // One value per length segment (the same segments as shaping). Grinding removes
+    // metal from the edge, so this only ever goes up. Both faces share one edge.
+    enum class GrindOutcome { Sharpened, AlreadySharp };
+    GrindOutcome ApplyGrind(int seg, float amount); // grind segment `seg` by `amount` (0..1 scale)
+    float Sharpness(int s) const { return m_sharp[s]; }
+    bool  AllSharp() const;                         // every segment ground (ends the Grind step)
+
     // Turn the workpiece over so the other face is up. The player triggers this in
     // the flip step (tongs); after it, strikes and every read below refer to the
     // newly-up face. State is untouched -- flipping only swaps which side is active.
@@ -75,6 +89,7 @@ private:
     static constexpr float FLOW_DROP    = 0.095f; // height pushed out of the hit cell (ideal strike)
     static constexpr float DMG_COLD_HIT = 0.35f;  // crack from one cold strike
     static constexpr float DMG_OVER_HIT = 0.25f;  // scorch from one overheated strike
+    static constexpr float SHARP_DONE   = 0.98f;  // an edge segment counts as ground at/above this
 
     int   m_side = 0;                 // which face is up right now (0 = front, 1 = back)
     float m_heat = 0.0f;              // temperature 0..1 (one value for the whole piece)
@@ -83,4 +98,5 @@ private:
     float m_hTgt[NL][NW];             // target (finished weapon) height field (same shape for both faces)
     float m_dmgF[NSIDES][NL][NW];     // per-cell damage 0..1 (cold crack / overheat scorch), per face
     float m_segProg[NSIDES][NSEG] = {}; // per-segment shaping progress 0..1, per face
+    float m_sharp[NSEG] = {};           // per-segment edge sharpness 0..1 (0 = as forged)
 };

@@ -118,9 +118,23 @@ void SceneForge::DrawTitleUI()
 	CenterText("PRESS  SPACE  TO  START", 0.66f, 1.15f, IM_COL32(255, 255, 255, (int)(255 * p)), body);
 }
 
+//--- 映画的な終幕の黒帯(上下)。淬火後に QuenchStep が m_letterbox を 0→1 へ進める。
+void SceneForge::DrawLetterbox()
+{
+	if (m_letterbox <= 0.0f) return;
+	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImVec2 disp = ImGui::GetIO().DisplaySize;			// 解像度非依存(画面比)
+	const float h = disp.y * LETTERBOX_RATIO * m_letterbox;
+	dl->AddRectFilled(ImVec2(0, 0),            ImVec2(disp.x, h),      IM_COL32(0, 0, 0, 255));
+	dl->AddRectFilled(ImVec2(0, disp.y - h),   ImVec2(disp.x, disp.y), IM_COL32(0, 0, 0, 255));
+}
+
 void SceneForge::DrawPlayUI()
 {
 	// 鉄条とハンマーは3Dで描画するので、2Dの鉄条(DrawBillet/DrawHammer)は使わない
+
+	// 終幕(黒帯が入り始めたら)は HUD を全部消して、映像だけを見せる。
+	if (m_letterbox > 0.0f) { DrawLetterbox(); return; }
 
 	// 温度ゲージ
 	DrawHeatGauge();
@@ -183,14 +197,19 @@ void SceneForge::DrawPlayUI()
 	if (m_showAimHi)
 		CenterText("[DEBUG] aim highlight ON (P to toggle)", 0.10f, 0.9f, IM_COL32(120, 220, 160, 180));
 
-	// 淬火の準備ができたら促す
-	if (m_match >= 0.85f)
-		CenterText("Shape looks good!  Press  Q  to Quench", 0.86f, 1.2f,
-			IM_COL32(150, 255, 180, 230));
-
-	// 操作ガイド
-	CenterText("Mouse : Aim    Hold L-MOUSE : Hammer    Hold R : Heat    Q : Quench",
-		0.93f, 1.0f, IM_COL32(255, 255, 255, 170));
+	// 操作ガイド(宏観: 今いる場所で使えるキー)。「どこを叩け」等の微観の指示は出さない。
+	const char* guide = "WASD : Walk    Mouse : Look    E : Use";
+	if (!m_walkMode && !Transitioning())
+	{
+		switch (m_station)
+		{
+		case Station::Anvil:      guide = "Mouse : Aim    Hold L-MOUSE : Hammer    F : Flip    E : Leave"; break;
+		case Station::Hearth:     guide = "Hold R : Pump the bellows    E : Take it out of the fire"; break;
+		case Station::Grindstone: guide = "Tap R-MOUSE : Pedal    Hold L-MOUSE : Press the blade    Mouse : Slide    E : Leave"; break;
+		case Station::Trough:     guide = "L-MOUSE : Plunge into the water    E : Leave"; break;
+		}
+	}
+	CenterText(guide, 0.93f, 1.0f, IM_COL32(255, 255, 255, 170));
 
 	// 互動提示(走動中、範囲内で物件を見ている時だけ「E」を物件の上に出す)
 	DrawInteractPrompt();
@@ -333,6 +352,26 @@ void SceneForge::DrawUI()
 			ImGui::TextDisabled("-- Hammer set down --");
 			ImGui::SliderFloat3("Stow offset", m_hammerStowOff, -1.5f, 1.5f, "%.2f");	// 置いた位置(構えからのずれ)
 			ImGui::SliderFloat("Stow tilt",   &m_hammerStowTilt, -3.1416f, 3.1416f, "%.2f");	// 寝かせる角度
+		}
+
+		// --- Stations: 炉/砥石/水槽の工位カメラと刃の置き位置、砥石の手感 ---
+		if (ImGui::CollapsingHeader("Stations"))
+		{
+			ImGui::TextDisabled("-- Station camera (hearth / grindstone / trough) --");
+			ImGui::SliderFloat("Cam distance", &m_stationCamDist,   0.3f, 3.0f, "%.2f");	// 作業点から手前へ
+			ImGui::SliderFloat("Cam height",   &m_stationCamHeight, 0.0f, 2.0f, "%.2f");	// 作業点からの目の高さ
+			ImGui::SliderFloat("Look lift",    &m_stationLookLift, -0.5f, 0.5f, "%.2f");	// 注視点の高さ補正
+			ImGui::TextDisabled("-- Blade placement --");
+			ImGui::SliderFloat("Hearth lift",  &m_hearthLift,  -0.3f, 0.3f, "%.3f");	// 炭床の上の高さ
+			ImGui::SliderFloat("Grind lift",   &m_grindLift,   -0.5f, 0.5f, "%.3f");	// 砥石上端からの高さ
+			ImGui::SliderFloat("Trough hover", &m_troughHover,  0.0f, 1.0f, "%.3f");	// 水面の上に構える高さ
+			ImGui::TextDisabled("-- Grindstone feel --");
+			ImGui::SliderFloat("Pedal impulse", &m_wheel.pedalImpulse, 0.5f, 6.0f,  "%.2f");	// 1回踏んだ時の加速
+			ImGui::SliderFloat("Wheel max",     &m_wheel.maxSpeed,     2.0f, 30.0f, "%.1f");	// 最高回転
+			ImGui::SliderFloat("Wheel friction",&m_wheel.friction,     0.05f, 2.0f, "%.2f");	// 空転の減速
+			ImGui::SliderFloat("Blade drag",    &m_wheel.bladeDrag,    0.0f, 3.0f,  "%.2f");	// 押し当ての減速
+			ImGui::SliderFloat("Slide sens",    &m_grindSens,          0.0002f, 0.005f, "%.4f");	// マウス→刃の滑り
+			ImGui::Text("Wheel speed %.2f   Blade U %.2f", m_wheel.Speed01(), m_grindU);
 		}
 
 		// --- Hammer: 鎚モデルの姿勢と反冲 ---

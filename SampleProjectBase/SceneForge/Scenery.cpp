@@ -260,7 +260,7 @@ void SceneForge::DrawCoalBed()
 //    メッシュは炭と同じ ±1 水平板を流用し、world で位置/大きさを与える。
 void SceneForge::DrawWater()
 {
-	if (!m_waterOn || !m_coalMesh || !g_pPost) return;
+	if (!m_waterOn || !m_waterMesh || !g_pPost) return;
 	CameraBase*   cam   = GetObj<CameraBase>("Camera");
 	VertexShader* vs    = GetObj<VertexShader>("VS_Coal");	// pos/uv/col 共通VS
 	PixelShader*  ps    = GetObj<PixelShader>("PS_Water");
@@ -289,12 +289,14 @@ void SceneForge::DrawWater()
 	XMFLOAT4 cb[4];
 	cb[0] = XMFLOAT4(m_time, (float)refr->GetWidth(), (float)refr->GetHeight(), m_waterBump);
 	cb[1] = XMFLOAT4(projNT._33, projNT._43, m_waterFoam, m_waterDepthFade);
-	const auto waterEye = cam->GetPos();
-    constexpr float kMinimumSurfaceWidth = 0.001f;
-    cb[2] = XMFLOAT4(waterEye.x,waterEye.y,waterEye.z,m_waterSize[0]/std::max(m_waterSize[1],kMinimumSurfaceWidth));
-    const auto& lighting = CottageRender::Data();
-    cb[3] = XMFLOAT4(lighting.ambient.x,lighting.ambient.y,lighting.ambient.z,lighting.windowExtra.w);
-    ps->WriteBuffer(0, cb);
+	// cb[2] = 視点位置 + 水面の縦横比(PSが両端を丸く切る=水槽の角丸に合わせる)
+	// cb[3] = 室内の環境光(水面の反射色に使う。空の明るい色を映すと室内で浮く)
+	const float MIN_WATER_WIDTH = 0.001f;	// 幅0で割らない為の下限
+	XMFLOAT3 eye = cam->GetPos();
+	cb[2] = XMFLOAT4(eye.x, eye.y, eye.z, m_waterSize[0] / std::max(m_waterSize[1], MIN_WATER_WIDTH));
+	const auto& lighting = CottageRender::Data();
+	cb[3] = XMFLOAT4(lighting.ambient.x, lighting.ambient.y, lighting.ambient.z, lighting.windowExtra.w);
+	ps->WriteBuffer(0, cb);
 
 	// 深度バッファをテクスチャとして読むため、一旦DSVをOMから外す(sceneRTだけ描画先に)。
 	// これで「同一リソースを深度書き込みとSRV読みに同時使用」する競合を避ける。
@@ -305,7 +307,7 @@ void SceneForge::DrawWater()
 	vs->Bind(); ps->Bind();
 	ps->SetTexture(0, refr);		// t0 = 屈折元(背後のシーン)
 	ps->SetTexture(1, depth);		// t1 = シーン深度(R32_FLOAT)
-	m_coalMesh->Draw();
+	m_waterMesh->Draw();
 
 	// SRVを外し、描画先を sceneRT + 深度に戻す(この後の余燼/火花が深度テストできるように)。
 	ID3D11ShaderResourceView* pNull[2] = { nullptr, nullptr };
@@ -394,5 +396,71 @@ void SceneForge::DrawEmbers()
 	m_mesh->Draw(v);
 
 	SetBlendMode(BLEND_ALPHA);
+	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
+}
+
+//--- 淬火の蒸気: カメラ向きの柔らかい円(余燼と同じ光の粒テクスチャ)を「アルファ合成」で重ねる。
+//    余燼(加算=光る)と違い、蒸気は光らず背景を白く覆う物なので BLEND_ALPHA。
+//    寿命の始めにふわっと濃くなり、終わりに向かって薄れる(大きさは Particles 側で膨らむ)。
+//    ※本番の蒸気の見た目(ソフトパーティクル等)は外観担当が差し替えてよい。発生/運動は Particles が持つ。
+void SceneForge::DrawSteam()
+{
+	if (m_particles.Steam().empty()) return;
+	CameraBase*   cam = GetObj<CameraBase>("Camera");
+	VertexShader* vs  = GetObj<VertexShader>("VS_Forge");
+	PixelShader*  ps  = GetObj<PixelShader>("PS_Forge");
+	if (!cam || !vs || !ps || !m_mesh) return;
+
+	const XMFLOAT3 STEAM_COLOR(0.86f, 0.88f, 0.90f);	// 白っぽい灰(室内の暖色光で少し沈む)
+	const float    STEAM_OPACITY = 0.35f;				// 1粒の最大不透明度(重なって濃くなる)
+	const float    FADE_IN       = 0.15f;				// 寿命の最初この割合で濃くなる
+
+	XMFLOAT3 camPos = cam->GetPos();
+	XMVECTOR vcam    = XMLoadFloat3(&camPos);
+	XMVECTOR worldUp = XMVectorSet(0, 1, 0, 0);
+	XMFLOAT4X4 camMat[2] = { cam->GetView(), cam->GetProj() };
+	vs->WriteBuffer(0, camMat);
+
+	int v = 0;
+	for (const Particles::Particle& p : m_particles.Steam())
+	{
+		float age = 1.0f - p.life / p.maxLife;			// 0→1
+		float a = (age < FADE_IN) ? age / FADE_IN : (1.0f - age) / (1.0f - FADE_IN);
+		XMFLOAT4 col(STEAM_COLOR.x, STEAM_COLOR.y, STEAM_COLOR.z, a * STEAM_OPACITY);
+
+		XMVECTOR c     = XMLoadFloat3(&p.pos);
+		XMVECTOR toCam = XMVector3Normalize(XMVectorSubtract(vcam, c));
+		XMVECTOR right = XMVector3Cross(worldUp, toCam);
+		if (XMVectorGetX(XMVector3Length(right)) < 0.001f) right = XMVectorSet(1, 0, 0, 0);
+		right = XMVector3Normalize(right);
+		XMVECTOR up = XMVector3Normalize(XMVector3Cross(toCam, right));
+		XMVECTOR R = XMVectorScale(right, p.size);
+		XMVECTOR U = XMVectorScale(up,    p.size);
+
+		XMFLOAT3 tl, tr, bl, br;
+		XMStoreFloat3(&tl, XMVectorAdd(XMVectorSubtract(c, R), U));
+		XMStoreFloat3(&tr, XMVectorAdd(XMVectorAdd(c, R), U));
+		XMStoreFloat3(&bl, XMVectorSubtract(XMVectorSubtract(c, R), U));
+		XMStoreFloat3(&br, XMVectorSubtract(XMVectorAdd(c, R), U));
+
+		Vertex* q = &m_vtx[v];
+		q[0] = { tl, XMFLOAT2(0,0), col };
+		q[1] = { tr, XMFLOAT2(1,0), col };
+		q[2] = { bl, XMFLOAT2(0,1), col };
+		q[3] = { bl, XMFLOAT2(0,1), col };
+		q[4] = { tr, XMFLOAT2(1,0), col };
+		q[5] = { br, XMFLOAT2(1,1), col };
+		v += 6;
+		if (v + 6 > (int)m_vtx.size()) break;
+	}
+	if (v == 0) return;
+
+	SetBlendMode(BLEND_ALPHA);
+	SetDepthTest(DEPTH_ENABLE_TEST);	// 深度は見るが書かない(半透明)
+	ps->SetTexture(0, m_glow.get());
+	m_mesh->Write(m_vtx.data());
+	vs->Bind();
+	ps->Bind();
+	m_mesh->Draw(v);
 	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
 }

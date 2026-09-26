@@ -220,8 +220,12 @@ void SceneForge::TargetViewPose(XMFLOAT3& eye, XMFLOAT3& fwd)
 {
 	CameraBase* cam = GetObj<CameraBase>("Camera");
 	if (!cam) return;
-	if (m_modeTrans == ModeTrans::Enter) ApplyCamera();		// 工位の視点
-	else                                 ApplyWalkCamera();	// 走動の視点(玩家は BeginExitForge で配置済み)
+	if (m_modeTrans == ModeTrans::Enter)						// 工位の視点(金床は専用カメラ、他は工位カメラ)
+	{
+		if (m_station == Station::Anvil) ApplyCamera();
+		else                             ApplyWorkCamera();
+	}
+	else ApplyWalkCamera();	// 走動の視点(玩家は BeginExitStation で配置済み)
 	eye = cam->GetPos();
 	XMFLOAT3 lk = cam->GetLook();
 	XMStoreFloat3(&fwd, XMVector3Normalize(XMVectorSubtract(XMLoadFloat3(&lk), XMLoadFloat3(&eye))));
@@ -235,11 +239,27 @@ static void BeginTransCommon(CameraBase* cam, XMFLOAT3& fromEye, XMFLOAT3& fromF
 	XMStoreFloat3(&fromFwd, XMVector3Normalize(XMVectorSubtract(XMLoadFloat3(&lk), XMLoadFloat3(&fromEye))));
 }
 
-void SceneForge::BeginEnterForge()
+void SceneForge::BeginEnterStation(Station s)
 {
 	CameraBase* cam = GetObj<CameraBase>("Camera");
 	if (!cam || Transitioning()) return;
 	BeginTransCommon(cam, m_transFromEye, m_transFromFwd);
+
+	// 行き先の工位を決め、刃もそこへ置く(手に持って来た=移動アニメの間に置く)。
+	m_station  = s;
+	m_workAt   = s;
+	m_carrying = false;
+	if (s != Station::Anvil)
+	{
+		// 工位カメラは「玩家が近づいて来た側」から作業点を見る=どの向きに置いた道具でも正面から見える。
+		// (道具ごとに視点座標をベタ書きしない。配置を変えても自動で追従する)
+		XMFLOAT3 base = StationBase(s);
+		XMFLOAT3 foot = m_player.GetPosition();
+		float dx = foot.x - base.x, dz = foot.z - base.z;
+		float len = sqrtf(dx * dx + dz * dz);
+		if (len > 1e-4f) m_stationViewDir = XMFLOAT3(dx / len, 0.0f, dz / len);
+	}
+	if (s == Station::Grindstone) m_grindU = 0.5f;	// 刃の中央から研ぎ始める
 
 	// 工位の視点は「正面の既定」から始める(前回の視角のずれを持ち越さない)。
 	m_lookYaw = 0.0f; m_lookPitch = 0.0f;
@@ -259,22 +279,27 @@ float SceneForge::TransDuration()
 	return d;
 }
 
-void SceneForge::BeginExitForge()
+void SceneForge::BeginExitStation()
 {
 	CameraBase* cam = GetObj<CameraBase>("Camera");
 	if (!cam || Transitioning()) return;
 	BeginTransCommon(cam, m_transFromEye, m_transFromFwd);
 
-	// 退出先 = 工位の視点から、金床と反対側へ m_exitStepBack だけ下がった床の上。金床の方を向く。
-	//   位置は工位カメラ/鉄のアンカーから算出=配置を変えても「金床の一歩手前」に立つ。
-	float dx = m_barAnchor.x - m_camPos[0], dz = m_barAnchor.z - m_camPos[2];
+	// 退出先 = 工位の視点から、作業点と反対側へ m_exitStepBack だけ下がった床の上。作業点の方を向く。
+	//   位置は工位カメラ/作業点から算出=配置を変えても「工位の一歩手前」に立つ。
+	XMFLOAT3 eye, target; StationView(m_station, eye, target);
+	float dx = target.x - eye.x, dz = target.z - eye.z;
 	float len = sqrtf(dx * dx + dz * dz); if (len < 1e-4f) { dx = 0.0f; dz = 1.0f; len = 1.0f; }
-	dx /= len; dz /= len;										// 金床への水平方向
-	XMFLOAT3 foot(m_camPos[0] - dx * m_exitStepBack, m_walkFloorY, m_camPos[2] - dz * m_exitStepBack);
-	m_player.Init(foot, atan2f(dx, dz));						// 金床の方を向いて立つ
+	dx /= len; dz /= len;										// 作業点への水平方向
+	XMFLOAT3 foot(eye.x - dx * m_exitStepBack, m_walkFloorY, eye.z - dz * m_exitStepBack);
+	m_player.Init(foot, atan2f(dx, dz));						// 作業点の方を向いて立つ
 	float eyeY  = foot.y + m_walkEyeH;
-	float horiz = len + m_exitStepBack;							// 目から鉄までの水平距離
-	m_walkPitch = atan2f(m_barAnchor.y - eyeY, horiz);			// 金床を見下ろす角度
+	float horiz = len + m_exitStepBack;							// 目から作業点までの水平距離
+	m_walkPitch = atan2f(target.y - eyeY, horiz);				// 作業点を見下ろす角度
+
+	// 炉から出る時は鉄を火から取り出して手に持つ(置きっぱなしにすると焼けてしまう)。
+	// 他の工位では刃はその場に置いたまま。
+	if (m_station == Station::Hearth) m_carrying = true;
 	if (m_walkPitch >  m_walkPitchLim) m_walkPitch =  m_walkPitchLim;
 	if (m_walkPitch < -m_walkPitchLim) m_walkPitch = -m_walkPitchLim;
 
@@ -334,8 +359,96 @@ void SceneForge::ApplyTransCamera()
 void SceneForge::ApplyViewCamera()
 {
 	if (Transitioning()) ApplyTransCamera();
-	else if (m_walkMode) ApplyWalkCamera();	// 走動: 玩家目線の一人称カメラ
-	else                 ApplyCamera();		// 工位: FPS式受限環視カメラ
+	else if (m_walkMode) ApplyWalkCamera();				// 走動: 玩家目線の一人称カメラ
+	else if (m_station == Station::Anvil) ApplyCamera();	// 金床: FPS式受限環視カメラ
+	else                 ApplyWorkCamera();				// 炉/砥石/水槽: 固定の工位カメラ
+}
+
+//====================================================================
+//  工位(金床以外)の作業点とカメラ
+//====================================================================
+bool SceneForge::AtStation(Station s) const
+{
+	return m_state == GAME_PLAY && !m_walkMode && !Transitioning() && m_station == s;
+}
+
+//--- 工位の作業点=刃を置く点。すべて配置データ(プロップ/炭/水面)から毎フレーム求める(座標のベタ書き無し)。
+XMFLOAT3 SceneForge::StationBase(Station s)
+{
+	switch (s)
+	{
+	case Station::Anvil:
+		return m_barAnchor;												// 金床の砧面(UpdateBarAnchor)
+	case Station::Hearth:
+		return XMFLOAT3(m_coalPos[0], m_coalPos[1] + m_hearthLift, m_coalPos[2]);	// 炭床の上
+	case Station::Grindstone:
+		if (Prop* g = GetProp("StGrind"))
+		{
+			XMFLOAT3 mn, mx;
+			if (PropWorldBox(*g, mn, mx))								// 砥石の上端の中央
+				return XMFLOAT3((mn.x + mx.x) * 0.5f, mx.y + m_grindLift, (mn.z + mx.z) * 0.5f);
+		}
+		return m_barAnchor;
+	case Station::Trough:
+		return XMFLOAT3(m_waterPos[0], m_waterPos[1] + m_troughHover, m_waterPos[2]);	// 水面の上に構える
+	}
+	return m_barAnchor;
+}
+
+//--- 工位カメラから見た右方向。視線 f = -m_stationViewDir(作業点の方)、右 = up × f = (f.z, 0, -f.x)。
+XMFLOAT3 SceneForge::StationRight() const
+{
+	return XMFLOAT3(-m_stationViewDir.z, 0.0f, m_stationViewDir.x);
+}
+
+//--- 刃の長軸(向き付け後のワールド方向)を StationRight へ揃える追加 yaw。
+//    金床は従来の向き(F1「Weapon Align」で合わせた値)のまま=0。
+//    Y 軸回転 θ はベクトルの水平角 atan2(x,z) に θ を足すので、差を取れば揃う。
+float SceneForge::StationAlignYaw() const
+{
+	if (m_workAt == Station::Anvil) return 0.0f;
+	const int la = AimSystem::LongAxis(m_wpMin, m_wpMax);
+	XMVECTOR axis = XMVectorSet(la == 0 ? 1.0f : 0.0f, la == 1 ? 1.0f : 0.0f, la == 2 ? 1.0f : 0.0f, 0.0f);
+	XMFLOAT3 L; XMStoreFloat3(&L, XMVector3TransformNormal(axis, XMMatrixRotationRollPitchYaw(m_wpPitch, m_wpYaw, m_wpRoll)));
+	if (L.x * L.x + L.z * L.z < 1e-6f) return 0.0f;	// 長軸が真上を向いている=水平に揃えようがない
+	XMFLOAT3 D = StationRight();
+	return atan2f(D.x, D.z) - atan2f(L.x, L.z);
+}
+
+//--- 工位の視点(eye)と注視点(target)。金床は工位カメラの既定値、他は作業点から相対で決める。
+void SceneForge::StationView(Station s, XMFLOAT3& eye, XMFLOAT3& target)
+{
+	if (s == Station::Anvil)
+	{
+		eye    = XMFLOAT3(m_camPos[0], m_camPos[1], m_camPos[2]);
+		target = m_barAnchor;
+		return;
+	}
+	XMFLOAT3 base = StationBase(s);
+	eye = XMFLOAT3(base.x + m_stationViewDir.x * m_stationCamDist,
+	               base.y + m_stationCamHeight,
+	               base.z + m_stationViewDir.z * m_stationCamDist);
+	target = XMFLOAT3(base.x, base.y + m_stationLookLift, base.z);
+}
+
+//--- 金床以外の工位の固定カメラ。手持ち感の「呼吸」だけ乗せる(金床カメラと同じノイズ)。
+void SceneForge::ApplyWorkCamera()
+{
+	CameraBase* cam = GetObj<CameraBase>("Camera");
+	if (!cam) return;
+	cam->SetFovY(m_camFov);
+
+	XMFLOAT3 eye, target; StationView(m_station, eye, target);
+	float bt = m_time * m_camBreathSpeed;
+	float ox = OrganicNoise(bt, kNoiseSeedBreath[0]) * m_camBreathAmp;
+	float oy = OrganicNoise(bt, kNoiseSeedBreath[1]) * m_camBreathAmp;
+	float oz = OrganicNoise(bt, kNoiseSeedBreath[2]) * m_camBreathAmp;
+	const float LN = m_camLookNoise;
+
+	XMStoreFloat3(&m_camFwd, XMVector3Normalize(XMVectorSubtract(XMLoadFloat3(&target), XMLoadFloat3(&eye))));
+	cam->SetPos (XMFLOAT3(eye.x + ox, eye.y + oy, eye.z + oz));
+	cam->SetLook(XMFLOAT3(target.x + ox * LN, target.y + oy * LN, target.z + oz * LN));
+	cam->SetUp  (XMFLOAT3(0.0f, 1.0f, 0.0f));
 }
 
 //--- マウス移動を視角(yaw/pitch)へ累積する。FPS方式: 毎フレーム、カーソルを画面中心へ
@@ -624,6 +737,11 @@ void SceneForge::SaveTuning()
 	fprintf(fp, "transspeed %.5f\n", m_transSpeed);
 	fprintf(fp, "exitstep %.5f\n",   m_exitStepBack);
 	fprintf(fp, "lookpad %.5f\n",    m_lookPad);
+	// -- 工位(炉/砥石/水槽) --
+	fprintf(fp, "stationcam %.5f %.5f %.5f\n", m_stationCamDist, m_stationCamHeight, m_stationLookLift);
+	fprintf(fp, "bladelift %.5f %.5f %.5f\n",  m_hearthLift, m_grindLift, m_troughHover);
+	fprintf(fp, "wheel %.5f %.5f %.5f %.5f\n", m_wheel.pedalImpulse, m_wheel.maxSpeed, m_wheel.friction, m_wheel.bladeDrag);
+	fprintf(fp, "grindsens %.6f\n", m_grindSens);
 
 	fclose(fp);
 }
@@ -661,6 +779,10 @@ void SceneForge::TuningRefs(std::vector<float*>& out)
 		&m_hammerStowOff[0], &m_hammerStowOff[1], &m_hammerStowOff[2], &m_hammerStowTilt,
 		// -- Station transition --
 		&m_transSpeed, &m_exitStepBack, &m_lookPad,
+		// -- Stations (hearth / grindstone / trough) --
+		&m_stationCamDist, &m_stationCamHeight, &m_stationLookLift,
+		&m_hearthLift, &m_grindLift, &m_troughHover,
+		&m_wheel.pedalImpulse, &m_wheel.maxSpeed, &m_wheel.friction, &m_wheel.bladeDrag, &m_grindSens,
 	};
 	out.assign(r, r + _countof(r));
 }
@@ -733,6 +855,10 @@ void SceneForge::LoadTuning()
 		else if (strcmp(key, "transspeed") == 0) sscanf_s(v, "%f", &m_transSpeed);
 		else if (strcmp(key, "exitstep")   == 0) sscanf_s(v, "%f", &m_exitStepBack);
 		else if (strcmp(key, "lookpad")    == 0) sscanf_s(v, "%f", &m_lookPad);
+		else if (strcmp(key, "stationcam") == 0) sscanf_s(v, "%f %f %f", &m_stationCamDist, &m_stationCamHeight, &m_stationLookLift);
+		else if (strcmp(key, "bladelift")  == 0) sscanf_s(v, "%f %f %f", &m_hearthLift, &m_grindLift, &m_troughHover);
+		else if (strcmp(key, "wheel")      == 0) sscanf_s(v, "%f %f %f %f", &m_wheel.pedalImpulse, &m_wheel.maxSpeed, &m_wheel.friction, &m_wheel.bladeDrag);
+		else if (strcmp(key, "grindsens")  == 0) sscanf_s(v, "%f", &m_grindSens);
 	}
 	fclose(fp);
 }

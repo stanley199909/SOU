@@ -13,14 +13,24 @@
 // used to switch the step state machine (see StepKey()).
 enum class StepName
 {
-    Heat,     // heat the iron in the forge
+    Heat,     // heat the iron in the forge fire until it burns (sparks)
     Forge,    // hammer it into shape while hot (the player may flip the piece at will here)
-    Quench,   // cool it in water to finish
-    Grind,    // (future) sharpen on the grindstone
+    Grind,    // sharpen the edge on the grindstone (rough grind, before hardening)
+    Quench,   // plunge the burning blade into water to harden it (the climax)
+};
+
+// Work places in the smithy. The player walks to one and presses E to work there;
+// the blade is carried along and put down at that place.
+enum class Station
+{
+    Anvil,       // hammering
+    Hearth,      // the forge fire (heating). Always usable: re-heat whenever the iron cools
+    Grindstone,  // pedal-driven sharpening wheel
+    Trough,      // water trough (quenching)
 };
 
 // One entry in a recipe = one step. Holds only fields common to every step.
-// Step-specific numbers (e.g. Heat's target temperature) live inside that
+// Step-specific numbers (e.g. Quench's minimum temperature) live inside that
 // step's own class as named constants, so this shared struct stays lean.
 struct StepSetting
 {
@@ -29,6 +39,8 @@ struct StepSetting
 };
 
 // A weapon = an ordered list of steps. Pure data.
+// The same step type may appear more than once (e.g. Heat before forging AND
+// before quenching): one state class, reused by the data.
 struct WeaponRecipe
 {
     const char*              name;
@@ -39,6 +51,10 @@ struct WeaponRecipe
 // Kept here (owner-side vocabulary); each step class returns the same literal
 // from GetStateName(), which keeps StateMachine independent of this file.
 const char* StepKey(StepName n);
+
+// Where a step is performed. Fixed by the kind of work (you always heat at the
+// hearth), so it is a property of the step type, not per-recipe data.
+Station StepStation(StepName n);
 
 // The first recipe. More weapons = more of these.
 extern const WeaponRecipe ShortSword;

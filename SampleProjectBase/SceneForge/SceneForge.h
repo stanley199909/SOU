@@ -7,8 +7,10 @@
 #include "HeatStep.h"		// 各工程の状態(StateMachine/Player)
 #include "ForgeStep.h"
 #include "QuenchStep.h"
-#include "WeaponRecipe.h"	// GameData: StepName / StepSetting / WeaponRecipe(データ)
+#include "GrindStep.h"
+#include "WeaponRecipe.h"	// GameData: StepName / Station / StepSetting / WeaponRecipe(データ)
 #include "HammerPhysics.h"	// Physics: 鎚の弾簧-阻尼運動(自作物理)
+#include "GrindWheel.h"		// Physics: 足踏み砥石の回転(力積+指数減衰)
 #include "ForgingSim.h"		// Physics: 鍛造される鉄の状態と変形(自作物理)
 #include "Particles.h"		// Physics: 火花・余燼の粒子シミュ(自作物理)
 #include "Player.h"			// 鍛冶場を歩き回るプレイヤ(一人称の走動)
@@ -35,8 +37,14 @@ public:
 	void DrawUI();
 
 	//--- 工程(step)状態が呼び出す窓口(StateMachine/Player の各 Step から使う) ---
-	float HeatValue() const { return m_forging.Heat(); }	// 現在の温度 0..1(HeatStep が完了判定に使う)
+	float HeatValue() const { return m_forging.Heat(); }	// 現在の温度 0..1
+	bool  IsBurning() const { return m_forging.IsBurning(); }	// 鋼が燃えている(火花を噴く)=加熱工程の完了条件
 	bool  BothSidesDone() const;				// 両面とも成形完了したか(鍛打工程の完了条件)
+	bool  AllSharp() const { return m_forging.AllSharp(); }	// 刃が全区域研ぎ上がったか(研磨工程の完了条件)
+	bool  AtStation(Station s) const;			// 玩家が今その工位で作業中か(移動アニメ中は false)
+	bool  TryQuench();							// 淬火を試みる。冷めすぎなら独白で断り false。OKなら蒸気+音を出し true
+	void  SetPlunge(float t01);					// 淬火: 刃が水へ沈む進み 0..1(QuenchStep が時間で駆動)
+	void  SetLetterbox(float t01);				// 終幕: 上下の黒帯が入る進み 0..1(同上)
 	void  AdvanceStep();						// 次の工程へ進む(配方の順序で遷移。無ければ完成)
 	const StepSetting& CurrentStep() const;		// 今実行中の工程設定(HUD が instruction を表示)
 
@@ -137,8 +145,78 @@ private:
 	int                 m_stepIdx = 0;				// m_recipe->steps 内の現在位置
 	std::unique_ptr<HeatStep>   m_heatStep;			// 各工程状態(owner=this を渡して生成)
 	std::unique_ptr<ForgeStep>  m_forgeStep;
+	std::unique_ptr<GrindStep>  m_grindStep;
 	std::unique_ptr<QuenchStep> m_quenchStep;
 	void SetupSteps();								// 各状態を生成し m_stepMachine へ登録(Init で一度)
+
+	//--- 工位(Station): 金床/炉/砥石/水槽。走動中に物件を見て E で入る。工程ごとに使う工位は
+	//    StepStation(工程) が決める(データ)。刃は「最後に入った工位」に置かれ、工位を出ると手に持つ。
+	Station m_station  = Station::Anvil;			// 今(または移動アニメの到着先で)作業している工位
+	Station m_workAt   = Station::Anvil;			// 刃が置かれている工位(開始時は金床の上)
+	bool    m_carrying = false;						// 工位を出て刃を手に持って歩いている(=描かない・炉で熱されない)
+	DirectX::XMFLOAT3 m_stationViewDir = { 0, 0, -1 };	// 工位(金床以外)の視点方向=入った時に玩家が居た側(水平単位)
+	float m_stationCamDist   = 1.00f;				// 工位カメラ: 作業点から手前へ離れる水平距離
+	float m_stationCamHeight = 0.75f;				// 工位カメラ: 作業点からの目の高さ
+	float m_stationLookLift  = 0.00f;				// 工位カメラ: 注視点の高さ補正
+	float m_hearthLift  = 0.04f;					// 炉: 炭床の上に刃を置く高さ
+	float m_grindLift   = 0.02f;					// 砥石: プロップ上端から刃を置く高さ
+	float m_troughHover = 0.30f;					// 水槽: 水面の上に刃を構える高さ
+	DirectX::XMFLOAT3 StationBase(Station s);		// 工位の作業点(刃を置く点。砥石の滑り/淬火の沈みは含まない)
+	DirectX::XMFLOAT3 StationRight() const;			// 工位カメラから見た右方向(刃の長軸をこれに揃える)
+	float StationAlignYaw() const;					// 刃の長軸を StationRight に揃える追加 yaw(金床では 0)
+	void  StationView(Station s, DirectX::XMFLOAT3& eye, DirectX::XMFLOAT3& target);	// 工位の視点と注視点
+	void  ApplyWorkCamera();						// 金床以外の工位の固定カメラ
+
+	//--- 炉(加熱)。ニュートンの冷却(加熱)則: 鉄の温度は「火の温度」へ指数的に近づく。
+	//      dT/dt = k * (T_fire - T)   →  1フレームの厳密解: T += (T_fire - T) * (1 - exp(-k*dt))
+	//    炭火だけ = 燃える温度(BURN_TEMP)と過熱(OVERHEAT)の間で止まる=放っておいても焼けない。
+	//    風箱(R長押し) = 火が熱くなり(T_fire↑)、速く(k↑)近づく=早いが、踏みすぎると過熱する。
+	static constexpr float COAL_FIRE_TEMP    = 0.87f;	// 炭火だけの火の温度(燃える〜過熱の間)
+	static constexpr float BELLOWS_FIRE_TEMP = 1.00f;	// 風箱で煽った火の温度(白熱。過熱を越える)
+	static constexpr float COAL_HEAT_K       = 0.25f;	// 炭火だけの熱の入り方(1/秒)。0→燃えるまで約10秒
+	static constexpr float BELLOWS_HEAT_K    = 0.60f;	// 風箱を踏んでいる時(1/秒)。0→燃えるまで約3秒
+	bool  m_overheatWarned = false;					// 過熱の独白を一度だけ出す(冷めたら再武装)
+
+	//--- 鋼が燃える(火花を噴く)演出。温度 >= ForgingSim::BURN_TEMP の間、刃の表面から火花を出す。
+	float m_burnSparkAcc = 0.0f;					// 端数の火花数を次フレームへ持ち越す
+	bool  m_burnSndOn    = false;					// 燃焼ループ音が鳴っているか
+	static constexpr float BURN_SPARK_RATE  = 30.0f;	// 1秒あたりの火花数
+	static constexpr float BURN_SPARK_POWER = 0.30f;	// 火花の勢い(打撃の火花より弱い=表面から弾ける程度)
+	static constexpr float BURN_SPARK_SCALE = 0.45f;
+	void  UpdateBurnFx(float tick);					// 燃焼の火花+音
+	DirectX::XMFLOAT3 RandomBladePoint() const;		// 刃の上のランダムな点(ワールド。火花の発生点)
+
+	//--- 研磨(砥石)。右クリックを「点按」=足踏み1回。左長押し=刃を押し当てる。マウス左右=刃を滑らす。
+	GrindWheel m_wheel;								// 足踏み砥石の回転物理(力積+指数減衰)
+	float m_grindU      = 0.5f;						// 砥石に当たっている刃の長手位置 0..1(区域 = U*NSEG)
+	float m_grindPress  = 0.0f;						// 押し当ての見た目 0..1(Damp)
+	float m_grindSens   = 0.0012f;					// マウス1pxあたりの滑り量(長手の割合)
+	float m_grindSparkAcc = 0.0f;
+	bool  m_grindSndOn  = false;
+	static constexpr float GRIND_RATE         = 0.35f;	// 全速で押し当てた時の研ぎ進み(/秒)
+	static constexpr float GRIND_PRESS_DROP   = 0.02f;	// 押し当てで刃が砥石へ沈む量
+	static constexpr float GRIND_PRESS_LAMBDA = 14.0f;	// 押し当ての追従の速さ(Damp率)
+	static constexpr float GRIND_SPARK_RATE   = 90.0f;	// 全速時の研ぎ火花(個/秒)
+	static constexpr float GRIND_SPARK_POWER  = 0.55f;
+	static constexpr float GRIND_SPARK_SCALE  = 0.35f;
+	void  UpdateGrind(float tick, bool inputOn);	// 研磨の入力・物理・火花・音
+
+	//--- 淬火と終幕(QuenchStep が進みを渡し、ここが見た目/音を担当)
+	float m_plunge    = 0.0f;						// 刃が水へ沈んだ割合 0..1
+	float m_letterbox = 0.0f;						// 上下黒帯の入り具合 0..1
+	float m_steamTimer = 0.0f;						// 蒸気の残り時間(秒)
+	static constexpr float QUENCH_MIN_TEMP  = 0.55f;	// これ未満では淬火できない(焼きが入らない)
+	static constexpr float QUENCH_COOL_RATE = 1.2f;		// 水中での急冷(/秒)
+	static constexpr float PLUNGE_DEPTH     = 0.40f;	// 構え位置から沈む深さ(水面の下まで)
+	static constexpr float STEAM_DURATION   = 3.0f;		// 蒸気が出続ける時間(秒。だんだん弱まる)
+	static constexpr float STEAM_RATE       = 140.0f;	// 淬火直後の蒸気の発生数(個/秒)
+	static constexpr float STEAM_RADIUS     = 0.18f;	// 蒸気が湧く水面の円の半径
+	static constexpr float LETTERBOX_RATIO  = 0.12f;	// 黒帯1本の最大の高さ(画面高さ比)
+	void  DrawSteam();								// 蒸気を柔らかいビルボードで描く
+	void  DrawLetterbox();							// 上下の黒帯(映画的な終幕)
+
+	//--- 主人公の独白(負向フィードバック)。打撃ポップアップと同じ枠を使う。
+	void  Say(const char* text, unsigned int col);
 
 	//--- 温度(0=冷たい 〜 1=白熱)は鉄そのものの状態なので m_forging(ForgingSim)が所有する。
 	//    読むのは m_forging.Heat()。玩家がどこに居ても(走動中も)自然冷却が進む。
@@ -186,8 +264,8 @@ private:
 	static constexpr float TRANS_MIN_TIME = 1.0f;	// 過渡の最短(秒。近くても一瞬で飛ばない)
 	static constexpr float TRANS_MAX_TIME = 2.0f;	// 過渡の最長(秒。遠くても待たせすぎない)
 	bool   Transitioning() const { return m_modeTrans != ModeTrans::None; }
-	void   BeginEnterForge();			// 走動→工位の過渡を開始
-	void   BeginExitForge();			// 工位→走動の過渡を開始(玩家を金床の一歩手前へ置く)
+	void   BeginEnterStation(Station s);	// 走動→工位の過渡を開始(刃もその工位へ置く)
+	void   BeginExitStation();			// 工位→走動の過渡を開始(玩家を工位の一歩手前へ置き、刃を手に持つ)
 	void   UpdateModeTrans(float tick);	// 計時を進め、終わったら walkMode を切り替える
 	void   ApplyViewCamera();			// 今の状態のカメラを適用(過渡中は補間、他は走動/工位)
 	void   ApplyTransCamera();			// 過渡中のカメラ(開始視点→到着先の補間)
@@ -199,11 +277,12 @@ private:
 	//      ①範囲: 玩家の足元が物件の「互動範囲の箱」(物件のワールドAABBを水平に reach だけ広げた箱)の中
 	//      ②視線: 目線の射線が物件の箱(m_lookPad だけ膨らませた)に当たる(照準と同じ AimSystem::Raycast)
 	//    物件と行為の対応は表 INTERACTABLES(データ)。新しい互動は表に1行足す+行為を1つ書くだけ。
-	enum class InteractAction { EnterForge, TakeTongs };
+	enum class InteractAction { EnterStation, TakeTongs };
 	struct Interactable
 	{
 		const char*    propKey;	// どのプロップか(配置は stage_layout.txt に従う=箱も自動で追従)
 		InteractAction action;	// E で何をするか
+		Station        station;	// EnterStation の時に入る工位(TakeTongs では金床)
 		float          reach;	// 互動範囲: 物件の箱から水平にどこまで離れても届くか(単位)
 	};
 	static const Interactable INTERACTABLES[];
@@ -214,10 +293,10 @@ private:
 	float m_promptLambda = 12.0f;				// フェードの速さ(Damp率, 1/秒)
 	float m_lookPad      = 0.12f;				// 視線判定の箱を膨らませる量(細い火钳でも狙える様に)
 	bool  m_pendingFlip  = false;				// 火钳を取って工位へ移動中=着いたら翻面(火钳待命)から始める
-	bool  InteractEnabled(InteractAction a) const;	// 今この互動ができる状況か(例: 火钳は鍛打工程だけ)
+	bool  InteractEnabled(const Interactable& it) const;	// 今この互動ができる状況か(例: 砥石は研磨工程だけ)
 	bool  PropWorldBox(Prop& p, DirectX::XMFLOAT3& mn, DirectX::XMFLOAT3& mx);	// プロップのワールドAABB
 	void  UpdateInteract(float tick);			// 2判定→m_focus を決める(走動中のみ)
-	void  DoInteract(InteractAction a);			// E を押された物件の行為を実行
+	void  DoInteract(const Interactable& it);	// E を押された物件の行為を実行
 	void  DrawInteractPrompt();					// 物件の上に「E」ボタンを描く(HUD)
 	void  DrawInteractBoxes();					// F1: 互動範囲の箱を線で表示(範囲内=緑)
 
@@ -261,8 +340,9 @@ private:
 
 	//--- 武器モーフ(Blenderで作った同拓扑の各段FBXを頂点補間して成形する) ---
 	// uv は真の鋼テクスチャ採样用。morphでUVは不変なので stage0 の値を全段で使う。
-	// フィールド順は VS_Wp の VIN 宣言順(pos→nrm→uv→col)と一致させること(入力レイアウトが宣言順で焼かれる)。
-	struct WpVtx { DirectX::XMFLOAT3 pos; DirectX::XMFLOAT3 nrm; DirectX::XMFLOAT2 uv; DirectX::XMFLOAT4 col; };
+	// フィールド順は VS_Wp の VIN 宣言順(pos→nrm→uv→col→sharp)と一致させること(入力レイアウトが宣言順で焼かれる)。
+	// sharp = 研いだ刃先の度合い 0..1(=その区域の鋭さ × 刃先への近さ)。PS が研ぎ面の見た目に使う。
+	struct WpVtx { DirectX::XMFLOAT3 pos; DirectX::XMFLOAT3 nrm; DirectX::XMFLOAT2 uv; DirectX::XMFLOAT4 col; float sharp; };
 	struct WpStage { std::vector<DirectX::XMFLOAT3> pos, nrm; std::vector<DirectX::XMFLOAT2> uv; };	// 1段分の生頂点(ローカル)
 	std::vector<WpStage>        m_wpStage;		// stage_0 .. stage_final
 	std::vector<unsigned int>   m_wpIdx;		// インデックス(全段共通)
@@ -277,6 +357,10 @@ private:
 	// 照準している区域番号。AimSystem(射線×区域ボックス)が決めた値をそのまま返す。
 	int   AimSeg() const { return m_aimSeg; }
 	DirectX::XMFLOAT3 m_wpMin = { 0,0,0 }, m_wpMax = { 0,0,0 };	// stage0のローカルAABB(配置用)
+	DirectX::XMFLOAT3 m_wpFinMin = { 0,0,0 }, m_wpFinMax = { 0,0,0 };	// 完成形のローカルAABB(刃先=幅方向の端の判定用)
+	//--- 研ぎの形: 刃先(幅方向の端)の頂点ほど、鋭さに応じて厚みを中心面へ寄せる=刃が薄く立つ。
+	static constexpr float EDGE_BAND_START = 0.55f;	// 幅の正規化座標でここから外側を「刃先」とみなす(0=中心,1=端)
+	static constexpr float EDGE_THIN       = 0.65f;	// 研ぎ上がりで刃先の厚みを減らす割合
 	//--- 両面の形の分解(軸分解モーフ): 輪郭(長さ/幅)は両面で共有=両面進捗の平均、
 	//    厚み方向だけは各面が自分の進捗で動く(叩いた面だけ刃の斜面が付く)。
 	int   m_wpThickAxis = -1;					// 刃の表裏を貫くローカル軸(0=x,1=y,2=z)。Loadで完成形から判定
@@ -333,8 +417,10 @@ private:
 	float m_wpSky[3]    = { 0.55f, 0.62f, 0.75f };	// 擬似環境の上方向(空)の色
 	float m_wpGround[3] = { 0.18f, 0.15f, 0.12f };	// 擬似環境の下方向(地面/炉床)の色
 	void  LoadWeaponStages();					// Assets/Model/weapon/stage_*.fbx を読む
-	DirectX::XMMATRIX WeaponWorld() const;		// 武器ローカル→ワールドのフィット変換(照準/描画で共用)
+	DirectX::XMMATRIX WeaponWorld();			// 武器ローカル→ワールドのフィット変換(照準/描画で共用)
 	DirectX::XMMATRIX WeaponSpin() const;		// 翻面回転(長軸まわりに m_flipAngle)。WeaponWorld と法線変換で共用
+	DirectX::XMMATRIX WeaponRot() const;		// 刃の回転部分(翻面×向き付け×工位の揃え)。法線変換用
+	DirectX::XMFLOAT3 WorkAnchor();				// 刃を置く点(工位の作業点 + 砥石の滑り/押し当て + 淬火の沈み)
 	void  BuildWeaponMorph();					// m_forgeProgから補間頂点を作る
 	void  DrawWeapon();							// 武器を描画(発光+簡易ライティング)
 	//--- 目標ゴースト: stage_final の形を半透明で重ねて「完成形」を示す(KCD2には無い自作要素)。
@@ -380,12 +466,8 @@ private:
 	float m_editPrevX = 0.0f, m_editPrevY = 0.0f;
 	void  UpdateEditorDrag();	// LMBドラッグで選択プロップを地面移動
 
-	//--- 炉のマテリアル別テクスチャ(4UVタイル: 石/レンガ/火室/金属)。
-	//    F1で各マテリアルにどのテクスチャを当てるか選び、正解の割当を焼き込む。
-
 	//--- 自作の光る炭ベッド(FBXに頼らず、狙った位置に確実に炭火を出す。明滅する)
-	std::shared_ptr<MeshBuffer> m_coalBedMesh;
-	std::shared_ptr<MeshBuffer> m_coalMesh;	// 水平の板(2枚=両面)
+	std::shared_ptr<MeshBuffer> m_coalBedMesh;	// 低ポリの炭塊群(CoalBedMesh::Create)。隙間だけ発光
 	bool  m_coalOn     = true;
 	float m_coalPos[3] = { 3.20f, 0.55f, 1.80f };	// 炉の火床の位置(F1で合わせる)
 	float m_coalYaw    = 0.0f;
@@ -394,7 +476,8 @@ private:
 	void  DrawCoalBed();	// 光る炭ベッドを描画
 
 	//--- 水槽の水面(真の屈折。背後のシーンをスナップショットして透ける)
-	//    メッシュは m_coalMesh(±1の水平板)を流用。シェーダーだけ PS_Water に差し替える。
+	//    メッシュは ±1 の水平板(両面)。world で位置/大きさを与え、PS_Water で描く。
+	std::shared_ptr<MeshBuffer> m_waterMesh;
 	bool  m_waterOn     = true;
 	float m_waterPos[3] = { -1.40f, 0.55f, 0.0f };	// 水槽の位置(stage_layout.txtで上書き)
 	float m_waterYaw    = 0.0f;
@@ -464,12 +547,15 @@ private:
 
 	static constexpr float TITLE_INTERVAL = 1.0f;	// タイトルで自動的に叩く間隔(秒)
 
-	//--- 温度パラメータ
-	static constexpr float HEAT_RATE = 0.55f;	// 加熱速度(R長押しで炉で加熱, /秒)
+	//--- 温度パラメータ(加熱速度は上の COAL_HEAT_RATE / BELLOWS_HEAT_RATE)
 	// 打撃CDは調整しやすいようメンバー変数(m_strikeCDMax)。自然冷却速度は m_forging.coolRate
 	static constexpr float IDEAL_MIN = 0.55f;	// 最適温度帯(下限)
 	static constexpr float IDEAL_MAX = 0.85f;	// 最適温度帯(上限)
 	static constexpr float OVERHEAT  = 0.92f;	// これ以上は過熱(鋼を痛める)
+	// 炭火だけの温度は「燃える」と「過熱」の間でなければならない(=放置で燃え始め、しかし焼けない)。
+	// 調整で崩したらコンパイルエラーで気付ける様にする。
+	static_assert(COAL_FIRE_TEMP > ForgingSim::BURN_TEMP && COAL_FIRE_TEMP < OVERHEAT,
+	              "COAL_FIRE_TEMP must lie between BURN_TEMP and OVERHEAT");
 
 	//--- 打撃パラメータ
 	static constexpr float CHARGE_RATE = 1.6f;	// 蓄力速度(/秒, 満蓄力まで約0.6秒)

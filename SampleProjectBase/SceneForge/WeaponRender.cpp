@@ -230,6 +230,7 @@ void SceneForge::LoadWeaponStages()
 			fmin.x = fminf(fmin.x, p.x); fmin.y = fminf(fmin.y, p.y); fmin.z = fminf(fmin.z, p.z);
 			fmax.x = fmaxf(fmax.x, p.x); fmax.y = fmaxf(fmax.y, p.y); fmax.z = fmaxf(fmax.z, p.z);
 		}
+		m_wpFinMin = fmin; m_wpFinMax = fmax;	// 完成形の箱(研ぎ: 刃先=幅方向の端の判定に使う)
 		const float ext[3] = { fmax.x - fmin.x, fmax.y - fmin.y, fmax.z - fmin.z };
 		const int longAx = AimSystem::LongAxis(m_wpMin, m_wpMax);
 		m_wpThickAxis = -1;
@@ -268,18 +269,57 @@ XMMATRIX SceneForge::WeaponSpin() const
 	}
 }
 
-XMMATRIX SceneForge::WeaponWorld() const
+//--- 刃の回転部分 = 翻面(自局所の裏返し) × 向き付け(F1で合わせたRPY) × 工位の揃え(長軸をカメラの左右へ)。
+//    WeaponWorld と法線の変換が同じ回転を使う=見た目と陰影が必ず一致する。
+XMMATRIX SceneForge::WeaponRot() const
+{
+	return WeaponSpin() *
+		XMMatrixRotationRollPitchYaw(m_wpPitch, m_wpYaw, m_wpRoll) *
+		XMMatrixRotationY(StationAlignYaw());
+}
+
+//--- 刃を置く点。工位の作業点に、その工位の「動き」を足す:
+//    金床  : F1 の微調整 m_wpOff
+//    砥石  : 刃を長軸方向に滑らせ、今研いでいる位置(m_grindU)を砥石の接点に持って来る + 押し当てで少し沈む
+//    水槽  : 淬火で水の中へ沈む(m_plunge)
+XMFLOAT3 SceneForge::WorkAnchor()
+{
+	XMFLOAT3 a = StationBase(m_workAt);
+	switch (m_workAt)
+	{
+	case Station::Anvil:
+		a.x += m_wpOff[0]; a.y += m_wpOff[1]; a.z += m_wpOff[2];
+		break;
+	case Station::Grindstone:
+	{
+		// 長軸は StationRight に揃えてある。長さ方向の位置 u の点を接点へ寄せる=刃を -(u-0.5)*全長 だけ動かす。
+		const float len = m_barLen * m_wpScale;	// ワールドでの刃の全長(フィットで最長辺=m_barLen)
+		const XMFLOAT3 r = StationRight();
+		const float s = -(m_grindU - 0.5f) * len;
+		a.x += r.x * s; a.z += r.z * s;
+		a.y -= m_grindPress * GRIND_PRESS_DROP;
+		break;
+	}
+	case Station::Trough:
+		a.y -= m_plunge * PLUNGE_DEPTH;
+		break;
+	default: break;
+	}
+	return a;
+}
+
+XMMATRIX SceneForge::WeaponWorld()
 {
 	float ex = m_wpMax.x - m_wpMin.x, ey = m_wpMax.y - m_wpMin.y, ez = m_wpMax.z - m_wpMin.z;
 	float maxE = fmaxf(ex, fmaxf(ey, ez)); if (maxE < 1e-5f) maxE = 1.0f;
 	float fit = (m_barLen / maxE) * m_wpScale;
 	XMFLOAT3 c((m_wpMin.x + m_wpMax.x) * 0.5f, (m_wpMin.y + m_wpMax.y) * 0.5f, (m_wpMin.z + m_wpMax.z) * 0.5f);
+	XMFLOAT3 a = WorkAnchor();	// 工位の作業点(配置データのプロップ箱を読む)
 	return
 		XMMatrixTranslation(-c.x, -c.y, -c.z) *
 		XMMatrixScaling(fit, fit, fit) *
-		WeaponSpin() *	// 翻面: 長軸まわりの裏返し回転(向き付け RPY の前=刃の自局所で裏返す)
-		XMMatrixRotationRollPitchYaw(m_wpPitch, m_wpYaw, m_wpRoll) *
-		XMMatrixTranslation(m_barAnchor.x + m_wpOff[0], m_barAnchor.y + m_wpOff[1], m_barAnchor.z + m_wpOff[2]);
+		WeaponRot() *	// 翻面(自局所の裏返し) → 向き付け → 工位の揃え
+		XMMatrixTranslation(a.x, a.y, a.z);
 }
 
 //--- 各区域の進捗 m_segProg[] で段を補間して m_wpVtx を作る。ローカル→砧面へのフィット変換もCPUで焼く。
@@ -292,8 +332,8 @@ void SceneForge::BuildWeaponMorph()
 	int ns = (int)m_wpStage.size();
 
 	XMMATRIX world = WeaponWorld();
-	// 法線も本体と同じ回転(翻面 * 向き付け)で回す。世界変換と規約を揃える。
-	XMMATRIX rot   = WeaponSpin() * XMMatrixRotationRollPitchYaw(m_wpPitch, m_wpYaw, m_wpRoll);
+	// 法線も本体と同じ回転(翻面 * 向き付け * 工位の揃え)で回す。世界変換と規約を揃える。
+	XMMATRIX rot   = WeaponRot();
 
 	// タイトル等(非プレイ)は全体を一様に m_forgeProg で見せる(F1スライダのプレビュー)。
 	const bool  playing = (m_state == GAME_PLAY);
@@ -326,6 +366,11 @@ void SceneForge::BuildWeaponMorph()
 	}
 	const float* mn = &m_wpMin.x;	// stage0 AABB を軸番号で引くための別名
 	const float* mx = &m_wpMax.x;
+	// 研ぎ: 幅の軸 = 長軸でも厚み軸でもない残りの軸(軸番号 0+1+2=3 から引く)。刃先はこの軸の両端。
+	const int la = AimSystem::LongAxis(m_wpMin, m_wpMax);
+	const int wa = (ta >= 0) ? 3 - la - ta : -1;
+	const float* fmn = &m_wpFinMin.x;	// 完成形の箱(研ぐのは完成した刃なので、幅は完成形で正規化)
+	const float* fmx = &m_wpFinMax.x;
 
 	for (int i = 0; i < m_wpN; ++i)
 	{
@@ -333,6 +378,7 @@ void SceneForge::BuildWeaponMorph()
 		const XMFLOAT3& a0 = m_wpStage[0].pos[i];
 		int   thisSeg;
 		float pFront, pBack;	// この頂点位置での表(面0)/裏(面1)それぞれの進捗
+		float sharp = 0.0f;		// この頂点位置での刃の鋭さ(区域の鋭さを隣とブレンド)
 		if (playing)
 		{
 			float sc = AimSystem::SegCoordLocal(a0, m_wpMin, m_wpMax, NSEG);	// 0..NSEG
@@ -347,6 +393,7 @@ void SceneForge::BuildWeaponMorph()
 			};
 			pFront = segBlend(0);
 			pBack  = segBlend(1);
+			sharp  = m_forging.Sharpness(sa) + (m_forging.Sharpness(sb) - m_forging.Sharpness(sa)) * ft;
 			thisSeg = (int)sc; if (thisSeg >= NSEG) thisSeg = NSEG - 1;
 		}
 		else { pFront = pBack = m_forgeProg; thisSeg = -1; }
@@ -373,6 +420,22 @@ void SceneForge::BuildWeaponMorph()
 		// 輪郭側の位置を基に、厚み軸の成分だけ面側の値に差し替える。
 		XMFLOAT3 lp; XMStoreFloat3(&lp, posO);
 		if (ta >= 0) { XMFLOAT3 lf; XMStoreFloat3(&lf, posF); (&lp.x)[ta] = (&lf.x)[ta]; }
+
+		// ★研ぎの形: 刃先(幅の端)に近い頂点ほど、鋭さに応じて厚みを中心面へ寄せる=刃が薄く立つ。
+		//   edgeW = 幅の正規化座標(0=中心,1=端)が EDGE_BAND_START を越えた分(SmoothStep)。
+		float edge = 0.0f;
+		if (wa >= 0 && sharp > 0.0f)
+		{
+			const float wc = (fmn[wa] + fmx[wa]) * 0.5f;
+			const float wh = (fmx[wa] - fmn[wa]) * 0.5f;
+			const float wn = (wh > 1e-6f) ? fabsf((&lp.x)[wa] - wc) / wh : 0.0f;
+			const float edgeW = Lerp::SmoothStep((wn - EDGE_BAND_START) / (1.0f - EDGE_BAND_START));
+			edge = sharp * edgeW;
+			const float tc = (mn[ta] + mx[ta]) * 0.5f;		// 厚みの中心面
+			(&lp.x)[ta] = tc + ((&lp.x)[ta] - tc) * (1.0f - EDGE_THIN * edge);
+		}
+		m_wpVtx[i].sharp = edge;	// PS へ: 研ぎ面の見た目(磨いた明るい鋼)に使う
+
 		XMVECTOR pp = XMVector3TransformCoord(XMLoadFloat3(&lp), world);
 		// 法線は面側を使う: 陰影に効くのは表面の傾き(斜面の有無)で、それは厚み方向の変形が決める。
 		XMVECTOR n = XMVector3Normalize(XMVector3TransformNormal(ta >= 0 ? nrmF : nrmO, rot));
@@ -446,7 +509,7 @@ void SceneForge::BuildGhostMesh()
 	if (!m_wpOk || m_wpStage.empty()) return;
 	const WpStage& F = m_wpStage.back();		// stage_final = 完成形
 	XMMATRIX world = WeaponWorld();
-	XMMATRIX rot   = WeaponSpin() * XMMatrixRotationRollPitchYaw(m_wpPitch, m_wpYaw, m_wpRoll);	// 翻面込み
+	XMMATRIX rot   = WeaponRot();	// 翻面・工位の揃え込み
 	const XMFLOAT4 tint = { 0.55f, 0.78f, 1.0f, 0.5f };	// 青白い半透明(a=基準)
 
 	for (int i = 0; i < m_wpN; ++i)

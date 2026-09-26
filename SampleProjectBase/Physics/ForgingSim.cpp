@@ -12,6 +12,7 @@ void ForgingSim::Reset()
         for (int j = 0; j < NW; ++j) { m_h[s][i][j] = m_hStart; m_dmgF[s][i][j] = 0.0f; }
         for (int k = 0; k < NSEG; ++k) m_segProg[s][k] = 0.0f;
     }
+    for (int k = 0; k < NSEG; ++k) m_sharp[k] = 0.0f;   // edge not ground yet
     BuildTarget();
 }
 
@@ -199,4 +200,21 @@ float ForgingSim::SegAverage() const
     float sum = 0.0f;
     for (int k = 0; k < NSEG; ++k) sum += m_segProg[m_side][k];
     return sum / NSEG;
+}
+
+ForgingSim::GrindOutcome ForgingSim::ApplyGrind(int seg, float amount)
+{
+    if (seg < 0 || seg >= NSEG) return GrindOutcome::AlreadySharp;
+    // Grinding an edge that is already finished only wastes metal: report it so the
+    // scene can react (a line from the smith), but do not change the state.
+    if (m_sharp[seg] >= SHARP_DONE) return GrindOutcome::AlreadySharp;
+    m_sharp[seg] += amount;
+    if (m_sharp[seg] > 1.0f) m_sharp[seg] = 1.0f;
+    return GrindOutcome::Sharpened;
+}
+
+bool ForgingSim::AllSharp() const
+{
+    for (int k = 0; k < NSEG; ++k) if (m_sharp[k] < SHARP_DONE) return false;
+    return true;
 }

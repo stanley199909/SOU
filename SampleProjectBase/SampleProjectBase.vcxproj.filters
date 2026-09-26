@@ -216,6 +216,12 @@
     <ClCompile Include="StateMachine\Player\QuenchStep.cpp">
       <Filter>ソース ファイル\App\StateMachine\Player</Filter>
     </ClCompile>
+    <ClCompile Include="StateMachine\Player\GrindStep.cpp">
+      <Filter>ソース ファイル\App\StateMachine\Player</Filter>
+    </ClCompile>
+    <ClCompile Include="Physics\GrindWheel.cpp">
+      <Filter>ソース ファイル\App\Physics</Filter>
+    </ClCompile>
     <ClCompile Include="DebugUI.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
@@ -355,6 +361,12 @@
     </ClInclude>
     <ClInclude Include="StateMachine\Player\QuenchStep.h">
       <Filter>ヘッダー ファイル\App\StateMachine\Player</Filter>
+    </ClInclude>
+    <ClInclude Include="StateMachine\Player\GrindStep.h">
+      <Filter>ヘッダー ファイル\App\StateMachine\Player</Filter>
+    </ClInclude>
+    <ClInclude Include="Physics\GrindWheel.h">
+      <Filter>ヘッダー ファイル\App\Physics</Filter>
     </ClInclude>
     <ClInclude Include="DebugUI.h">
       <Filter>ヘッダー ファイル</Filter>

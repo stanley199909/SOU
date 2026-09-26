@@ -183,11 +183,13 @@
     <ClCompile Include="Physics\HammerPhysics.cpp" />
     <ClCompile Include="Physics\ForgingSim.cpp" />
     <ClCompile Include="Physics\Particles.cpp" />
+    <ClCompile Include="Physics\GrindWheel.cpp" />
     <ClCompile Include="StateMachine\StateMachine.cpp" />
     <ClCompile Include="StateMachine\StateBase.cpp" />
     <ClCompile Include="StateMachine\Player\HeatStep.cpp" />
     <ClCompile Include="StateMachine\Player\ForgeStep.cpp" />
     <ClCompile Include="StateMachine\Player\QuenchStep.cpp" />
+    <ClCompile Include="StateMachine\Player\GrindStep.cpp" />
     <ClCompile Include="SceneForge\SceneForge.cpp" />
     <ClCompile Include="SceneForge\WeaponRender.cpp" />
     <ClCompile Include="SceneForge\Scenery.cpp" />
@@ -235,11 +237,13 @@
     <ClInclude Include="Physics\HammerPhysics.h" />
     <ClInclude Include="Physics\ForgingSim.h" />
     <ClInclude Include="Physics\Particles.h" />
+    <ClInclude Include="Physics\GrindWheel.h" />
     <ClInclude Include="StateMachine\StateMachine.h" />
     <ClInclude Include="StateMachine\StateBase.h" />
     <ClInclude Include="StateMachine\Player\HeatStep.h" />
     <ClInclude Include="StateMachine\Player\ForgeStep.h" />
     <ClInclude Include="StateMachine\Player\QuenchStep.h" />
+    <ClInclude Include="StateMachine\Player\GrindStep.h" />
     <ClInclude Include="SceneForge\SceneForge.h" />
     <ClInclude Include="SceneForge\SceneForge_Internal.h" />
     <ClInclude Include="SceneParticleLab.h" />

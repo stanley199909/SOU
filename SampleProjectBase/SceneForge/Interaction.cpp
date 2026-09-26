@@ -22,8 +22,11 @@ using namespace DirectX;
 //--- 互動できる物件の表(データ)。新しい互動は1行足す+DoInteract に行為を書くだけ。
 //    reach(単位) = 物件の箱の縁から水平にどこまで離れても手が届くか。
 const SceneForge::Interactable SceneForge::INTERACTABLES[] = {
-	{ "StAnvil",  SceneForge::InteractAction::EnterForge, 1.0f },	// 金床 → 工位(鍛造)へ
-	{ "StPliers", SceneForge::InteractAction::TakeTongs,  0.9f },	// 作業台の火钳 → 取って翻面へ
+	{ "StAnvil",  SceneForge::InteractAction::EnterStation, Station::Anvil,      1.0f },	// 金床 → 鍛打
+	{ "StForge",  SceneForge::InteractAction::EnterStation, Station::Hearth,     1.0f },	// 炉 → 加熱(いつでも再加熱できる)
+	{ "StGrind",  SceneForge::InteractAction::EnterStation, Station::Grindstone, 0.9f },	// 砥石 → 研磨
+	{ "StTrough", SceneForge::InteractAction::EnterStation, Station::Trough,     1.0f },	// 水槽 → 淬火
+	{ "StPliers", SceneForge::InteractAction::TakeTongs,    Station::Anvil,      0.9f },	// 作業台の火钳 → 取って翻面へ
 };
 const int SceneForge::NUM_INTERACTABLES = _countof(SceneForge::INTERACTABLES);
 
@@ -47,11 +50,15 @@ bool SceneForge::PropWorldBox(Prop& p, XMFLOAT3& mn, XMFLOAT3& mx)
 }
 
 //--- 今この互動ができる状況か(物件ごとの前提条件)。
-bool SceneForge::InteractEnabled(InteractAction a) const
+bool SceneForge::InteractEnabled(const Interactable& it) const
 {
-	switch (a)
+	switch (it.action)
 	{
-	case InteractAction::EnterForge: return true;
+	case InteractAction::EnterStation:
+		// 炉はいつでも使える(鍛打中/淬火前に冷めたら熱し直す)。
+		// 他の工位は「今の工程の工位」の時だけ(例: 研磨工程でなければ砥石に入れない)。
+		if (it.station == Station::Hearth) return true;
+		return it.station == StepStation(CurrentStep().type);
 	case InteractAction::TakeTongs:
 		// 台の火钳は工程に関係なく取れる(ユーザー決定)。既に手に持っている時だけ取れない。
 		//   ※工位で F で取るのは鍛打工程だけ(UpdateFlip 側)。
@@ -78,7 +85,7 @@ void SceneForge::UpdateInteract(float tick)
 		for (int i = 0; i < NUM_INTERACTABLES; ++i)
 		{
 			const Interactable& it = INTERACTABLES[i];
-			if (!InteractEnabled(it.action)) continue;
+			if (!InteractEnabled(it)) continue;
 			Prop* p = GetProp(it.propKey);
 			if (!p || p->hidden) continue;
 			XMFLOAT3 mn, mx;
@@ -111,12 +118,12 @@ void SceneForge::UpdateInteract(float tick)
 }
 
 //--- E を押された物件の行為。
-void SceneForge::DoInteract(InteractAction a)
+void SceneForge::DoInteract(const Interactable& it)
 {
-	switch (a)
+	switch (it.action)
 	{
-	case InteractAction::EnterForge:
-		BeginEnterForge();
+	case InteractAction::EnterStation:
+		BeginEnterStation(it.station);
 		break;
 	case InteractAction::TakeTongs:
 		// 火钳を手に取る(台上のモデルを消す)→ 工位へ移動 → 着いたら翻面の「火钳待命」から始める。
@@ -124,7 +131,7 @@ void SceneForge::DoInteract(InteractAction a)
 		m_tongsInHand = true;
 		if (Prop* pl = GetProp("StPliers")) pl->hidden = true;
 		m_pendingFlip = true;
-		BeginEnterForge();
+		BeginEnterStation(it.station);
 		break;
 	}
 }
@@ -188,7 +195,7 @@ void SceneForge::DrawInteractBoxes()
 		mn.x -= it.reach; mn.z -= it.reach; mx.x += it.reach; mx.z += it.reach;
 		bool inRange = foot.x >= mn.x && foot.x <= mx.x && foot.z >= mn.z && foot.z <= mx.z;
 
-		XMFLOAT4 col = !InteractEnabled(it.action) ? XMFLOAT4(1.0f, 0.25f, 0.2f, 1.0f)
+		XMFLOAT4 col = !InteractEnabled(it) ? XMFLOAT4(1.0f, 0.25f, 0.2f, 1.0f)
 		             : (i == m_focus)              ? XMFLOAT4(1.0f, 0.9f, 0.2f, 1.0f)
 		             : inRange                     ? XMFLOAT4(0.2f, 1.0f, 0.3f, 1.0f)
 		                                           : XMFLOAT4(0.6f, 0.6f, 0.6f, 1.0f);

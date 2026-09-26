@@ -34,9 +34,9 @@ using namespace DirectX;
 //    KCD風: 熱い鋼の表面に黒い酸化皮(スケール)の斑が乗る。UV不要=世界座標の値ノイズで生成(核显向け)。
 static const char* g_wpVS = R"EOT(
 cbuffer Cam : register(b0){ float4x4 view; float4x4 proj; };
-struct VIN  { float3 pos:POSITION0; float3 nrm:NORMAL0; float2 uv:TEXCOORD0; float4 col:TEXCOORD1; };
-struct VOUT { float4 pos:SV_POSITION; float3 nrm:TEXCOORD0; float2 uv:TEXCOORD3; float4 col:TEXCOORD1; float3 wp:TEXCOORD2; };
-VOUT main(VIN v){ VOUT o; o.pos=mul(float4(v.pos,1),view); o.pos=mul(o.pos,proj); o.nrm=v.nrm; o.uv=v.uv; o.col=v.col; o.wp=v.pos; return o; }
+struct VIN  { float3 pos:POSITION0; float3 nrm:NORMAL0; float2 uv:TEXCOORD0; float4 col:TEXCOORD1; float sharp:TEXCOORD2; };
+struct VOUT { float4 pos:SV_POSITION; float3 nrm:TEXCOORD0; float2 uv:TEXCOORD3; float4 col:TEXCOORD1; float3 wp:TEXCOORD2; float sharp:TEXCOORD4; };
+VOUT main(VIN v){ VOUT o; o.pos=mul(float4(v.pos,1),view); o.pos=mul(o.pos,proj); o.nrm=v.nrm; o.uv=v.uv; o.col=v.col; o.wp=v.pos; o.sharp=v.sharp; return o; }
 )EOT";
 //--- 武器PS: 真の鋼テクスチャ(BaseColor)を地色にし、発光はゲームの実時温度 m_forging.Heat() で駆動する。
 //    col.rgb = 温度勾配色(HeatRGB)、col.a = 温度スカラー m_heat。
@@ -52,7 +52,12 @@ cbuffer Mtl : register(b0){
   float3 grdCol;  float envK;      // 擬似環境の地色 / 環境反射強度
   float  fresK;   float3 _pad;     // 菲涅尔強度
 };
-struct PIN{ float4 pos:SV_POSITION; float3 nrm:TEXCOORD0; float2 uv:TEXCOORD3; float4 col:TEXCOORD1; float3 wp:TEXCOORD2; };
+struct PIN{ float4 pos:SV_POSITION; float3 nrm:TEXCOORD0; float2 uv:TEXCOORD3; float4 col:TEXCOORD1; float3 wp:TEXCOORD2; float sharp:TEXCOORD4; };
+// 研ぎ面(sharp: 0=鍛造のまま 1=研ぎ上がった刃先)。仮の見た目: 黒皮が取れて明るい地金が出て、面が滑らかになる。
+// ※本番の研ぎ面の見た目は外観担当(ChatGPT)が差し替える。値の意味(sharp)はCPU側で確定済み。
+static const float3 GROUND_STEEL  = float3(0.78, 0.80, 0.83);   // 研いだ地金の色
+static const float  GROUND_ROUGH  = 0.08;                       // 研いだ面の粗さ(鏡面寄り)
+static const float  GROUND_SPEC_BOOST = 1.5;                    // 研いだ刃線の高光の増し
 float4 main(PIN i):SV_TARGET{
   float3 N = normalize(i.nrm);
   float3 L = normalize(lightDir);
@@ -61,15 +66,16 @@ float4 main(PIN i):SV_TARGET{
   float  nl = saturate(dot(N,L));
   float  nv = saturate(dot(N,V));
   float  nh = saturate(dot(N,H));
-  float3 steel = tex.Sample(samp, i.uv).rgb;               // 冷鋼の地色(真のテクスチャ)
+  float  e  = saturate(i.sharp);
+  float3 steel = lerp(tex.Sample(samp, i.uv).rgb, GROUND_STEEL, e);   // 冷鋼の地色 → 研いだ所は明るい地金
 
   // 拡散(金属は拡散が弱い=metalで減衰)。環境の底上げ(ambient)で真っ黒を防ぐ。
   float3 diff = steel * (0.25 + 0.75*nl) * (1.0 - 0.85*metal);
 
-  // 直接光の鏡面高光(Blinn-Phong。粗さ→光沢指数。核显向けに安価)。
-  float  shin = lerp(128.0, 8.0, rough);                   // 小rough=鋭い/大rough=広い
+  // 直接光の鏡面高光(Blinn-Phong。粗さ→光沢指数。核显向けに安価)。研いだ面は滑らか=鋭い高光。
+  float  shin = lerp(128.0, 8.0, lerp(rough, GROUND_ROUGH, e));   // 小rough=鋭い/大rough=広い
   float3 specTint = lerp((float3)1.0, steel, metal);       // 金属は高光が地色に色付く
-  float3 spec = specTint * pow(nh, shin) * specK * nl;
+  float3 spec = specTint * pow(nh, shin) * specK * nl * (1.0 + GROUND_SPEC_BOOST * e);
 
   // 擬似環境反射(HDRI無し): 反射向きの上下で空色↔地色を補間=「周囲を映す」金属感の主因。
   float3 R   = reflect(-V, N);
@@ -302,12 +308,13 @@ void SceneForge::Init()
 	const std::string kSharp    = P + "Sharpner/Textures/T_Sharpner_V1_BaseColor.png";
 	const std::string kTools    = P + "Tools/Textures/1024x512/T_BS_Tools_BaseColor.png";
 	const std::string kMetal    = P + "Metal Parts/Textures/T_Metal_parts_BaseColor.png";
-	const char* kForgeStone = "Assets/MM_Blacksmith_Pack/Forges/Textures/T_Forge_1_UV1_BaseColor.PNG";
+	// 炉は石壁の実写テクスチャを世界座標で投影する(UV/材質の継ぎ目で石の大きさが揃わない対策。PS_StageProp)
+	const char* kForgeStone = "Assets/PolyHaven_RockWall17/rock_wall_17_Diffuse_2k.png";
 
 	LoadProp("StGround",   "Assets/Model/plane/plane.fbx", "Assets/Model/field/wooden-plank-textured-background-material.jpg", 12.0f, 0.0f, 0.0f, 0.0f, 0.0f, true);
 	LoadProp("StStump",    (P+"Anvil/SM_Stump.fbx").c_str(),             kAnvilTex.c_str(), 0.60f, 0.0f, 0.0f,  0.0f, 0.0f, true);
 	LoadProp("StAnvil",    (P+"Anvil/SM_Anvil.fbx").c_str(),             kAnvilTex.c_str(), 0.70f, 0.0f, 0.0f,  0.0f, 0.0f, true);
-	LoadProp("StForge",    (P+"Forges/SM_BS_Forge_2_.fbx").c_str(),      kForgeStone,       2.60f, 1.8f, 0.0f,  0.6f, 0.0f, true);	// Forge_1は可視メッシュが重複(未merge)で破図→Forge_2に差替。材質名Forge_UVxは既存のUVx判定で自動一致
+	LoadProp("StForge",    (P+"Forges/SM_BS_Forge_2_.fbx").c_str(),      kForgeStone,       2.60f, 1.8f, 0.0f,  0.6f, 0.0f, true);	// Forge_1は可視メッシュが重複(未merge)で破図→Forge_2に差替
 	LoadProp("StStand",    (P+"Ballows/SM_Bellows_stand_1.fbx").c_str(), kWood.c_str(),     1.20f, 3.2f, 0.0f,  1.0f, 0.0f, true);
 	LoadProp("StBellows",  (P+"Ballows/SM_Bellows.fbx").c_str(),         kWood.c_str(),     1.40f, 3.2f, 0.0f,  1.0f, 0.0f, true);
 	LoadProp("StWorktable",(P+"Worktable/SM_BS_Worktable.fbx").c_str(),  kTable.c_str(),    2.20f,-2.6f, 0.0f,  0.6f, 0.0f, true);
@@ -340,9 +347,9 @@ void SceneForge::Init()
 		if (Prop* m2 = GetProp("StMetal2")) if (table) { m2->pos[0] = table->pos[0] + 0.0f; m2->pos[2] = table->pos[2] - 0.2f; m2->pos[1] = tableH; }
 	}
 
-	// --- 自作の光る炭ベッド(水平な板。両面。合成炭テクスチャを貼る) ---
+	// --- 炭ベッド(低ポリ炭塊) + 水面用の水平板(±1。両面。実サイズはDrawWaterのworldで拡縮) ---
 	{
-		float h = 1.0f;	// 単位板(±1)。実サイズはDrawCoalBedのworldで拡縮
+		float h = 1.0f;	// 単位板(±1)
 		Vertex q[12];
 		// 上向き(法線+Y)の2三角形
 		Vertex a{ {-h,0,-h},{0,0},{1,1,1,1} }, b{ {h,0,-h},{1,0},{1,1,1,1} };
@@ -352,7 +359,7 @@ void SceneForge::Init()
 		MeshBuffer::Description cd = {};
 		cd.pVtx = q; cd.vtxSize = sizeof(Vertex); cd.vtxCount = 12;
 		cd.topology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-		m_coalMesh = std::make_shared<MeshBuffer>(cd);
+		m_waterMesh = std::make_shared<MeshBuffer>(cd);
 		m_coalBedMesh = CoalBedMesh::Create();
 	}
 
@@ -389,7 +396,7 @@ void SceneForge::Uninit()
 	DestroyObj("VS_Coal");
 	DestroyObj("PS_Coal");
 	DestroyObj("PS_Water");
-	m_coalMesh.reset();
+	m_waterMesh.reset();
 	m_coalBedMesh.reset();
 	// プロップのモデル(St...)とハンマーは破棄しない = static map に常駐させ、編集シーンと
 	// 共有する。両シーンはキー(St...)を統一済みなので、片方が読んだモデルをもう片方が
@@ -406,6 +413,8 @@ void SceneForge::Uninit()
 	Audio::Stop(Audio::BGM_PLAY);	// ゲーム中BGM(PLAYで抜けた時)
 	Audio::Stop(Audio::BGM_RESULT);	// 結果BGM(RESULTで抜けた時)
 	if (m_heatSndOn) { Audio::Stop(Audio::SE_FORGE_LOOP); m_heatSndOn = false; }	// 加熱ループ音(Rを押しながら抜けた時)
+	if (m_burnSndOn)  { Audio::Stop(Audio::SE_BURN_LOOP);  m_burnSndOn  = false; }	// 燃焼ループ音
+	if (m_grindSndOn) { Audio::Stop(Audio::SE_GRIND_LOOP); m_grindSndOn = false; }	// 研磨ループ音
 	if (!m_cursorShown) { ShowCursor(TRUE); m_cursorShown = true; }	// カーソルを戻す
 }
 
@@ -445,6 +454,16 @@ void SceneForge::StartGame()
 	m_tongsInHand = false;					// 火钳は台の上へ
 	if (Prop* pl = GetProp("StPliers")) pl->hidden = false;
 
+	// 工位と刃の置き場所: 鉄坯は金床の上から始まる(まず炉へ持って行って熱する)。
+	m_station = Station::Anvil; m_workAt = Station::Anvil; m_carrying = false;
+	m_overheatWarned = false;
+	m_burnSparkAcc = 0.0f;
+	m_wheel.Reset();						// 砥石は止まっている
+	m_grindU = 0.5f; m_grindPress = 0.0f; m_grindSparkAcc = 0.0f;
+	m_plunge = 0.0f; m_letterbox = 0.0f; m_steamTimer = 0.0f;	// 淬火/終幕の演出も解除
+	if (m_burnSndOn)  { Audio::Stop(Audio::SE_BURN_LOOP);  m_burnSndOn  = false; }
+	if (m_grindSndOn) { Audio::Stop(Audio::SE_GRIND_LOOP); m_grindSndOn = false; }
+
 	m_charging    = false;
 	m_charge      = 0.0f;
 	m_strikeCD    = 0.0f;
@@ -473,9 +492,11 @@ void SceneForge::SetupSteps()
 {
 	m_heatStep   = std::make_unique<HeatStep>(this);
 	m_forgeStep  = std::make_unique<ForgeStep>(this);
+	m_grindStep  = std::make_unique<GrindStep>(this);
 	m_quenchStep = std::make_unique<QuenchStep>(this);
 	m_heatStep->RegisterState(m_stepMachine);
 	m_forgeStep->RegisterState(m_stepMachine);
+	m_grindStep->RegisterState(m_stepMachine);
 	m_quenchStep->RegisterState(m_stepMachine);
 }
 
@@ -528,8 +549,8 @@ void SceneForge::UpdateFlip(float tick, bool inputOn)
 	// ビート中に判定しなければ、そのキーはビート明けに持ち越されない(=バッファされず暴発しない)。
 	switch (m_flipPhase)
 	{
-	case FlipPhase::None:									// 鍛打工程の工位でだけ: F で火钳を取って翻面を起動
-		if (forgePhase && IsKeyTrigger('F')) { m_flipPhase = FlipPhase::TongsOut; m_flipTimer = 0.0f; }
+	case FlipPhase::None:									// 鍛打工程の金床でだけ: F で火钳を取って翻面を起動
+		if (forgePhase && m_station == Station::Anvil && IsKeyTrigger('F')) { m_flipPhase = FlipPhase::TongsOut; m_flipTimer = 0.0f; }
 		break;
 
 	case FlipPhase::TongsOut:								// 火钳を取り出す運鏡(慢い)
@@ -634,10 +655,12 @@ void SceneForge::UpdateFlipCamera(float tick)
 
 void SceneForge::FinishGame()
 {
-	// PLAY中のBGM/加熱音を止め、淬火→成功音→結果BGMへ切り替える
+	// PLAY中のBGM/ループ音を止め、成功音→結果BGMへ切り替える
+	// (淬火の「ジュワ〜」と蒸気音は、刃を水に入れた瞬間に TryQuench が鳴らし済み)
 	Audio::Stop(Audio::BGM_PLAY);				// ゲーム中BGMを止める
-	if (m_heatSndOn) { Audio::Stop(Audio::SE_FORGE_LOOP); m_heatSndOn = false; }
-	Audio::Play(Audio::SE_QUENCH, 0.9f);		// 水に入れる「ジュワ〜」(仕上げの淬火)
+	if (m_heatSndOn)  { Audio::Stop(Audio::SE_FORGE_LOOP); m_heatSndOn  = false; }
+	if (m_burnSndOn)  { Audio::Stop(Audio::SE_BURN_LOOP);  m_burnSndOn  = false; }
+	if (m_grindSndOn) { Audio::Stop(Audio::SE_GRIND_LOOP); m_grindSndOn = false; }
 	Audio::Play(Audio::SE_SUCCESS, 0.8f);		// 完成の合図
 	Audio::PlayLoop(Audio::BGM_RESULT, 0.5f);	// 結果画面BGM
 	m_state = GAME_RESULT;
@@ -664,10 +687,12 @@ void SceneForge::UpdatePlay(float tick)
 
 	// --- 工位から出る: E または ESC(汎用の「戻る」)。翻面中は出ない(火钳を持ったまま離れない)。
 	//   翻面中の ESC は UpdateFlip が「一段戻る」として扱う(Flipping→Ready→火钳を戻す)。
-	if (inputOn && m_flipPhase == FlipPhase::None && (IsKeyTrigger('E') || IsKeyTrigger(VK_ESCAPE)))
+	//   淬火の動画(刃が水に入った後)も取り消せない=出られない。
+	const bool quenchLocked = (m_plunge > 0.0f);
+	if (inputOn && m_flipPhase == FlipPhase::None && !quenchLocked && (IsKeyTrigger('E') || IsKeyTrigger(VK_ESCAPE)))
 	{
 		m_charging = false; m_charge = 0.0f;	// 蓄力中なら破棄(暴発させない)
-		BeginExitForge();
+		BeginExitStation();
 		return;
 	}
 
@@ -686,17 +711,26 @@ void SceneForge::UpdatePlay(float tick)
 	//   simOn  = 世界の時間が流れているか(F1デバッグ中・画面フェード中だけ止まる)。
 	//   inputOn= 玩家が工位で操作できるか(走動中/移動アニメ中は false)。
 	//   自然冷却は鉄そのものの物理なので simOn で毎フレーム進める=走動中も冷める。
-	//   加熱(R)は炉の前で玩家が行う行為なので inputOn の時だけ。
-	const bool simOn = !DebugUI::IsVisible() && !m_fade.IsBusy();
-	bool heating = inputOn && IsKeyPress('R');
+	//   熱源は炉の炭火: 鉄が炉に置かれている間(m_workAt==Hearth)だけ熱が入る。
+	//   風箱(R長押し)は炉の工位で玩家が行う行為なので inputOn の時だけ=炭火に追加で熱を送る。
+	const bool simOn  = !DebugUI::IsVisible() && !m_fade.IsBusy();
+	const bool inFire = !m_carrying && m_workAt == Station::Hearth;
+	const bool bellows = inputOn && m_station == Station::Hearth && IsKeyPress('R');
 	if (simOn)
 	{
-		if (heating) m_forging.AddHeat(HEAT_RATE * tick);	// 熱源=炉(外から熱を入れる)
-		m_forging.Cool(tick);								// 鉄が自分で冷める
+		if (inFire)
+		{
+			// 火の中: 周囲=火なので、火の温度へ指数的に近づく(ニュートンの法則。室温への自然冷却の代わり)。
+			const float fireTemp = bellows ? BELLOWS_FIRE_TEMP : COAL_FIRE_TEMP;
+			const float k        = bellows ? BELLOWS_HEAT_K    : COAL_HEAT_K;
+			m_forging.AddHeat((fireTemp - m_forging.Heat()) * (1.0f - expf(-k * tick)));
+		}
+		else m_forging.Cool(tick);							// 火の外: 鉄が自分で冷める
+		if (m_plunge > 0.0f) m_forging.AddHeat(-QUENCH_COOL_RATE * tick);	// 水中で急冷
 	}
-	// 加熱中は炉火/風箱の持続音をループ。離した(またはF1/遷移で入力停止)瞬間に停止。
-	if (heating && !m_heatSndOn)      { Audio::PlayLoop(Audio::SE_FORGE_LOOP, 0.5f); m_heatSndOn = true; }
-	else if (!heating && m_heatSndOn) { Audio::Stop(Audio::SE_FORGE_LOOP);           m_heatSndOn = false; }
+	// 風箱を踏んでいる間は炉火の唸りをループ。離した(またはF1/遷移で入力停止)瞬間に停止。
+	if (bellows && !m_heatSndOn)      { Audio::PlayLoop(Audio::SE_FORGE_LOOP, 0.5f); m_heatSndOn = true; }
+	else if (!bellows && m_heatSndOn) { Audio::Stop(Audio::SE_FORGE_LOOP);           m_heatSndOn = false; }
 
 	// --- 過熱で放置すると鋼全体が焼けていく(損傷が蓄積)＋ジュー音 ---
 	//   冷却と同じく鉄の物理なので simOn で進める(F1中は温度と一緒に止まる)。
@@ -705,8 +739,23 @@ void SceneForge::UpdatePlay(float tick)
 		m_forging.BurnAll(BURN_RATE * tick);	// 過熱で鉄全体が焼ける(損傷が蓄積)
 		m_sizzleTimer -= tick;
 		if (m_sizzleTimer <= 0.0f) { Audio::Play(Audio::SE_SIZZLE); m_sizzleTimer = 0.22f; }
+		// 火に入れたまま過熱させた=誤り。独白で一度だけ知らせる(罰は無い)。
+		if (inFire && !m_overheatWarned)
+		{
+			Say((const char*)u8"熱しすぎだ！早く火から出せ", IM_COL32(255, 120, 120, 255));
+			m_overheatWarned = true;
+		}
 	}
 	else m_sizzleTimer = 0.0f;
+	if (m_forging.Heat() < OVERHEAT) m_overheatWarned = false;	// 冷めたら次の過熱でまた言う
+
+	// --- 燃える鋼(火花)・研磨(砥石)の物理と演出 ---
+	if (simOn)
+	{
+		UpdateBurnFx(tick);
+		UpdateGrind(tick, inputOn);
+	}
+	const bool atAnvil = (m_station == Station::Anvil);	// 鍛打(照準/蓄力/打撃)は金床の工位だけ
 
 	// --- 打撃テンポの計測(前回打撃からの経過時間) ---
 	m_sinceStrike += tick;
@@ -715,7 +764,7 @@ void SceneForge::UpdatePlay(float tick)
 
 	// --- 照準(FPS方式): 画面中心の準心=カメラ正前方の射線を板と交差させ、当たったセルを求める ---
 	//   マウス移動はUpdateMouseLook(Updateの先頭)で視角に累積済み。ApplyCameraがm_camFwdを更新。
-	if (inputOn && !flipping) UpdateAim();	// 翻面中はハンマーを置いている=照準判定もしない
+	if (inputOn && !flipping && atAnvil) UpdateAim();	// 翻面中はハンマーを置いている=照準判定もしない
 
 	// --- 蓄力ハンマー: 左クリック押しっぱなしで蓄力、離すと打撃。打撃後はクールダウン ---
 	if (m_strikeCD > 0.0f) m_strikeCD -= tick;	// クールダウン消化
@@ -725,9 +774,9 @@ void SceneForge::UpdatePlay(float tick)
 	//   コンパイルエラーで即座に弾ける(文字列 "Forge" だと綴り間違いが黙って false になる)。
 	const bool forgePhase = (CurrentStep().type == StepName::Forge);
 
-	if (!inputOn || !forgePhase || flipping)
+	if (!inputOn || !forgePhase || flipping || !atAnvil)
 	{
-		// F1操作中・鍛打工程でない・翻面中=蓄力をキャンセル(暴発しないように)。
+		// F1操作中・鍛打工程でない・翻面中・金床にいない=蓄力をキャンセル(暴発しないように)。
 		// 翻面中は左键を火钳に使うので、翻面明けは一度離すまで蓄力させない(m_canStrike=false)。
 		m_charging = false;
 		m_charge   = 0.0f;
@@ -799,10 +848,11 @@ void SceneForge::UpdatePlay(float tick)
 
 	// --- 工程(step)状態機を進める ---
 	//   各工程状態の OnUpdate が完了条件を見て AdvanceStep() を呼ぶ:
-	//     Heat  … 目標温度に達したら次へ
-	//     Forge … 全区域が到位したら次へ(叩く行為自体は上の蓄力/DoStrike が担当)
-	//     Quench… Q を押したら完成(FinishGame)
-	//   完了判定に入力(Q)を読む工程があるので、入力凍結中(F1/遷移中)は進めない。
+	//     Heat  … 鋼が燃え始めたら(BURN_TEMP)次へ
+	//     Forge … 両面の全区域が到位したら次へ(叩く行為自体は上の蓄力/DoStrike が担当)
+	//     Grind … 刃の全区域が研ぎ上がったら次へ(研ぐ行為は UpdateGrind が担当)
+	//     Quench… 水槽で左クリック→沈める→黒帯→完成(FinishGame)
+	//   完了判定に入力を読む工程があるので、入力凍結中(F1/遷移中)は進めない。
 	if (inputOn) m_stepMachine.Update(tick);
 }
 
@@ -889,6 +939,116 @@ void SceneForge::DoStrike()
 	m_popupCol  = col;
 }
 
+//====================================================================
+//  加熱/研磨/淬火(工程の「行為」。完了判定は各 Step クラス)
+//====================================================================
+
+//--- 主人公の独白(負向フィードバック)。打撃のポップアップと同じ枠に出す。
+void SceneForge::Say(const char* text, unsigned int col)
+{
+	strcpy_s(m_popupText, sizeof(m_popupText), text);
+	m_popupLife = POPUP_LIFE;
+	m_popupCol  = col;
+}
+
+//--- 刃の上のランダムな点(ワールド)。前フレームで作った変形後の頂点から1つ選ぶ=形が変わっても表面から出る。
+XMFLOAT3 SceneForge::RandomBladePoint() const
+{
+	if (!m_wpOk || m_wpVtx.empty()) return m_barAnchor;
+	return m_wpVtx[rand() % m_wpVtx.size()].pos;
+}
+
+//--- 燃える鋼: BURN_TEMP を越えている間、刃の表面から小さな火花を弾き、パチパチ音をループ。
+//    温度(状態)で発火するイベント駆動の演出=アニメや工程に紐付けない(§8 デカップリング)。
+void SceneForge::UpdateBurnFx(float tick)
+{
+	const bool show = (m_state == GAME_PLAY) && m_forging.IsBurning() && !m_carrying && m_plunge <= 0.0f;
+	if (show)
+	{
+		m_burnSparkAcc += BURN_SPARK_RATE * tick;
+		int n = (int)m_burnSparkAcc;
+		m_burnSparkAcc -= n;
+		for (int i = 0; i < n; ++i)
+			m_particles.SpawnSparks(RandomBladePoint(), 1, BURN_SPARK_POWER, BURN_SPARK_SCALE);
+	}
+	else m_burnSparkAcc = 0.0f;
+
+	if (show && !m_burnSndOn)      { Audio::PlayLoop(Audio::SE_BURN_LOOP, 0.5f); m_burnSndOn = true; }
+	else if (!show && m_burnSndOn) { Audio::Stop(Audio::SE_BURN_LOOP);           m_burnSndOn = false; }
+}
+
+//--- 研磨: 右クリック点按=足踏み(GrindWheel が回転を持つ)、左長押し=押し当て、マウス左右=刃を滑らす。
+//    押し当てた区域の鋭さが「砥石の回転速度」に比例して上がる(速く回すほど早く研げる)。
+void SceneForge::UpdateGrind(float tick, bool inputOn)
+{
+	const int NSEG = ForgingSim::NSEG;
+	const bool here       = inputOn && m_station == Station::Grindstone;
+	const bool grindPhase = (CurrentStep().type == StepName::Grind);
+	bool pressing = false;
+	if (here)
+	{
+		float dx, dy; ReadMouseDelta(dx, dy);	// 砥石の工位ではマウスを視角でなく刃の滑りに使う
+		if (grindPhase)
+		{
+			// 刃が右へ動く=砥石に当たる位置は刃の左側へ移る(刃の長軸は StationRight に揃えてある)
+			m_grindU -= dx * m_grindSens;
+			if (m_grindU < 0.0f) m_grindU = 0.0f;
+			if (m_grindU > 1.0f) m_grindU = 1.0f;
+			if (IsKeyTrigger(VK_RBUTTON)) m_wheel.Pedal();	// 点按=足で一回踏む(速すぎる連打は GrindWheel が無視)
+			pressing = IsKeyPress(VK_LBUTTON);
+		}
+	}
+	m_wheel.Update(tick, pressing);			// 足を止めれば摩擦で止まる。押し当て中は余計に減速
+	m_grindPress = Lerp::Damp(m_grindPress, pressing ? 1.0f : 0.0f, GRIND_PRESS_LAMBDA, tick);
+
+	const float speed = m_wheel.Speed01();
+	constexpr float MIN_GRIND_SPEED = 0.02f;	// これ未満=砥石がほぼ止まっている(研げない・火花も出ない)
+	const bool grinding = pressing && speed > MIN_GRIND_SPEED;
+	if (grinding)
+	{
+		int seg = (int)(m_grindU * NSEG);
+		if (seg >= NSEG) seg = NSEG - 1;
+		if (m_forging.ApplyGrind(seg, GRIND_RATE * speed * tick) == ForgingSim::GrindOutcome::AlreadySharp
+			&& m_popupLife <= 0.0f)
+			Say((const char*)u8"そこはもう十分だ", IM_COL32(255, 200, 90, 255));	// 研ぎ上がった所を削る=誤り
+
+		// 研ぎ火花: 砥石と刃の接点から、回転が速いほど多く
+		m_grindSparkAcc += GRIND_SPARK_RATE * speed * tick;
+		int n = (int)m_grindSparkAcc;
+		m_grindSparkAcc -= n;
+		if (n > 0) m_particles.SpawnSparks(StationBase(Station::Grindstone), n, GRIND_SPARK_POWER, GRIND_SPARK_SCALE);
+	}
+	else m_grindSparkAcc = 0.0f;
+
+	if (grinding && !m_grindSndOn)      { Audio::PlayLoop(Audio::SE_GRIND_LOOP, 0.45f); m_grindSndOn = true; }
+	else if (!grinding && m_grindSndOn) { Audio::Stop(Audio::SE_GRIND_LOOP);            m_grindSndOn = false; }
+}
+
+//--- 淬火を試みる(QuenchStep が水槽で左クリックされた時に呼ぶ)。
+//    冷めすぎた鋼は焼きが入らない=断って炉へ戻らせる(誤りは独白で知らせるだけ)。
+bool SceneForge::TryQuench()
+{
+	if (m_forging.Heat() < QUENCH_MIN_TEMP)
+	{
+		Say((const char*)u8"冷めてしまった…炉でもう一度熱してから", IM_COL32(120, 170, 255, 255));
+		return false;
+	}
+	Audio::Play(Audio::SE_QUENCH, 0.9f);	// 水に入った瞬間の「ジュワッ」
+	Audio::Play(Audio::SE_STEAM,  0.9f);	// 続く大量の蒸気「シュワーーッ」
+	m_steamTimer = STEAM_DURATION;			// 蒸気の発生を開始(Update で弱まりながら続く)
+	return true;
+}
+
+void SceneForge::SetPlunge(float t01)
+{
+	m_plunge = Lerp::SmoothStep(t01 < 0.0f ? 0.0f : (t01 > 1.0f ? 1.0f : t01));
+}
+
+void SceneForge::SetLetterbox(float t01)
+{
+	m_letterbox = Lerp::SmoothStep(t01 < 0.0f ? 0.0f : (t01 > 1.0f ? 1.0f : t01));
+}
+
 //--- 結果: SPACEでタイトルへ戻る
 void SceneForge::UpdateResult(float /*tick*/)
 {
@@ -931,7 +1091,7 @@ void SceneForge::Update(float tick)
 
 			// 互動: ①範囲 ②視線 の両方が true の物件だけ E が効く(Interaction.cpp)。
 			//   金床=工位へ移動 / 火钳=取って工位へ移動→翻面。退出(工位→走動)は UpdatePlay 側で E/ESC。
-			if (m_player.WantInteract() && m_focus >= 0) DoInteract(INTERACTABLES[m_focus].action);
+			if (m_player.WantInteract() && m_focus >= 0) DoInteract(INTERACTABLES[m_focus]);
 		}
 		else if (m_flipPhase == FlipPhase::Flipping)
 		{
@@ -944,9 +1104,15 @@ void SceneForge::Update(float tick)
 			// マウス移動は読んで捨てる(光標は中心へ戻す)=翻面明けに溜まった移動量で視点が跳ばない。
 			float dx, dy; ReadMouseDelta(dx, dy);
 		}
+		else if (m_station != Station::Anvil)
+		{
+			// 金床以外の工位は固定カメラ。砥石だけはマウス左右を刃の滑りに使う(UpdatePlay→UpdateGrind が読む)。
+			// それ以外(炉/水槽)は読んで捨てる=光標を中心へ戻し、戻った時に視点が跳ばない。
+			if (m_station != Station::Grindstone) { float dx, dy; ReadMouseDelta(dx, dy); }
+		}
 		else
 		{
-			UpdateMouseLook();				// 工位: 従来のFPS式受限環視(準心/rail)
+			UpdateMouseLook();				// 金床: 従来のFPS式受限環視(準心/rail)
 		}
 	}
 	// カメラは KCD式に3つの固定視角へ吸着する。狙い(m_aimRail)自体は連続でハンマーは全長を動くが、
@@ -987,6 +1153,13 @@ void SceneForge::Update(float tick)
 	if (m_coalOn)
 		m_particles.EmitEmbers(XMFLOAT3(m_emberPos[0], m_emberPos[1], m_emberPos[2]),
 			m_emberArea[0], m_emberArea[1], m_emberRate, m_emberRise, tick);
+	// 淬火の蒸気: 刃を入れた瞬間が最も多く、STEAM_DURATION かけて弱まる(結果画面に移っても消えゆく)。
+	if (m_steamTimer > 0.0f)
+	{
+		m_steamTimer -= tick;
+		const float rate = STEAM_RATE * (m_steamTimer > 0.0f ? m_steamTimer / STEAM_DURATION : 0.0f);
+		m_particles.EmitSteam(XMFLOAT3(m_waterPos[0], m_waterPos[1], m_waterPos[2]), STEAM_RADIUS, rate, tick);
+	}
 	m_particles.Update(tick, m_time);
 }
 
@@ -996,13 +1169,17 @@ void SceneForge::Draw()
     CottageRender::ClearExterior();
 	ApplyViewCamera();	// Update と同じ規約でDrawでも適用(GetViewの前に)
 	DrawModelsTest();	// 先に不透明な3Dモデル(金床)を描く
-	if (m_wpOk) DrawWeapon();	// Blender武器モデルを進捗でモーフ(あれば優先)
-	else        Draw3DBillet();	// 無ければ従来の高さ場メッシュ
-	if (m_wpOk) DrawGhostTarget();	// 実体の後に完成形の半透明ゴーストを重ねる
+	if (!m_carrying)	// 手に持って歩いている間は描かない(一人称の手は未実装)
+	{
+		if (m_wpOk) DrawWeapon();	// Blender武器モデルを進捗でモーフ(あれば優先)
+		else        Draw3DBillet();	// 無ければ従来の高さ場メッシュ
+		if (m_wpOk) DrawGhostTarget();	// 実体の後に完成形の半透明ゴーストを重ねる
+	}
 	DrawWater();		// 水槽の水面(屈折。背後のシーンを撮ってから描く=不透明の後)
 	if (DebugUI::IsVisible()) { DrawDebugBoxes(); DrawInteractBoxes(); }	// F1中はAABB/箱・互動範囲を線で表示
 
 	DrawEmbers();		// 炭火から立ち上る余燼(火花描画より前に。火花が無くても出す)
+	DrawSteam();		// 淬火の蒸気(柔らかい白い煙)
 
 	CameraBase* pCamera = GetObj<CameraBase>("Camera");
 	VertexShader* vs = GetObj<VertexShader>("VS_Forge");

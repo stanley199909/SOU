@@ -101,7 +101,7 @@ void SceneStageEditor::Init()
 	const std::string kSharp    = P + "Sharpner/Textures/T_Sharpner_V1_BaseColor.png";
 	const std::string kTools    = P + "Tools/Textures/1024x512/T_BS_Tools_BaseColor.png";
 	const std::string kMetal    = P + "Metal Parts/Textures/T_Metal_parts_BaseColor.png";
-	const std::string kForgeStone = P + "Forges/Textures/T_Forge_1_UV1_BaseColor.PNG";
+	const std::string kForgeStone = "Assets/PolyHaven_RockWall17/rock_wall_17_Diffuse_2k.png";	// world-projected in PS_StageProp
 
 	// KCD layout (anvil at origin, others around). args = (targetSize, X, Z, Yaw)
 	LoadProp("StGround",   "Assets/Model/plane/plane.fbx", "Assets/Model/field/wooden-plank-textured-background-material.jpg", 12.0f, 0.0f, 0.0f, 0.0f);
@@ -138,7 +138,7 @@ void SceneStageEditor::Init()
 		if (Prop* m2 = getP("StMetal2")) if (table) { m2->pos[0] = table->pos[0] + 0.0f; m2->pos[2] = table->pos[2] - 0.2f; m2->pos[1] = tableH; }
 	}
 
-	// coal bed mesh (two-sided horizontal quad) + combined coal texture
+	// coal bed (low-poly charcoal) + two-sided +-1 quad for the water surface
 	{
 		float h = 1.0f;
 		Vertex a{ {-h,0,-h},{0,0},{1,1,1,1} }, b{ {h,0,-h},{1,0},{1,1,1,1} };
@@ -147,7 +147,7 @@ void SceneStageEditor::Init()
 		MeshBuffer::Description cd = {};
 		cd.pVtx = q; cd.vtxSize = sizeof(Vertex); cd.vtxCount = 12;
 		cd.topology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-		m_coalMesh = std::make_shared<MeshBuffer>(cd);
+		m_waterMesh = std::make_shared<MeshBuffer>(cd);
 		m_coalBedMesh = CoalBedMesh::Create();
 	}
 	// water surface texture (subtle stone tinted blue = water in the trough)
@@ -358,7 +358,7 @@ void SceneStageEditor::Uninit()
 	// next visit reuses them (LoadProp's cache hit) instead of re-importing 14 FBX = the 4-5s
 	// stall. Cost: those models stay resident in memory after the first visit (acceptable).
 	m_props.clear();
-	m_coalMesh.reset(); m_coalBedMesh.reset();
+	m_waterMesh.reset(); m_coalBedMesh.reset();
 	m_emberMesh.reset(); m_emberGlow.reset(); m_embers.clear();
 }
 
@@ -408,8 +408,6 @@ void SceneStageEditor::DrawModelWorld(Model* m, const XMMATRIX& world, const XMF
 	m->Draw();
 }
 
-
-
 void SceneStageEditor::DrawCoalBed()
 {
 	if (!m_coalOn || !m_coalBedMesh) return;
@@ -438,7 +436,7 @@ void SceneStageEditor::DrawCoalBed()
 //--- water surface for the trough: procedural moving water (PS_Water), not a flat texture
 void SceneStageEditor::DrawWater()
 {
-	if (!m_waterOn || !m_coalMesh || !g_pPost) return;
+	if (!m_waterOn || !m_waterMesh || !g_pPost) return;
 	CameraBase*   cam   = GetObj<CameraBase>("Camera");
 	VertexShader* vs    = GetObj<VertexShader>("StCoalVS");	// generic pos/uv/col VS
 	PixelShader*  ps    = GetObj<PixelShader>("StWaterPS");	// PS_Water: refraction + depth
@@ -463,12 +461,13 @@ void SceneStageEditor::DrawWater()
 	XMFLOAT4 cb[4];
 	cb[0] = XMFLOAT4(m_time, (float)refr->GetWidth(), (float)refr->GetHeight(), 1.0f);
 	cb[1] = XMFLOAT4(projNT._33, projNT._43, 0.06f, 0.35f);	// A, B, foam, depthFade
-	const auto waterEye = cam->GetPos();
-    constexpr float kMinimumSurfaceWidth = 0.001f;
-    cb[2] = XMFLOAT4(waterEye.x,waterEye.y,waterEye.z,m_waterSize[0]/std::max(m_waterSize[1],kMinimumSurfaceWidth));
-    const auto& lighting = CottageRender::Data();
-    cb[3] = XMFLOAT4(lighting.ambient.x,lighting.ambient.y,lighting.ambient.z,lighting.windowExtra.w);
-    ps->WriteBuffer(0, cb);
+	// cb[2] = eye + water aspect (PS rounds the ends), cb[3] = indoor ambient (reflection colour)
+	const float MIN_WATER_WIDTH = 0.001f;	// avoid divide by zero
+	XMFLOAT3 eye = cam->GetPos();
+	cb[2] = XMFLOAT4(eye.x, eye.y, eye.z, m_waterSize[0] / std::max(m_waterSize[1], MIN_WATER_WIDTH));
+	const auto& lighting = CottageRender::Data();
+	cb[3] = XMFLOAT4(lighting.ambient.x, lighting.ambient.y, lighting.ambient.z, lighting.windowExtra.w);
+	ps->WriteBuffer(0, cb);
 
 	// Unbind the depth buffer from OM so we can read it as a texture; occlusion is
 	// done in the water PS via depth compare + discard (same as the game scene).
@@ -478,7 +477,7 @@ void SceneStageEditor::DrawWater()
 	vs->Bind(); ps->Bind();
 	ps->SetTexture(0, refr);	// t0 = scene behind (refraction)
 	ps->SetTexture(1, depth);	// t1 = scene depth
-	m_coalMesh->Draw();
+	m_waterMesh->Draw();
 
 	ID3D11ShaderResourceView* pNull[2] = { nullptr, nullptr };
 	GetContext()->PSSetShaderResources(0, 2, pNull);

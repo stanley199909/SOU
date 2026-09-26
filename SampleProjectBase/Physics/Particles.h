@@ -3,8 +3,9 @@
 #include <vector>
 
 // CPU particle simulation for the forge (self-built physics).
-// Two pools: hammer sparks (spawned in bursts, fall under gravity, bounce on the
-// ground) and coal embers (emitted from the coal bed, rise on buoyancy, fade out).
+// Three pools: hammer sparks (spawned in bursts, fall under gravity, bounce on the
+// ground), coal embers (emitted from the coal bed, rise on buoyancy, fade out) and
+// quench steam (rises on buoyancy, slowed by air drag, expands).
 // This owns the particle STATE and the motion physics. Drawing (building the
 // billboards/streaks with shaders) stays in the renderer, which reads the pools.
 class Particles
@@ -27,17 +28,23 @@ public:
     void EmitEmbers(const DirectX::XMFLOAT3& centre, float areaX, float areaZ,
                     float rate, float rise, float dt);
 
-    // Advance both pools: sparks (gravity + ground bounce), embers (buoyancy + drift + fade).
-    // `time` drives the embers' sideways shimmer.
+    // Emit steam this frame from a disc (centre + radius) at `rate` per second.
+    // Steam = hot vapour: rises fast at first, is slowed by the air, spreads and grows.
+    void EmitSteam(const DirectX::XMFLOAT3& centre, float radius, float rate, float dt);
+
+    // Advance all pools: sparks (gravity + ground bounce), embers (buoyancy + drift + fade),
+    // steam (buoyancy + air drag + growth). `time` drives the embers' sideways shimmer.
     void Update(float dt, float time);
 
     void Clear();
 
     const std::vector<Particle>& Sparks() const { return m_sparks; }
     const std::vector<Particle>& Embers() const { return m_embers; }
+    const std::vector<Particle>& Steam()  const { return m_steam; }
 
     static const int MAX_SPARKS = 3000;
     static const int MAX_EMBERS = 500;
+    static const int MAX_STEAM  = 400;
 
     // Tunable physics constants. Defaults reproduce the original hardcoded behaviour,
     // so callers that ignore this (the game) are unchanged; the Particle Lab scene edits
@@ -62,11 +69,21 @@ public:
         // -- ember motion (Update) --
         float emberBuoyancy = 0.4f;       // upward accel (hot air)
         float emberShimmer  = 0.10f;      // sideways wobble strength
+        // -- steam (EmitSteam / Update) --
+        float steamLifeMin  = 1.2f, steamLifeMax = 2.4f;
+        float steamSizeMin  = 0.08f, steamSizeMax = 0.16f;  // starting puff radius
+        float steamRiseMin  = 0.8f, steamRiseMax = 1.6f;    // initial upward speed
+        float steamDrift    = 0.25f;      // initial random sideways speed
+        float steamBuoyancy = 0.6f;       // upward accel (hot vapour)
+        float steamDrag     = 1.4f;       // air drag rate (1/s): puffs slow down and hang
+        float steamGrowth   = 0.35f;      // radius growth (/s): puffs expand as they cool
     };
     Tune tune;
 
 private:
     std::vector<Particle> m_sparks;
     std::vector<Particle> m_embers;
+    std::vector<Particle> m_steam;
     float m_emberSpawn = 0.0f; // fractional ember count carried to the next frame
+    float m_steamSpawn = 0.0f; // fractional steam count carried to the next frame
 };
