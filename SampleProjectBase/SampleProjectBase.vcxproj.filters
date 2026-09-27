@@ -281,6 +281,9 @@
     <ClInclude Include="Model.h">
       <Filter>ヘッダー ファイル\System</Filter>
     </ClInclude>
+    <ClInclude Include="PropParts.h">
+      <Filter>ヘッダー ファイル\System</Filter>
+    </ClInclude>
     <ClInclude Include="ModelImport.h">
       <Filter>ヘッダー ファイル\System</Filter>
     </ClInclude>

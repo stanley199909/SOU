@@ -47,7 +47,7 @@ public:
     void  Cool(float dt);        // natural cooling over time (call every simulated frame)
     void  AddHeat(float amount); // +heat from the forge, -heat lost to a strike (clamped 0..1)
     float Heat() const { return m_heat; }
-    float coolRate = 0.03f;      // natural cooling speed (/sec). Tunable, like Hammer's public params
+    float coolRate = 0.008f;     // natural cooling speed (/sec). ~65 s from burning (0.87) to too cold (0.35). Tunable
 
     // At this temperature the steel starts to throw sparks from its surface ("burning").
     // It is the visible signal a smith reads: the iron is ready (Heat step target).

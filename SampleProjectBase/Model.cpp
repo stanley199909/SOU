@@ -100,6 +100,9 @@ bool Model::Load(const char* file, float scaleBase, bool flip, bool simpleMode)
 	if (m_pScene && simpleMode)
 	{
 		ModelImport::RemoveCollision(const_cast<aiScene*>(m_pScene));
+		if (m_nodeFilter != NodeFilter::None)	// 部品の切り出し(焼き込みでノードの区別が消える前に)
+			ModelImport::FilterByNode(const_cast<aiScene*>(m_pScene), m_nodeFilterName.c_str(),
+			                          m_nodeFilter == NodeFilter::Only);
 		m_pScene = importer->ApplyPostProcessing(aiProcess_PreTransformVertices);
 	}
 	if (!m_pScene) {

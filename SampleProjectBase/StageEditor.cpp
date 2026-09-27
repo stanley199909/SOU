@@ -3,6 +3,7 @@
 #include "OutdoorStage.h"
 #include "math.h"
 #include "StageEditor.h"
+#include "PropParts.h"
 #include "Geometory.h"
 #include "DebugLog.h"
 #include "Model.h"
@@ -63,6 +64,8 @@ void SceneStageEditor::LoadProp(const char* key, const char* fbx, const char* te
 	p.pos[0] = px; p.pos[1] = 0.0f; p.pos[2] = pz;
 	p.yaw = yaw;
 	m->GetLocalAABB(p.aabbMin, p.aabbMax);
+	if (const PropPart* part = FindPropPart(key))	// 動く部品を別モデルにした道具は、部品込みの箱で配置(元の一体と同じ)
+		UnionPartAABB(GetObj<Model>(part->partKey), p.aabbMin, p.aabbMax);
 	float ex = p.aabbMax.x - p.aabbMin.x, ey = p.aabbMax.y - p.aabbMin.y, ez = p.aabbMax.z - p.aabbMin.z;
 	float mx = ex; if (ey > mx) mx = ey; if (ez > mx) mx = ez;
 	p.scale = (mx > 1e-4f) ? (targetSize / mx) : targetSize;
@@ -512,6 +515,10 @@ void SceneStageEditor::DrawScenery()
 
 		XMFLOAT4 tint = (p.key == "StForge") ? XMFLOAT4(0.80f, 0.76f, 0.72f, 1.0f) : XMFLOAT4(1, 1, 1, 1);
 		SunStage::LitProp(m,PropWorld(p),GetObj<CameraBase>("Camera"),tint,CottageRender::Data().sun,CottageRender::Data().ambient,m_coalPos,CottageRender::Data().windowExtra.w,p.key=="StForge");
+		// 動く部品(砥石の輪)は本体と同じ行列で描く。編集シーンでは回さない(角度0)。
+		if (const PropPart* part = FindPropPart(p.key.c_str()))
+			if (Model* pm = GetObj<Model>(part->partKey))
+				SunStage::LitProp(pm,PropWorld(p),GetObj<CameraBase>("Camera"),tint,CottageRender::Data().sun,CottageRender::Data().ambient,m_coalPos,CottageRender::Data().windowExtra.w);
 	}
 	DrawCoalBed();
     for (auto& p : m_props) if (p.key == "StCottage")

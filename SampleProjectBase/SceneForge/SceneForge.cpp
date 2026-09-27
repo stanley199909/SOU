@@ -459,7 +459,7 @@ void SceneForge::StartGame()
 	m_overheatWarned = false;
 	m_burnSparkAcc = 0.0f;
 	m_wheel.Reset();						// 砥石は止まっている
-	m_grindU = 0.5f; m_grindPress = 0.0f; m_grindSparkAcc = 0.0f;
+	m_grindU = 0.5f; m_grindPress = 0.0f; m_grindSparkAcc = 0.0f; m_grindVol = 0.0f;
 	m_plunge = 0.0f; m_letterbox = 0.0f; m_steamTimer = 0.0f;	// 淬火/終幕の演出も解除
 	if (m_burnSndOn)  { Audio::Stop(Audio::SE_BURN_LOOP);  m_burnSndOn  = false; }
 	if (m_grindSndOn) { Audio::Stop(Audio::SE_GRIND_LOOP); m_grindSndOn = false; }
@@ -539,9 +539,7 @@ bool SceneForge::FlipIsCutscene() const
 
 void SceneForge::UpdateFlip(float tick, bool inputOn)
 {
-	// 工程の制限は「F で火钳を取る」入口だけ(下の None)。台の火钳を取って来た場合は加熱工程でも
-	// 翻面が始まるので、翻面そのものは工程に関係なく最後まで進める(途中で打ち切ると火钳が手に残る)。
-	const bool forgePhase = (CurrentStep().type == StepName::Forge);
+	// 翻面は工程に関係なく、金床にいればいつでも F で始められる(玩家の自由)。
 	// 入力凍結中(F1/遷移)は「一時停止」: 段階も計時も進めない。打ち切らない=動画は取り消されない。
 	if (!inputOn) return;
 
@@ -549,8 +547,8 @@ void SceneForge::UpdateFlip(float tick, bool inputOn)
 	// ビート中に判定しなければ、そのキーはビート明けに持ち越されない(=バッファされず暴発しない)。
 	switch (m_flipPhase)
 	{
-	case FlipPhase::None:									// 鍛打工程の金床でだけ: F で火钳を取って翻面を起動
-		if (forgePhase && m_station == Station::Anvil && IsKeyTrigger('F')) { m_flipPhase = FlipPhase::TongsOut; m_flipTimer = 0.0f; }
+	case FlipPhase::None:									// 金床で: F で火钳を取って翻面を起動
+		if (m_station == Station::Anvil && IsKeyTrigger('F')) { m_flipPhase = FlipPhase::TongsOut; m_flipTimer = 0.0f; }
 		break;
 
 	case FlipPhase::TongsOut:								// 火钳を取り出す運鏡(慢い)
@@ -769,14 +767,11 @@ void SceneForge::UpdatePlay(float tick)
 	// --- 蓄力ハンマー: 左クリック押しっぱなしで蓄力、離すと打撃。打撃後はクールダウン ---
 	if (m_strikeCD > 0.0f) m_strikeCD -= tick;	// クールダウン消化
 
-	// 打撃は「鍛打(Forge)工程」の時だけ許す。加熱/淬火の工程では叩けない(=工程で行為をゲート)。
-	//   判定は文字列比較でなく強型列挙 StepName で行う: 打ち間違え(StepName::Foge 等)は
-	//   コンパイルエラーで即座に弾ける(文字列 "Forge" だと綴り間違いが黙って false になる)。
-	const bool forgePhase = (CurrentStep().type == StepName::Forge);
-
-	if (!inputOn || !forgePhase || flipping || !atAnvil)
+	// 打撃は金床にいればいつでもできる(工程では縛らない=玩家の自由。工程は UI の案内だけ)。
+	//   冷たい鉄を叩けば ForgingSim が ColdHit を返し、主人公の独白で知らせる(負向フィードバック)。
+	if (!inputOn || flipping || !atAnvil)
 	{
-		// F1操作中・鍛打工程でない・翻面中・金床にいない=蓄力をキャンセル(暴発しないように)。
+		// F1操作中・翻面中・金床にいない=蓄力をキャンセル(暴発しないように)。
 		// 翻面中は左键を火钳に使うので、翻面明けは一度離すまで蓄力させない(m_canStrike=false)。
 		m_charging = false;
 		m_charge   = 0.0f;
@@ -982,21 +977,17 @@ void SceneForge::UpdateBurnFx(float tick)
 void SceneForge::UpdateGrind(float tick, bool inputOn)
 {
 	const int NSEG = ForgingSim::NSEG;
-	const bool here       = inputOn && m_station == Station::Grindstone;
-	const bool grindPhase = (CurrentStep().type == StepName::Grind);
+	const bool here = inputOn && m_station == Station::Grindstone;
 	bool pressing = false;
-	if (here)
+	if (here)	// 工程に関係なく、砥石の工位にいればいつでも研げる(玩家の自由)
 	{
 		float dx, dy; ReadMouseDelta(dx, dy);	// 砥石の工位ではマウスを視角でなく刃の滑りに使う
-		if (grindPhase)
-		{
-			// 刃が右へ動く=砥石に当たる位置は刃の左側へ移る(刃の長軸は StationRight に揃えてある)
-			m_grindU -= dx * m_grindSens;
-			if (m_grindU < 0.0f) m_grindU = 0.0f;
-			if (m_grindU > 1.0f) m_grindU = 1.0f;
-			if (IsKeyTrigger(VK_RBUTTON)) m_wheel.Pedal();	// 点按=足で一回踏む(速すぎる連打は GrindWheel が無視)
-			pressing = IsKeyPress(VK_LBUTTON);
-		}
+		// 刃が右へ動く=砥石に当たる位置は刃の左側へ移る(刃の長軸は StationRight に揃えてある)
+		m_grindU -= dx * m_grindSens;
+		if (m_grindU < 0.0f) m_grindU = 0.0f;
+		if (m_grindU > 1.0f) m_grindU = 1.0f;
+		if (IsKeyTrigger(VK_RBUTTON) || IsKeyTrigger(VK_SPACE)) m_wheel.Pedal();	// 点按=足で一回踏む(右クリック/Space。速すぎる連打は GrindWheel が無視)
+		pressing = IsKeyPress(VK_LBUTTON);
 	}
 	m_wheel.Update(tick, pressing);			// 足を止めれば摩擦で止まる。押し当て中は余計に減速
 	m_grindPress = Lerp::Damp(m_grindPress, pressing ? 1.0f : 0.0f, GRIND_PRESS_LAMBDA, tick);
@@ -1020,8 +1011,25 @@ void SceneForge::UpdateGrind(float tick, bool inputOn)
 	}
 	else m_grindSparkAcc = 0.0f;
 
-	if (grinding && !m_grindSndOn)      { Audio::PlayLoop(Audio::SE_GRIND_LOOP, 0.45f); m_grindSndOn = true; }
-	else if (!grinding && m_grindSndOn) { Audio::Stop(Audio::SE_GRIND_LOOP);            m_grindSndOn = false; }
+	// --- 研磨音: 止めずに鳴らし続け、音量と音程だけを砥石の状態に追従させる ---
+	//   押す/離すたびに Stop→PlayLoop すると、毎回素材の頭から鳴り直して機械的に聞こえる。
+	//   本物の砥石は連続音で、速く回すほど高く大きい → 砥石の工位にいる間はループを流しっぱなしにし、
+	//   目標音量 = (押し当てていれば)回転速度、音程 = 回転速度で補間。Damp で滑らかに(プツッと鳴らない)。
+	const bool atGrind = (m_state == GAME_PLAY) && !m_walkMode && m_station == Station::Grindstone;
+	// 押し当てて砥石が回っていれば、遅くても最低 GRIND_SND_MIN_LEVEL は聞こえる(速いほど大きい)。
+	const float target = grinding ? GRIND_SND_MIN_LEVEL + (1.0f - GRIND_SND_MIN_LEVEL) * speed : 0.0f;
+	m_grindVol = Lerp::Damp(m_grindVol, target, GRIND_SND_LAMBDA, tick);
+	if (atGrind && !m_grindSndOn) { Audio::PlayLoop(Audio::SE_GRIND_LOOP, 0.0f); m_grindSndOn = true; }	// 無音で開始
+	if (m_grindSndOn)
+	{
+		const float pitch = GRIND_PITCH_MIN + (GRIND_PITCH_MAX - GRIND_PITCH_MIN) * speed;
+		Audio::SetLoop(Audio::SE_GRIND_LOOP, m_grindVol * GRIND_SND_VOLUME, pitch);
+		if (!atGrind && m_grindVol < GRIND_SND_OFF)	// 工位を離れ、音が消えきってから止める
+		{
+			Audio::Stop(Audio::SE_GRIND_LOOP);
+			m_grindSndOn = false;
+		}
+	}
 }
 
 //--- 淬火を試みる(QuenchStep が水槽で左クリックされた時に呼ぶ)。

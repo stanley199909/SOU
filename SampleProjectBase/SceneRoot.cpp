@@ -7,6 +7,7 @@
 #include "Model.h"
 #include "Texture.h"
 #include "TextureCache.h"
+#include "PropParts.h"	// 動く部品を持つ道具(砥石の輪)の表
 #include "Input.h"
 #include "Audio.h"	// Mキーで BGM ミュート切替
 #include "Geometory.h"
@@ -177,12 +178,20 @@ void SceneRoot::LoadSharedProps()
 	for (const Row& r : rows)
 	{
 		if (GetObj<Model>(r.key)) continue;					// 既に読んであれば飛ばす
+		auto t = r.tex.empty() ? nullptr : TextureCache::Get(r.tex.c_str());	// 同じ貼图(例:Anvil)は一度だけ解码
+
+		// 動く部品を持つ道具(PropParts.h の表。例: 砥石の輪)は、本体を「部品以外」、部品を「部品だけ」で
+		// 別々に読む。両方とも同じ座標系なので、同じワールド行列で描けば元の一体の形にぴったり重なる。
+		const PropPart* part = FindPropPart(r.key);
 		Model* m = CreateObj<Model>(r.key);
+		if (part) m->SetNodeFilter(Model::NodeFilter::Except, part->nodeName);
 		if (!m->Load(r.fbx.c_str(), 1.0f, false, true)) continue;	// 欠品でも落ちない
-		if (!r.tex.empty())
+		if (t) m->SetTexture(t);
+		if (part)
 		{
-			auto t = TextureCache::Get(r.tex.c_str());	// 同じ貼图(例:Anvil)は一度だけ解码
-			if (t) m->SetTexture(t);
+			Model* pm = CreateObj<Model>(part->partKey);
+			pm->SetNodeFilter(Model::NodeFilter::Only, part->nodeName);
+			if (pm->Load(r.fbx.c_str(), 1.0f, false, true) && t) pm->SetTexture(t);
 		}
 	}
 

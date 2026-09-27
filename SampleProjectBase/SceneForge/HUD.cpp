@@ -205,7 +205,7 @@ void SceneForge::DrawPlayUI()
 		{
 		case Station::Anvil:      guide = "Mouse : Aim    Hold L-MOUSE : Hammer    F : Flip    E : Leave"; break;
 		case Station::Hearth:     guide = "Hold R : Pump the bellows    E : Take it out of the fire"; break;
-		case Station::Grindstone: guide = "Tap R-MOUSE : Pedal    Hold L-MOUSE : Press the blade    Mouse : Slide    E : Leave"; break;
+		case Station::Grindstone: guide = "Tap R-MOUSE / SPACE : Pedal    Hold L-MOUSE : Press the blade    Mouse : Slide    E : Leave"; break;
 		case Station::Trough:     guide = "L-MOUSE : Plunge into the water    E : Leave"; break;
 		}
 	}

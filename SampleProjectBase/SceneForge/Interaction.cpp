@@ -55,10 +55,8 @@ bool SceneForge::InteractEnabled(const Interactable& it) const
 	switch (it.action)
 	{
 	case InteractAction::EnterStation:
-		// 炉はいつでも使える(鍛打中/淬火前に冷めたら熱し直す)。
-		// 他の工位は「今の工程の工位」の時だけ(例: 研磨工程でなければ砥石に入れない)。
-		if (it.station == Station::Hearth) return true;
-		return it.station == StepStation(CurrentStep().type);
+		// 工位はいつでも全部入れる(ユーザー方針: 玩家の自由。失敗判定は無く、次に何をするかは UI が教えるだけ)。
+		return true;
 	case InteractAction::TakeTongs:
 		// 台の火钳は工程に関係なく取れる(ユーザー決定)。既に手に持っている時だけ取れない。
 		//   ※工位で F で取るのは鍛打工程だけ(UpdateFlip 側)。

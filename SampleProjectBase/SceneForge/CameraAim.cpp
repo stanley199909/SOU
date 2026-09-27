@@ -20,8 +20,10 @@
 #include "PostProcess.h"
 #include "AimSystem.h"
 #include "Lerp.h"
+#include "PropParts.h"
 #include <cstdlib>
 #include <cmath>
+#include <cfloat>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -384,8 +386,27 @@ XMFLOAT3 SceneForge::StationBase(Station s)
 	case Station::Grindstone:
 		if (Prop* g = GetProp("StGrind"))
 		{
+			// 接点 = 輪(別モデル StGrindWheel)の真上。輪の箱の8隅を砥石の配置行列で運び、その上端の中央。
+			// 輪が無ければ(読込失敗)砥石全体の箱の上端で代用。
 			XMFLOAT3 mn, mx;
-			if (PropWorldBox(*g, mn, mx))								// 砥石の上端の中央
+			const PropPart* part = FindPropPart("StGrind");
+			Model* wheel = part ? GetObj<Model>(part->partKey) : nullptr;
+			if (wheel)
+			{
+				XMFLOAT3 lmn, lmx; wheel->GetLocalAABB(lmn, lmx);
+				XMMATRIX w = PropWorld(*g);
+				mn = XMFLOAT3( FLT_MAX,  FLT_MAX,  FLT_MAX);
+				mx = XMFLOAT3(-FLT_MAX, -FLT_MAX, -FLT_MAX);
+				for (int i = 0; i < 8; ++i)
+				{
+					XMFLOAT3 c((i & 1) ? lmx.x : lmn.x, (i & 2) ? lmx.y : lmn.y, (i & 4) ? lmx.z : lmn.z);
+					XMFLOAT3 p; XMStoreFloat3(&p, XMVector3TransformCoord(XMLoadFloat3(&c), w));
+					mn.x = fminf(mn.x, p.x); mn.y = fminf(mn.y, p.y); mn.z = fminf(mn.z, p.z);
+					mx.x = fmaxf(mx.x, p.x); mx.y = fmaxf(mx.y, p.y); mx.z = fmaxf(mx.z, p.z);
+				}
+				return XMFLOAT3((mn.x + mx.x) * 0.5f, mx.y + m_grindLift, (mn.z + mx.z) * 0.5f);
+			}
+			if (PropWorldBox(*g, mn, mx))
 				return XMFLOAT3((mn.x + mx.x) * 0.5f, mx.y + m_grindLift, (mn.z + mx.z) * 0.5f);
 		}
 		return m_barAnchor;

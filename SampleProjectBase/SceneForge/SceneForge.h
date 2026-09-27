@@ -192,7 +192,14 @@ private:
 	float m_grindPress  = 0.0f;						// 押し当ての見た目 0..1(Damp)
 	float m_grindSens   = 0.0012f;					// マウス1pxあたりの滑り量(長手の割合)
 	float m_grindSparkAcc = 0.0f;
-	bool  m_grindSndOn  = false;
+	bool  m_grindSndOn  = false;						// 研磨ループが流れているか(砥石の工位にいる間は流しっぱなし)
+	float m_grindVol    = 0.0f;						// 研磨音の現在の大きさ 0..1(Damp で目標へ)
+	static constexpr float GRIND_SND_VOLUME = 2.0f;		// 全速で押し当てた時の音量(1超=素材を増幅。素材が小さめのため)
+	static constexpr float GRIND_SND_MIN_LEVEL = 0.4f;	// 押し当てて回っていれば、遅くてもこの割合は鳴る
+	static constexpr float GRIND_PITCH_MIN  = 0.7f;		// 回転がほぼ止まっている時の音程(再生速度倍率)
+	static constexpr float GRIND_PITCH_MAX  = 1.4f;		// 全速の時の音程(XAudio2 の上限 2.0 未満)
+	static constexpr float GRIND_SND_LAMBDA = 10.0f;	// 音量の追従の速さ(Damp率。大=機敏)
+	static constexpr float GRIND_SND_OFF    = 0.01f;	// これ未満まで消えたらループを止めてよい
 	static constexpr float GRIND_RATE         = 0.35f;	// 全速で押し当てた時の研ぎ進み(/秒)
 	static constexpr float GRIND_PRESS_DROP   = 0.02f;	// 押し当てで刃が砥石へ沈む量
 	static constexpr float GRIND_PRESS_LAMBDA = 14.0f;	// 押し当ての追従の速さ(Damp率)
@@ -559,7 +566,7 @@ private:
 
 	//--- 打撃パラメータ
 	static constexpr float CHARGE_RATE = 1.6f;	// 蓄力速度(/秒, 満蓄力まで約0.6秒)
-	static constexpr float STRIKE_COOL = 0.08f;	// 1打ごとに下がる温度
+	static constexpr float STRIKE_COOL = 0.02f;	// 1打ごとに下がる温度(燃える温度から約25打で冷たくなる)
 	static constexpr float COLD_LIMIT  = 0.35f;	// これ未満は冷たすぎ(ほぼ変形せず割れる)
 	static constexpr float CADENCE_MIN = 0.45f;	// 良い打撃間隔の下限(これより速いと駄目)
 	static constexpr float CADENCE_MAX = 1.00f;	// 良い打撃間隔の上限(これより遅いと駄目)

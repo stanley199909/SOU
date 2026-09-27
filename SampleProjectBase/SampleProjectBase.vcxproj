@@ -266,6 +266,7 @@
     <ClInclude Include="Main.h" />
     <ClInclude Include="Model.h" />
     <ClInclude Include="ModelImport.h" />
+    <ClInclude Include="PropParts.h" />
     <ClInclude Include="CoalBedMesh.h" />
     <ClInclude Include="CottageRender.h" />
     <ClInclude Include="MoveLight.h" />

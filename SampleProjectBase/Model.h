@@ -99,6 +99,12 @@ public:
 	void GetLocalAABB(DirectX::XMFLOAT3& outMin, DirectX::XMFLOAT3& outMax);	// モデル空間の境界箱(スケール前の生頂点)
 
 public:
+	//--- 部品の切り出し(Load の前に呼ぶ。simple モードのみ有効)
+	//    simple モードは全ノードを1つに焼き込む(PreTransformVertices)ので、動く部品(例: 砥石の輪)が
+	//    本体と一体になり動かせない。焼き込む前にノード名で振り分けて、部品を別モデルとして読む。
+	//    両者とも同じ座標系(ノード変換を焼き込み済み)なので、同じワールド行列で描けばぴったり重なる。
+	enum class NodeFilter { None, Only, Except };	// 全部 / その部品だけ / その部品以外
+	void SetNodeFilter(NodeFilter mode, const char* nodeName) { m_nodeFilter = mode; m_nodeFilterName = nodeName ? nodeName : ""; }
 	bool Load(const char* file, float scaleBase = 1.0f, bool flip = false, bool simple = false);
 	void LoadAnimation(const char* FileName, const char* Name, bool flip);
 	void Draw(int texSlot = 0);
@@ -122,6 +128,8 @@ private:
 	DirectX::SimpleMath::Matrix aiMtxToDxMtx(const aiMatrix4x4& aimatrix);
 
 private:
+	NodeFilter  m_nodeFilter = NodeFilter::None;				// 部品の切り出し(SetNodeFilter)
+	std::string m_nodeFilterName;
 	Assimp::Importer* importer = nullptr;					// assimpの設定
 	const aiScene* m_pScene = nullptr;						// ロード済みモデル情報
 	static std::shared_ptr<VertexShader> m_defVS;			// 頂点シェーダー

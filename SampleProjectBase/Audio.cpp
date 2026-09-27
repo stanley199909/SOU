@@ -51,6 +51,34 @@ namespace
 
 	float noise() { return (float)rand() / RAND_MAX * 2.0f - 1.0f; }
 
+	//--- ループ音の継ぎ目を消す(クロスフェード)。
+	//    素材の末尾 n サンプルを先頭へ重ねて溶かし、末尾は捨てる:
+	//      新しい先頭[i] = 先頭[i]*w + 末尾[i]*(1-w)   (w: 0→1)
+	//    すると「新しい末尾の次」=新しい先頭[0]=元の末尾の続き になり、ループの継ぎ目が連続になる。
+	//    → ループ用に作られていない素材(普通の録音)でも、継ぎ目で「プツッ」と鳴らない。
+	const float LOOP_CROSSFADE_SEC = 0.25f;	// 溶かす長さ(秒)
+	void MakeSeamlessLoop(Sound& s)
+	{
+		if (s.fmt.wBitsPerSample != 16 || s.fmt.nChannels == 0) return;	// 16bit PCM のみ対応
+		const size_t ch     = s.fmt.nChannels;
+		const size_t frames = s.data.size() / (sizeof(short) * ch);
+		size_t n = (size_t)(LOOP_CROSSFADE_SEC * s.fmt.nSamplesPerSec);
+		if (n > frames / 4) n = frames / 4;		// 短い素材は溶かしすぎない
+		if (n == 0) return;
+		short* p = reinterpret_cast<short*>(s.data.data());
+		for (size_t i = 0; i < n; ++i)
+		{
+			const float w = (float)i / (float)n;
+			for (size_t c = 0; c < ch; ++c)
+			{
+				const float head = p[i * ch + c];
+				const float tail = p[(frames - n + i) * ch + c];
+				p[i * ch + c] = (short)(head * w + tail * (1.0f - w));
+			}
+		}
+		s.data.resize((frames - n) * ch * sizeof(short));
+	}
+
 	//--- WAVファイルの読み込み(PCMのみ対応)。成功でtrue
 	bool LoadWav(const char* path, Sound& s)
 	{
@@ -344,6 +372,9 @@ namespace Audio
 		{
 			if (!LoadWav(files[i], g_sound[i]))	// WAVが無ければ合成音で代用
 				Synthesize((SoundId)i, g_sound[i]);
+			// 途切れず鳴り続けるループ効果音は、継ぎ目を溶かしておく(素材がループ用でなくても使える)
+			if (i == SE_FORGE_LOOP || i == SE_BURN_LOOP || i == SE_GRIND_LOOP)
+				MakeSeamlessLoop(g_sound[i]);
 			CreateVoices(g_sound[i]);
 		}
 	}
@@ -399,7 +430,20 @@ namespace Audio
 		v->SubmitSourceBuffer(&b);
 		g_loopVolume[id] = volume;
 		v->SetVolume((IsBgm(id) && g_bgmMuted) ? 0.0f : volume);	// ミュート中は無音で開始
+		v->SetFrequencyRatio(1.0f);	// 前回 SetLoop で変えた音程を戻す
 		v->Start(0);
+	}
+
+	//--- 鳴っているループの音量と音程を、止めずに変える(止める→最初から鳴り直す、を避ける)。
+	//    pitch = 再生速度の倍率(1=原音。2で1オクターブ上。上限は XAudio2 既定の 2.0)
+	void SetLoop(SoundId id, float volume, float pitch)
+	{
+		if (!g_xa || id < 0 || id >= SE_MAX) return;
+		Sound& s = g_sound[id];
+		if (s.voices.empty()) return;
+		g_loopVolume[id] = volume;
+		s.voices[0]->SetVolume(volume);
+		s.voices[0]->SetFrequencyRatio(pitch);
 	}
 
 	//--- BGMだけミュート切替。SE(Play/加熱ループ)には影響しない

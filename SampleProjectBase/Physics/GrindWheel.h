@@ -27,7 +27,7 @@ public:
     float friction     = 0.45f;  // bearing friction decay rate k (1/s) while free-spinning
     float bladeDrag    = 0.90f;  // extra decay rate while the blade is pressed on the stone
 
-    static constexpr float PEDAL_MIN_INTERVAL = 0.2f; // fastest possible stroke = 5 per second
+    static constexpr float PEDAL_MIN_INTERVAL = 0.1f; // fastest possible stroke = 10 per second
 
 private:
     float m_speed = 0.0f;

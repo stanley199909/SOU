@@ -7,6 +7,7 @@
 #include "OutdoorStage.h"
 #include "SceneForge/SceneForge.h"
 #include "SceneForge/SceneForge_Internal.h"
+#include "PropParts.h"
 #include "DirectX.h"
 #include "MeshBuffer.h"
 #include "Shader.h"
@@ -86,6 +87,8 @@ void SceneForge::LoadProp(const char* key, const char* fbx, const char* tex,
 	p.yaw = yaw;
 	p.groundSnap = groundSnap;
 	m->GetLocalAABB(p.aabbMin, p.aabbMax);	// 地面設置＆サイズ正規化に使う境界箱
+	if (const PropPart* part = FindPropPart(key))	// 動く部品を別モデルにした道具は、部品込みの箱で配置(元の一体と同じ)
+		UnionPartAABB(GetObj<Model>(part->partKey), p.aabbMin, p.aabbMax);
 
 	// モデルごとに生サイズがバラバラなので、AABBの最大辺=targetSize になるよう自動スケール
 	// (魔法数字を避け、別モデルに差し替えてもサイズが揃う)
@@ -213,6 +216,11 @@ void SceneForge::DrawScenery()
 			? XMFLOAT4(0.80f, 0.76f, 0.72f, 1.0f)
 			: XMFLOAT4(1, 1, 1, 1);
 		SunStage::LitProp(m,PropWorld(p),GetObj<CameraBase>("Camera"),tint,CottageRender::Data().sun,CottageRender::Data().ambient,m_coalPos,CottageRender::Data().windowExtra.w,p.key=="StForge");
+		// 動く部品(砥石の輪)は本体と同じ行列の手前で、自分の軸まわりに回してから描く。
+		// 角度は砥石の物理(GrindWheel)が積分した値=踏んだ分だけ回り、摩擦で止まる。
+		if (const PropPart* part = FindPropPart(p.key.c_str()))
+			if (Model* pm = GetObj<Model>(part->partKey))
+				SunStage::LitProp(pm,PartSpin(pm, m_wheel.Angle()) * PropWorld(p),GetObj<CameraBase>("Camera"),tint,CottageRender::Data().sun,CottageRender::Data().ambient,m_coalPos,CottageRender::Data().windowExtra.w);
 	}
 	DrawCoalBed();	// 光る炭ベッド(自作)
     if (Prop* house = GetProp("StCottage"))
