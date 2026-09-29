@@ -1,6 +1,7 @@
 #pragma once
 #include <assimp/scene.h>
 #include <cstring>
+#include <string>
 #include <vector>
 
 // Import-time scene editing, done BEFORE PreTransformVertices merges every node
@@ -28,11 +29,19 @@ namespace ModelImport
     // Keep only the meshes inside the named part's subtree (keepOnly = true), or
     // everything except that subtree (keepOnly = false). Prefix match, because the
     // FBX importer may add pivot helper nodes like "Stone_low_$AssimpFbx$_Translation".
-    inline void StripByNode(aiNode* node, const char* partName, bool keepOnly, bool inside = false)
+    // A part may be several sibling nodes (e.g. a door = leaf + ironwork + backing):
+    // a node belongs to the part if its name starts with ANY of the given names.
+    inline bool MatchesAny(const char* name, const std::vector<std::string>& partNames)
     {
-        inside = inside || std::strncmp(node->mName.C_Str(), partName, std::strlen(partName)) == 0;
+        for (const std::string& p : partNames)
+            if (std::strncmp(name, p.c_str(), p.size()) == 0) return true;
+        return false;
+    }
+    inline void StripByNode(aiNode* node, const std::vector<std::string>& partNames, bool keepOnly, bool inside = false)
+    {
+        inside = inside || MatchesAny(node->mName.C_Str(), partNames);
         if (inside != keepOnly) node->mNumMeshes = 0;   // drop this node's mesh references
-        for (unsigned i = 0; i < node->mNumChildren; ++i) StripByNode(node->mChildren[i], partName, keepOnly, inside);
+        for (unsigned i = 0; i < node->mNumChildren; ++i) StripByNode(node->mChildren[i], partNames, keepOnly, inside);
     }
 
     inline void MarkUsed(aiNode* node, std::vector<bool>& used)
@@ -69,10 +78,10 @@ namespace ModelImport
         DeleteUnusedMeshes(scene);
     }
 
-    inline void FilterByNode(aiScene* scene, const char* partName, bool keepOnly)
+    inline void FilterByNode(aiScene* scene, const std::vector<std::string>& partNames, bool keepOnly)
     {
-        if (!scene || !scene->mRootNode || !partName || !partName[0]) return;
-        StripByNode(scene->mRootNode, partName, keepOnly);
+        if (!scene || !scene->mRootNode || partNames.empty()) return;
+        StripByNode(scene->mRootNode, partNames, keepOnly);
         DeleteUnusedMeshes(scene);
     }
 }

@@ -178,12 +178,14 @@
     <ClCompile Include="PostProcess.cpp" />
     <ClCompile Include="GameLogic\AimSystem.cpp" />
     <ClCompile Include="GameLogic\Lerp.cpp" />
+    <ClCompile Include="GameLogic\HingedDoor.cpp" />
     <ClCompile Include="GameLogic\ScreenFade.cpp" />
     <ClCompile Include="GameData\WeaponRecipe.cpp" />
     <ClCompile Include="Physics\HammerPhysics.cpp" />
     <ClCompile Include="Physics\ForgingSim.cpp" />
     <ClCompile Include="Physics\Particles.cpp" />
     <ClCompile Include="Physics\GrindWheel.cpp" />
+    <ClCompile Include="Physics\Collision2D.cpp" />
     <ClCompile Include="StateMachine\StateMachine.cpp" />
     <ClCompile Include="StateMachine\StateBase.cpp" />
     <ClCompile Include="StateMachine\Player\HeatStep.cpp" />
@@ -196,6 +198,7 @@
     <ClCompile Include="SceneForge\HUD.cpp" />
     <ClCompile Include="SceneForge\CameraAim.cpp" />
     <ClCompile Include="SceneForge\Interaction.cpp" />
+    <ClCompile Include="SceneForge\Collision.cpp" />
     <ClCompile Include="SceneParticleLab.cpp" />
     <ClCompile Include="Audio.cpp" />
     <ClCompile Include="DebugUI.cpp" />
@@ -232,12 +235,14 @@
     <ClInclude Include="PostProcess.h" />
     <ClInclude Include="GameLogic\AimSystem.h" />
     <ClInclude Include="GameLogic\Lerp.h" />
+    <ClInclude Include="GameLogic\HingedDoor.h" />
     <ClInclude Include="GameLogic\ScreenFade.h" />
     <ClInclude Include="GameData\WeaponRecipe.h" />
     <ClInclude Include="Physics\HammerPhysics.h" />
     <ClInclude Include="Physics\ForgingSim.h" />
     <ClInclude Include="Physics\Particles.h" />
     <ClInclude Include="Physics\GrindWheel.h" />
+    <ClInclude Include="Physics\Collision2D.h" />
     <ClInclude Include="StateMachine\StateMachine.h" />
     <ClInclude Include="StateMachine\StateBase.h" />
     <ClInclude Include="StateMachine\Player\HeatStep.h" />
@@ -267,6 +272,7 @@
     <ClInclude Include="Model.h" />
     <ClInclude Include="ModelImport.h" />
     <ClInclude Include="PropParts.h" />
+    <ClInclude Include="CottageDoor.h" />
     <ClInclude Include="CoalBedMesh.h" />
     <ClInclude Include="CottageRender.h" />
     <ClInclude Include="MoveLight.h" />

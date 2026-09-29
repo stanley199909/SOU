@@ -370,8 +370,10 @@ void SceneForge::Init()
 		for(auto& p:m_props) if(p.key==e.key) {p.scale=e.scale;p.pos[1]=e.y;p.groundSnap=false;}
 	}
 	LoadLayout();
+	InitBuildingCollision();	// 家の壁線用の三角形と、裏口の扉の蝶番/凸包(Collision.cpp)
 	CottageRender::Load();
 	LoadTuning();	// F1で調整したハンマー/カメラ値(forge_tuning.txt)を復元
+	BuildPropHulls();	// 衝突の凸包: 配置(LoadLayout)と床の高さ(LoadTuning)が決まった後=背丈以下の頂点を選べる
 	// Layout/tuning must be loaded before assigning the walking spawn height.
 	m_player.Init(DirectX::XMFLOAT3(0.0f, m_walkFloorY, -2.0f), 0.0f);
 	SnapshotTuning();	// ↑復元直後の値を「起動時の姿」として記録(F8/ボタンでここへ戻せる)
@@ -443,6 +445,7 @@ void SceneForge::StartGame()
 	m_pendingFlip = false; m_focus = -1; m_promptAlpha = 0.0f;	// 互動の状態も初期化
 	m_walkPitch = 0.0f;
 	m_player.Init(DirectX::XMFLOAT3(0.0f, m_walkFloorY, -2.0f), 0.0f);	// 開始位置/向きを戻す
+	m_door.Reset();			// 裏口の扉は閉じた状態から
 	m_score    = 0;
 	m_forging.Reset();		// 鉄を厚板・無傷・進捗0へ(表面が上に戻る。目標形状も再生成)
 	m_forgeProg = 0.0f;		// 武器モーフのプレビュー進捗も戻す
@@ -1074,6 +1077,7 @@ void SceneForge::Update(float tick)
 {
 	m_time += tick;
 	m_fade.Update(tick);	// 画面フェード(黒幕)を進める。遷移はTransitionの黒転じで実行される
+	m_door.Update(tick);	// 扉の開閉の回転(E で切り替えた後、入力と無関係に最後まで回り切る)
 
 	// F8 = 全調整値を起動時スナップショットへ一発リセット(F1デバッグ表示中のみ=誤爆防止)。
 	if (DebugUI::IsVisible() && IsKeyTrigger(VK_F8)) RestoreTuning();
@@ -1094,8 +1098,8 @@ void SceneForge::Update(float tick)
 			// --- 走動モード: 一人称で工坊を歩く ---
 			UpdateWalkLook();				// マウス→玩家yaw(左右)/カメラpitch(上下)
 			m_player.SetMoveSpeed(m_walkSpeed);	// F1スライダの速度を毎フレーム反映
-			std::vector<Box> walls;			// TODO(Step3): シーンのプロップから壁を組む。今は衝突なし
-			m_player.Update(tick, walls);	// WASDで一人称移動
+			BuildCollisionWorld();					// 道具の凸包/壁線/扉を今の配置でワールドへ(Collision.cpp)
+			m_player.Update(tick, m_collision);		// WASDで一人称移動+道具/壁から押し出す(壁に沿って滑る)
 
 			// 互動: ①範囲 ②視線 の両方が true の物件だけ E が効く(Interaction.cpp)。
 			//   金床=工位へ移動 / 火钳=取って工位へ移動→翻面。退出(工位→走動)は UpdatePlay 側で E/ESC。
@@ -1185,6 +1189,7 @@ void SceneForge::Draw()
 	}
 	DrawWater();		// 水槽の水面(屈折。背後のシーンを撮ってから描く=不透明の後)
 	if (DebugUI::IsVisible()) { DrawDebugBoxes(); DrawInteractBoxes(); }	// F1中はAABB/箱・互動範囲を線で表示
+	if (m_showCollision) DrawCollision();	// 衝突形状(F1 最上段「Show collision」で ON。壁越しに透視。F1を閉じて歩きながらも見られる)
 
 	DrawEmbers();		// 炭火から立ち上る余燼(火花描画より前に。火花が無くても出す)
 	DrawSteam();		// 淬火の蒸気(柔らかい白い煙)

@@ -97,6 +97,8 @@ public:
 	const char* GetMaterialName(size_t index) const;// マテリアル名(FBXの MI_Forge_1_UVx など)
 	Texture* GetTextureAt(size_t i) const { return i < m_materials.size() ? m_materials[i].texture.get() : nullptr; }
 	void GetLocalAABB(DirectX::XMFLOAT3& outMin, DirectX::XMFLOAT3& outMax);	// モデル空間の境界箱(スケール前の生頂点)
+	void AppendLocalVertices(std::vector<DirectX::XMFLOAT3>& out) const;	// モデル空間の生頂点を追加(衝突の凸包づくり等。GetLocalAABB と同じ頂点)
+	void AppendLocalTriangles(std::vector<DirectX::XMFLOAT3>& out) const;	// モデル空間の三角形を3頂点ずつ追加(建物の断面=壁の衝突線づくり)
 
 public:
 	//--- 部品の切り出し(Load の前に呼ぶ。simple モードのみ有効)
@@ -104,7 +106,9 @@ public:
 	//    本体と一体になり動かせない。焼き込む前にノード名で振り分けて、部品を別モデルとして読む。
 	//    両者とも同じ座標系(ノード変換を焼き込み済み)なので、同じワールド行列で描けばぴったり重なる。
 	enum class NodeFilter { None, Only, Except };	// 全部 / その部品だけ / その部品以外
-	void SetNodeFilter(NodeFilter mode, const char* nodeName) { m_nodeFilter = mode; m_nodeFilterName = nodeName ? nodeName : ""; }
+	void SetNodeFilter(NodeFilter mode, const char* nodeName) { SetNodeFilter(mode, std::vector<std::string>{ nodeName ? nodeName : "" }); }
+	// 部品が複数ノードから成る場合(例: 扉=門板+鉄具+裏板)。どれかの名前で始まるノードを部品とみなす。
+	void SetNodeFilter(NodeFilter mode, std::vector<std::string> nodeNames) { m_nodeFilter = mode; m_nodeFilterNames = std::move(nodeNames); }
 	bool Load(const char* file, float scaleBase = 1.0f, bool flip = false, bool simple = false);
 	void LoadAnimation(const char* FileName, const char* Name, bool flip);
 	void Draw(int texSlot = 0);
@@ -129,7 +133,7 @@ private:
 
 private:
 	NodeFilter  m_nodeFilter = NodeFilter::None;				// 部品の切り出し(SetNodeFilter)
-	std::string m_nodeFilterName;
+	std::vector<std::string> m_nodeFilterNames;
 	Assimp::Importer* importer = nullptr;					// assimpの設定
 	const aiScene* m_pScene = nullptr;						// ロード済みモデル情報
 	static std::shared_ptr<VertexShader> m_defVS;			// 頂点シェーダー

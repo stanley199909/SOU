@@ -97,7 +97,7 @@ void SceneForge::LoadProp(const char* key, const char* fbx, const char* tex,
 	float ez = p.aabbMax.z - p.aabbMin.z;
 	float maxExtent = ex; if (ey > maxExtent) maxExtent = ey; if (ez > maxExtent) maxExtent = ez;
 	p.scale = (maxExtent > 1e-4f) ? (targetSize / maxExtent) : targetSize;
-	m_props.push_back(p);
+	m_props.push_back(p);	// 衝突用の凸包は配置が決まった後に作る(BuildPropHulls。背丈で頂点を選ぶので高さが要る)
 }
 
 //--- プロップのワールド行列(編集シーンSceneStageEditorと同一規約=床は常にY=0)。
@@ -196,6 +196,8 @@ void SceneForge::DrawScenery()
         if(p.key=="StCottage") XMStoreFloat3(&shadowCenter,XMVector3TransformCoord(XMVectorSet(0,150,0,1),world));
         casters.push_back(SunStage::MakeItem(GetObj<Model>(p.key.c_str()),world));
     }
+    if (Model* door = GetObj<Model>(CottageDoor::DOOR_KEY); door && GetProp(CottageDoor::HOUSE_KEY))	// 扉も影を落とす(今の角度で)
+        casters.push_back(SunStage::MakeItem(door, DoorWorld()));
     SunStage::Prepare(casters,CottageRender::Data().sun,shadowCenter);
     SunStage::Sky(GetObj<CameraBase>("Camera"),CottageRender::Data().sun,CottageRender::Data().exteriorSky);
 
@@ -206,7 +208,13 @@ void SceneForge::DrawScenery()
 		Model* m = GetObj<Model>(p.key.c_str());
 		if (!m) continue;
 		// 整屋は専用のPBRシェーダー(triplanar)で描く。他プロップは共通シェーダー。
-		if (p.key == "StCottage") { DrawWall(m, PropWorld(p)); continue; }
+		if (p.key == CottageDoor::HOUSE_KEY)
+		{
+			DrawWall(m, PropWorld(p));
+			// 裏口の扉(家から切り出した部品)。家と同じ行列 × 蝶番の回転=閉じていれば戸口にぴったり収まる。
+			if (Model* door = GetObj<Model>(CottageDoor::DOOR_KEY)) DrawWall(door, DoorWorld());
+			continue;
+		}
         if(OutdoorStage::IsOutdoor(p.key)) {
             CottageRender::Draw(m,PropWorld(p),GetObj<CameraBase>("Camera"),GetObj<VertexShader>("VS_Wall"),GetObj<PixelShader>("PS_Wall"),m_coalPos,false,true);
             continue;

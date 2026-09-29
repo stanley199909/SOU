@@ -8,6 +8,7 @@
 #include "Texture.h"
 #include "TextureCache.h"
 #include "PropParts.h"	// 動く部品を持つ道具(砥石の輪)の表
+#include "CottageDoor.h"	// 整屋の裏口の扉(開閉する独立物件)
 #include "Input.h"
 #include "Audio.h"	// Mキーで BGM ミュート切替
 #include "Geometory.h"
@@ -199,11 +200,19 @@ void SceneRoot::LoadSharedProps()
 	//   両シーン(ゲーム/編集)が同じ実体を GetObj で参照＝再インポート無し。材質名で貼り分け。
 	//   石/灰泥は在ゲーム側で triplanar(DrawWall)で塗るので、ここでは base=Poly Haven石壁のまま。
 	CottageRender::Load();
-	if (!GetObj<Model>("StCottage"))
+	//   裏口の扉は開閉する独立物件なので、砥石の輪と同じく「扉以外=家」「扉だけ=扉」に分けて読む(CottageDoor.h)。
+	//   同じ座標系なので、扉を家と同じ行列(×蝶番の回転)で描けば戸口にぴったり収まる。
+	if (!GetObj<Model>(CottageDoor::HOUSE_KEY))
 	{
-		Model* m = CreateObj<Model>("StCottage");
-		if (m->Load("Assets/Medieval_Blacksmith_Cottage_Production/Cottage_Clean.fbx", 1.0f, false, true))
+		const char* kCottageFbx = "Assets/Medieval_Blacksmith_Cottage_Production/Cottage_Clean.fbx";
+		Model* m = CreateObj<Model>(CottageDoor::HOUSE_KEY);
+		m->SetNodeFilter(Model::NodeFilter::Except, CottageDoor::NodeNames());
+		if (m->Load(kCottageFbx, 1.0f, false, true))
 			CottageRender::Assign(m);
+		Model* d = CreateObj<Model>(CottageDoor::DOOR_KEY);
+		d->SetNodeFilter(Model::NodeFilter::Only, CottageDoor::NodeNames());
+		if (d->Load(kCottageFbx, 1.0f, false, true))
+			CottageRender::Assign(d);
 	}
 }
 

@@ -14,6 +14,9 @@
 #include "ForgingSim.h"		// Physics: 鍛造される鉄の状態と変形(自作物理)
 #include "Particles.h"		// Physics: 火花・余燼の粒子シミュ(自作物理)
 #include "Player.h"			// 鍛冶場を歩き回るプレイヤ(一人称の走動)
+#include "Collision2D.h"	// Physics: 走動の衝突(上から見た2D。円×凸包/壁線)
+#include "HingedDoor.h"		// GameLogic: 蝶番で開閉する扉(状態と角度)
+#include "CottageDoor.h"	// 整屋の裏口の扉(データ+蝶番の幾何)
 #include <DirectXMath.h>
 #include <memory>
 #include <vector>
@@ -284,10 +287,10 @@ private:
 	//      ①範囲: 玩家の足元が物件の「互動範囲の箱」(物件のワールドAABBを水平に reach だけ広げた箱)の中
 	//      ②視線: 目線の射線が物件の箱(m_lookPad だけ膨らませた)に当たる(照準と同じ AimSystem::Raycast)
 	//    物件と行為の対応は表 INTERACTABLES(データ)。新しい互動は表に1行足す+行為を1つ書くだけ。
-	enum class InteractAction { EnterStation, TakeTongs };
+	enum class InteractAction { EnterStation, TakeTongs, ToggleDoor };
 	struct Interactable
 	{
-		const char*    propKey;	// どのプロップか(配置は stage_layout.txt に従う=箱も自動で追従)
+		const char*    propKey;	// どのプロップか(配置は stage_layout.txt に従う=箱も自動で追従)。扉は家の部品なので DOOR_KEY
 		InteractAction action;	// E で何をするか
 		Station        station;	// EnterStation の時に入る工位(TakeTongs では金床)
 		float          reach;	// 互動範囲: 物件の箱から水平にどこまで離れても届くか(単位)
@@ -302,10 +305,51 @@ private:
 	bool  m_pendingFlip  = false;				// 火钳を取って工位へ移動中=着いたら翻面(火钳待命)から始める
 	bool  InteractEnabled(const Interactable& it) const;	// 今この互動ができる状況か(例: 砥石は研磨工程だけ)
 	bool  PropWorldBox(Prop& p, DirectX::XMFLOAT3& mn, DirectX::XMFLOAT3& mx);	// プロップのワールドAABB
+	bool  InteractBox(const Interactable& it, DirectX::XMFLOAT3& mn, DirectX::XMFLOAT3& mx);	// 互動物件のワールドAABB(扉は今の角度で)
 	void  UpdateInteract(float tick);			// 2判定→m_focus を決める(走動中のみ)
 	void  DoInteract(const Interactable& it);	// E を押された物件の行為を実行
 	void  DrawInteractPrompt();					// 物件の上に「E」ボタンを描く(HUD)
 	void  DrawInteractBoxes();					// F1: 互動範囲の箱を線で表示(範囲内=緑)
+
+	//--- 走動中の衝突(SceneForge/Collision.cpp)。玩家=足元の円。ぶつかる相手は形で2種類(Physics/Collision2D):
+	//      道具=上から見た2Dの凸包 / 建物(整屋)=腰の高さで水平に切った断面の線分(壁線)。
+	//    どちらも読込時にモデルから自動で作る(手で箱を置かない)=モデル差替え/配置変更で再調整不要。
+	//    どの道具がぶつかるかは表 COLLIDERS(データ, キーの前方一致)。小物(火钳/鎚/廃鉄)は入れない。
+	enum class HullShape { Whole, PerPiece };	// 凸包1つで包む / 繋がった塊ごとに1つずつ(石の山=石の間を塞がない)
+	struct Collider
+	{
+		const char* keyPrefix;	// プロップキーの前方一致
+		HullShape   shape;
+	};
+	static const Collider COLLIDERS[];
+	static const int      NUM_COLLIDERS;
+	Collision2D::World m_collision;				// 今フレームのワールドの衝突形状(XZ)。Player::Update に渡す
+	bool  m_showCollision = false;				// 衝突の可視化(F1 最上段のチェック。F1を閉じても表示し続ける。壁越しでも見える)
+	static constexpr float PLAYER_BODY_HEIGHT = 1.7f;	// 人の背丈。これより高い部分(樹冠/梁)はぶつからない=凸包から外す。可視化の柱の高さも同じ
+	static constexpr float COLLISION_DRAW_LIFT   = 0.02f;	// 可視化: 床と重ならない様に少し浮かせる(Zファイト防止)
+	static constexpr float COLLISION_TOUCH_MARGIN = 0.02f;	// 可視化: 玩家の円がこの距離まで近ければ「接触中」(赤)
+	static constexpr int   PLAYER_CIRCLE_SEGMENTS = 32;		// 可視化: 玩家の円を何角形で近似して描くか
+	const Collider* FindCollider(const std::string& key) const;	// 表 COLLIDERS の行(載っていなければ nullptr=ぶつからない)
+	void  BuildPropHull(Prop& p);				// 背丈以下の頂点(+動く部品)を床へ投影し、モデル空間の凸包を作る
+	void  BuildPropHulls();						// 全プロップの凸包を作る(配置が決まった後=LoadLayout の後に1回)
+	void  BuildCollisionWorld();				// 凸包/壁線/扉を今の配置でワールドへ運ぶ(毎フレーム。点が少ないので軽い)
+	void  DrawCollision();						// 凸包の柱・壁線・玩家の円を線で描く(m_showCollision の時)
+	//--- 建物の壁線: 家の三角形(扉を除く)を「床+m_wallSliceHeight」の高さで切る。
+	//    切る高さ(家のモデル空間)は家の配置で変わるので、変わった時だけ切り直す(三角形は保持)。
+	std::vector<DirectX::XMFLOAT3>     m_houseTris;		// 家の三角形(モデル空間, 3頂点ずつ)。Init で1回取得
+	std::vector<Collision2D::Segment>  m_wallSegLocal;	// 断面の線分(家のモデル空間 XZ)
+	float m_wallSliceLocalY = -1e30f;				// m_wallSegLocal を切った高さ(家のモデル空間)。変化検出用
+	float m_wallSliceHeight = 1.0f;					// 床から何の高さで壁を切るか(=腰。戸口はこの高さで空いている。F1)
+	static constexpr float WALL_RESLICE_EPS = 1e-3f;	// 切る高さがこれ以上変わったら切り直す(家のモデル空間)
+	void  UpdateWallSlice(const DirectX::XMMATRIX& houseWorld);	// 必要なら壁線を切り直す
+	void  InitBuildingCollision();					// 家の三角形・扉の蝶番/凸包を用意する(Init で1回)
+
+	//--- 整屋の裏口の扉(開閉する独立物件。CottageDoor.h / GameLogic/HingedDoor)。E で開閉。
+	//    絵(DoorWorld で描く)・衝突(扉の凸包を同じ行列で運ぶ)・互動(扉の箱)が全部同じ角度を読む。
+	HingedDoor         m_door;					// 開閉の状態と角度
+	CottageDoor::Hinge m_doorHinge;				// 蝶番の軸と「室内へ開く」回転方向(読込時に自動計算)
+	Collision2D::Hull  m_doorHullLocal;			// 扉板の凸包(家のモデル空間 XZ。閉じた姿勢)
+	DirectX::XMMATRIX  DoorWorld();				// 扉のワールド行列 = 蝶番の回転 × 家の配置
 
 	//--- F1調整値の永続化(Assets/forge_tuning.txt)。Initで読み, Uninit/Saveボタンで書く。
 	void  LoadTuning();
@@ -460,6 +504,7 @@ private:
 		bool              hidden = false;		// 一時的に描かない(例: 火钳を手に取っている間の台上の火钳)
 		DirectX::XMFLOAT3 aabbMin = { 0,0,0 };	// モデル空間AABB(Loadでキャッシュ)
 		DirectX::XMFLOAT3 aabbMax = { 0,0,0 };
+		std::vector<Collision2D::Hull> hullsLocal;	// 衝突用: モデル空間の頂点を床(XZ)へ投影した凸包(塊ごとなら複数)。空=ぶつからない
 	};
 	std::vector<Prop> m_props;
 	float m_groundY = 0.0f;	// 床の高さ(金床のワールドAABB下面から算出)

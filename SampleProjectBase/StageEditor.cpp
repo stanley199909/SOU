@@ -4,6 +4,7 @@
 #include "math.h"
 #include "StageEditor.h"
 #include "PropParts.h"
+#include "CottageDoor.h"	// 整屋の裏口の扉(家から切り出した部品)
 #include "Geometory.h"
 #include "DebugLog.h"
 #include "Model.h"
@@ -497,6 +498,9 @@ void SceneStageEditor::DrawScenery()
         auto world=PropWorld(p);
         if(p.key=="StCottage") XMStoreFloat3(&shadowCenter,XMVector3TransformCoord(XMVectorSet(0,150,0,1),world));
         casters.push_back(SunStage::MakeItem(GetObj<Model>(p.key.c_str()),world));
+        if (p.key == CottageDoor::HOUSE_KEY)	// 扉(家から切り出した部品)は閉じた姿勢=家と同じ行列
+            if (Model* door = GetObj<Model>(CottageDoor::DOOR_KEY))
+                casters.push_back(SunStage::MakeItem(door, world));
     }
     SunStage::Prepare(casters,CottageRender::Data().sun,shadowCenter);
     SunStage::Sky(GetObj<CameraBase>("Camera"),CottageRender::Data().sun,CottageRender::Data().exteriorSky);
@@ -510,6 +514,11 @@ void SceneStageEditor::DrawScenery()
         {
             CottageRender::Draw(m, PropWorld(p), GetObj<CameraBase>("Camera"),
                 GetObj<VertexShader>("StWallVS"), GetObj<PixelShader>("StWallPS"), m_coalPos, false,OutdoorStage::IsOutdoor(p.key));
+            // 裏口の扉は家から切り出した部品。編集シーンでは開閉しない=閉じた姿勢(家と同じ行列)で描く。
+            if (p.key == CottageDoor::HOUSE_KEY)
+                if (Model* door = GetObj<Model>(CottageDoor::DOOR_KEY))
+                    CottageRender::Draw(door, PropWorld(p), GetObj<CameraBase>("Camera"),
+                        GetObj<VertexShader>("StWallVS"), GetObj<PixelShader>("StWallPS"), m_coalPos, false);
             continue;
         }
 

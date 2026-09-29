@@ -13,12 +13,17 @@ namespace
 
 	// プレイヤ当たり判定ボックスの基準サイズ(単位)。人一人ぶんの占有(幅0.6/高1.7/奥0.6)。
 	const XMFLOAT3 PLAYER_BOX_SIZE = XMFLOAT3(0.6f, 1.7f, 0.6f);
+
+	// 押し出しの最大繰り返し回数。道具と道具の隙間(角)で「Aから出したらBに入った」を解くため。
+	// 普段は1回で抜ける(=途中で break)。角でも数回で収まる。
+	constexpr int PUSH_ITERATIONS = 4;
 }
 
 Player::Player()
 {
 	// 当たり判定ボックス(見た目モデルは別途Scene側が描画。色は使わない)
 	m_box = Box(XMFLOAT3(0.0f, 0.0f, 0.0f), XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), PLAYER_BOX_SIZE);
+	m_radius = PLAYER_BOX_SIZE.x * 0.5f;	// 足元の円=人の幅の半分(上から見た胴体)
 }
 
 void Player::Init(DirectX::XMFLOAT3 pos, float yaw)
@@ -27,7 +32,14 @@ void Player::Init(DirectX::XMFLOAT3 pos, float yaw)
 	m_yaw = yaw;
 }
 
-void Player::Update(float tick, std::vector<Box>& walls)
+void Player::Update(float tick, const Collision2D::World& world)
+{
+	Move(tick);					// ① まず入力どおりに動く(めり込んでもよい)
+	ResolveCollision(world);	// ② めり込んだ分だけ道具/壁の外へ押し出す(入力が無くても毎フレーム=
+								//    工位から出た直後の立ち位置が道具に重なっていても抜ける)
+}
+
+void Player::Move(float tick)
 {
 	// --- 入力から移動方向を求める(一人称の前後左右) ---
 	// f=前後(W/S), s=左右ストレイフ(A/D)。向き m_yaw を基準にするので、
@@ -51,37 +63,29 @@ void Player::Update(float tick, std::vector<Box>& walls)
 	v.Normalize();
 	XMFLOAT3 vel = v * m_moveSpeed * tick;
 
-	// 壁と衝突しないように移動
-	MoveWithWall(vel, walls);
-}
-
-void Player::MoveWithWall(DirectX::XMFLOAT3 vel, std::vector<Box>& walls)
-{
-	// X軸方向に移動して判定 → ぶつかったら戻す
 	m_box.m_pos.x += vel.x;
-	m_box.UpdateMinMaxPos();
-	for (Box& w : walls)
-	{
-		if (m_box.HitAABB(w))
-		{
-			m_box.m_pos.x -= vel.x;
-			m_box.UpdateMinMaxPos();
-			break;
-		}
-	}
-
-	// Z軸方向に移動して判定 → ぶつかったら戻す
 	m_box.m_pos.z += vel.z;
 	m_box.UpdateMinMaxPos();
-	for (Box& w : walls)
+}
+
+void Player::ResolveCollision(const Collision2D::World& world)
+{
+	// 足元を上から見た「円」として、重なった凸包(道具)と壁線(建物)の外へ押し出す(Physics/Collision2D)。
+	// 押し出すと移動のうち「壁へ向かう成分」だけが消え、壁に沿う成分は残る=壁に沿って滑る。
+	// 2つの物の隙間(角)では、片方から押し出すともう片方へ入ることがあるので数回繰り返す。
+	XMFLOAT2 c(m_box.m_pos.x, m_box.m_pos.z);
+	for (int it = 0; it < PUSH_ITERATIONS; ++it)
 	{
-		if (m_box.HitAABB(w))
-		{
-			m_box.m_pos.z -= vel.z;
-			m_box.UpdateMinMaxPos();
-			break;
-		}
+		bool pushed = false;
+		for (const Collision2D::Hull& h : world.hulls)
+			pushed |= Collision2D::PushCircleOut(c, m_radius, h);
+		for (const Collision2D::Segment& s : world.segments)
+			pushed |= Collision2D::PushCircleOut(c, m_radius, s);
+		if (!pushed) break;		// もうどこにも重なっていない
 	}
+	m_box.m_pos.x = c.x;
+	m_box.m_pos.z = c.y;
+	m_box.UpdateMinMaxPos();
 }
 
 DirectX::XMFLOAT3 Player::GetPosition() const

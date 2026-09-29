@@ -27,26 +27,46 @@ const SceneForge::Interactable SceneForge::INTERACTABLES[] = {
 	{ "StGrind",  SceneForge::InteractAction::EnterStation, Station::Grindstone, 0.9f },	// 砥石 → 研磨
 	{ "StTrough", SceneForge::InteractAction::EnterStation, Station::Trough,     1.0f },	// 水槽 → 淬火
 	{ "StPliers", SceneForge::InteractAction::TakeTongs,    Station::Anvil,      0.9f },	// 作業台の火钳 → 取って翻面へ
+	{ CottageDoor::DOOR_KEY, SceneForge::InteractAction::ToggleDoor, Station::Anvil, 1.0f },	// 裏口の扉 → 開閉(station は使わない)
 };
 const int SceneForge::NUM_INTERACTABLES = _countof(SceneForge::INTERACTABLES);
 
-//--- プロップのワールドAABB(モデル空間AABBの8隅を配置変換で運び、その外接箱を取る)。
-bool SceneForge::PropWorldBox(Prop& p, XMFLOAT3& mn, XMFLOAT3& mx)
+//--- モデル空間AABBの8隅を world で運び、その外接箱(ワールドAABB)を取る。
+static bool TransformAABB(const XMFLOAT3& lmn, const XMFLOAT3& lmx, const XMMATRIX& world, XMFLOAT3& mn, XMFLOAT3& mx)
 {
-	XMMATRIX world = PropWorld(p);
 	mn = XMFLOAT3( FLT_MAX,  FLT_MAX,  FLT_MAX);
 	mx = XMFLOAT3(-FLT_MAX, -FLT_MAX, -FLT_MAX);
 	for (int i = 0; i < 8; ++i)
 	{
-		XMFLOAT3 c(
-			(i & 1) ? p.aabbMax.x : p.aabbMin.x,
-			(i & 2) ? p.aabbMax.y : p.aabbMin.y,
-			(i & 4) ? p.aabbMax.z : p.aabbMin.z);
+		XMFLOAT3 c((i & 1) ? lmx.x : lmn.x, (i & 2) ? lmx.y : lmn.y, (i & 4) ? lmx.z : lmn.z);
 		XMFLOAT3 w; XMStoreFloat3(&w, XMVector3TransformCoord(XMLoadFloat3(&c), world));
 		mn.x = fminf(mn.x, w.x); mn.y = fminf(mn.y, w.y); mn.z = fminf(mn.z, w.z);
 		mx.x = fmaxf(mx.x, w.x); mx.y = fmaxf(mx.y, w.y); mx.z = fmaxf(mx.z, w.z);
 	}
 	return mn.x <= mx.x;
+}
+
+//--- プロップのワールドAABB。
+bool SceneForge::PropWorldBox(Prop& p, XMFLOAT3& mn, XMFLOAT3& mx)
+{
+	return TransformAABB(p.aabbMin, p.aabbMax, PropWorld(p), mn, mx);
+}
+
+//--- 互動物件のワールドAABB。普通はプロップの箱。扉は家の部品(プロップではない)なので、
+//    扉モデルの箱を「今の角度の扉の行列」で運ぶ=開いた扉は開いた位置で狙える。
+bool SceneForge::InteractBox(const Interactable& it, XMFLOAT3& mn, XMFLOAT3& mx)
+{
+	if (it.action == InteractAction::ToggleDoor)
+	{
+		Model* door = GetObj<Model>(CottageDoor::DOOR_KEY);
+		if (!door || !GetProp(CottageDoor::HOUSE_KEY)) return false;
+		XMFLOAT3 lmn, lmx;
+		door->GetLocalAABB(lmn, lmx);
+		return TransformAABB(lmn, lmx, DoorWorld(), mn, mx);
+	}
+	Prop* p = GetProp(it.propKey);
+	if (!p || p->hidden) return false;
+	return PropWorldBox(*p, mn, mx);
 }
 
 //--- 今この互動ができる状況か(物件ごとの前提条件)。
@@ -61,6 +81,9 @@ bool SceneForge::InteractEnabled(const Interactable& it) const
 		// 台の火钳は工程に関係なく取れる(ユーザー決定)。既に手に持っている時だけ取れない。
 		//   ※工位で F で取るのは鍛打工程だけ(UpdateFlip 側)。
 		return !m_tongsInHand;
+	case InteractAction::ToggleDoor:
+		// 扉はいつでも開閉できる(回っている途中でも押し直せば引き返す)。
+		return true;
 	}
 	return false;
 }
@@ -84,10 +107,8 @@ void SceneForge::UpdateInteract(float tick)
 		{
 			const Interactable& it = INTERACTABLES[i];
 			if (!InteractEnabled(it)) continue;
-			Prop* p = GetProp(it.propKey);
-			if (!p || p->hidden) continue;
 			XMFLOAT3 mn, mx;
-			if (!PropWorldBox(*p, mn, mx)) continue;
+			if (!InteractBox(it, mn, mx)) continue;
 
 			// ① 範囲: 足元(XZ)が、物件の箱を水平に reach 広げた箱の中か(高さは問わない=床の上に立つ前提)
 			bool inRange = foot.x >= mn.x - it.reach && foot.x <= mx.x + it.reach
@@ -130,6 +151,10 @@ void SceneForge::DoInteract(const Interactable& it)
 		if (Prop* pl = GetProp("StPliers")) pl->hidden = true;
 		m_pendingFlip = true;
 		BeginEnterStation(it.station);
+		break;
+	case InteractAction::ToggleDoor:
+		// 開閉を切り替えるだけ。回転・衝突(扉の凸包)・提示の位置は m_door の角度に全部追従する。
+		m_door.Toggle();
 		break;
 	}
 }
@@ -186,10 +211,8 @@ void SceneForge::DrawInteractBoxes()
 	for (int i = 0; i < NUM_INTERACTABLES; ++i)
 	{
 		const Interactable& it = INTERACTABLES[i];
-		Prop* p = GetProp(it.propKey);
-		if (!p) continue;
 		XMFLOAT3 mn, mx;
-		if (!PropWorldBox(*p, mn, mx)) continue;
+		if (!InteractBox(it, mn, mx)) continue;
 		mn.x -= it.reach; mn.z -= it.reach; mx.x += it.reach; mx.z += it.reach;
 		bool inRange = foot.x >= mn.x && foot.x <= mx.x && foot.z >= mn.z && foot.z <= mx.z;
 

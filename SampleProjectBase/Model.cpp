@@ -101,7 +101,7 @@ bool Model::Load(const char* file, float scaleBase, bool flip, bool simpleMode)
 	{
 		ModelImport::RemoveCollision(const_cast<aiScene*>(m_pScene));
 		if (m_nodeFilter != NodeFilter::None)	// 部品の切り出し(焼き込みでノードの区別が消える前に)
-			ModelImport::FilterByNode(const_cast<aiScene*>(m_pScene), m_nodeFilterName.c_str(),
+			ModelImport::FilterByNode(const_cast<aiScene*>(m_pScene), m_nodeFilterNames,
 			                          m_nodeFilter == NodeFilter::Only);
 		m_pScene = importer->ApplyPostProcessing(aiProcess_PreTransformVertices);
 	}
@@ -379,6 +379,41 @@ void Model::GetLocalAABB(DirectX::XMFLOAT3& outMin, DirectX::XMFLOAT3& outMax)
 			if (v.x > outMax.x) outMax.x = v.x;
 			if (v.y > outMax.y) outMax.y = v.y;
 			if (v.z > outMax.z) outMax.z = v.z;
+		}
+	}
+}
+
+void Model::AppendLocalVertices(std::vector<DirectX::XMFLOAT3>& out) const
+{
+	if (!m_pScene) return;
+	for (unsigned int i = 0; i < m_pScene->mNumMeshes; ++i)
+	{
+		const aiMesh* m = m_pScene->mMeshes[i];
+		if (IsCollisionMeshName(m->mName.C_Str())) continue;	// GetLocalAABB と同じ頂点集合にそろえる
+		for (unsigned int j = 0; j < m->mNumVertices; ++j)
+		{
+			const aiVector3D& v = m->mVertices[j];
+			out.push_back(DirectX::XMFLOAT3(v.x, v.y, v.z));
+		}
+	}
+}
+
+void Model::AppendLocalTriangles(std::vector<DirectX::XMFLOAT3>& out) const
+{
+	if (!m_pScene) return;
+	for (unsigned int i = 0; i < m_pScene->mNumMeshes; ++i)
+	{
+		const aiMesh* m = m_pScene->mMeshes[i];
+		if (IsCollisionMeshName(m->mName.C_Str())) continue;
+		for (unsigned int f = 0; f < m->mNumFaces; ++f)
+		{
+			const aiFace& face = m->mFaces[f];
+			if (face.mNumIndices != 3) continue;	// 点/線は面ではない(Triangulate 済みなので面は全部三角形)
+			for (unsigned int k = 0; k < 3; ++k)
+			{
+				const aiVector3D& v = m->mVertices[face.mIndices[k]];
+				out.push_back(DirectX::XMFLOAT3(v.x, v.y, v.z));
+			}
 		}
 	}
 }

@@ -295,6 +295,8 @@ void SceneForge::DrawUI()
 		if (ImGui::Button("Reset ALL to startup  (F8)")) RestoreTuning();
 		ImGui::SameLine();
 		if (ImGui::Button("Save tuning")) SaveTuning();	// 手動保存(退出時にも自動保存)
+		// 衝突の可視化は折り畳みの中に隠さず最上段に置く(開いてすぐ見つかる様に)。F1を閉じても表示は残る。
+		ImGui::Checkbox("Show collision", &m_showCollision);
 		ImGui::Separator();
 
 		// --- Weapon: 工件モデルを砧面に合わせる(FBXが読めた時だけ) ---
@@ -412,6 +414,18 @@ void SceneForge::DrawUI()
 			ImGui::SliderFloat("Mouse sens",  &m_walkSens,     0.0006f, 0.0050f, "%.4f");	// 視角感度(低=重い)
 			ImGui::SliderFloat("Pitch limit", &m_walkPitchLim, 0.3f,  1.55f,  "%.2f");	// 上下の振り切り制限(rad)
 			ImGui::SliderFloat("Eye height",  &m_walkEyeH,     0.8f,  2.2f,   "%.2f");	// 目線の高さ
+		}
+
+		// --- Collision: 走動の衝突(玩家の円 × 道具の凸包) ---
+		if (ImGui::CollapsingHeader("Collision"))
+		{
+			ImGui::SliderFloat("Player radius", m_player.RadiusPtr(), 0.1f, 0.6f, "%.2f");	// 足元の円(大=道具から遠くで止まる)
+			ImGui::SliderFloat("Wall slice height", &m_wallSliceHeight, 0.2f, 2.0f, "%.2f");	// 壁を切る高さ(床から)。戸口がこの高さで空いていること
+			ImGui::Text("colliders: %d hulls / %d wall segments", (int)m_collision.hulls.size(), (int)m_collision.segments.size());
+			ImGui::Text("door: %s", m_door.IsOpen() ? "open" : "closed");
+			ImGui::SliderFloat("Door open angle", &m_door.openAngle, 0.5f, 2.2f, "%.2f");	// 開いた時の角度(rad)
+			ImGui::SliderFloat("Door swing time", &m_door.swingTime, 0.3f, 3.0f, "%.2f");	// 開閉にかかる秒(大=重い扉)
+			ImGui::TextDisabled("cyan = hull / orange = wall / red = touching / yellow = player");
 		}
 
 		ImGui::End();
