@@ -26,7 +26,7 @@ const SceneForge::Interactable SceneForge::INTERACTABLES[] = {
 	{ "StForge",  SceneForge::InteractAction::EnterStation, Station::Hearth,     1.0f },	// 炉 → 加熱(いつでも再加熱できる)
 	{ "StGrind",  SceneForge::InteractAction::EnterStation, Station::Grindstone, 0.9f },	// 砥石 → 研磨
 	{ "StTrough", SceneForge::InteractAction::EnterStation, Station::Trough,     1.0f },	// 水槽 → 淬火
-	{ "StPliers", SceneForge::InteractAction::TakeTongs,    Station::Anvil,      0.9f },	// 作業台の火钳 → 取って翻面へ
+	{ SceneForge::IRON_KEY,  SceneForge::InteractAction::GripIron,   Station::Anvil, 1.2f },	// 置いてある鉄 → 火钳で掴んで運ぶ(station は使わない)
 	{ CottageDoor::DOOR_KEY, SceneForge::InteractAction::ToggleDoor, Station::Anvil, 1.0f },	// 裏口の扉 → 開閉(station は使わない)
 };
 const int SceneForge::NUM_INTERACTABLES = _countof(SceneForge::INTERACTABLES);
@@ -64,6 +64,12 @@ bool SceneForge::InteractBox(const Interactable& it, XMFLOAT3& mn, XMFLOAT3& mx)
 		door->GetLocalAABB(lmn, lmx);
 		return TransformAABB(lmn, lmx, DoorWorld(), mn, mx);
 	}
+	if (it.action == InteractAction::GripIron)
+	{
+		// 鉄もプロップではない: 武器モデルの箱を「今置いてある所」の行列で運ぶ(描画/照準と同じ WeaponWorld)。
+		if (!m_wpOk) return false;
+		return TransformAABB(m_wpMin, m_wpMax, WeaponWorld(), mn, mx);
+	}
 	Prop* p = GetProp(it.propKey);
 	if (!p || p->hidden) return false;
 	return PropWorldBox(*p, mn, mx);
@@ -75,12 +81,11 @@ bool SceneForge::InteractEnabled(const Interactable& it) const
 	switch (it.action)
 	{
 	case InteractAction::EnterStation:
-		// 工位はいつでも全部入れる(ユーザー方針: 玩家の自由。失敗判定は無く、次に何をするかは UI が教えるだけ)。
+		// 工位は工程では縛らない(玩家の自由)。E はいつでも押せる。ただし鉄がそこに無く、手にも持っていなければ
+		// 入らずに鉄の在り処を言うだけ(DoInteract)。=縛るのは「工程」でなく「鉄が物理的にそこにあるか」。
 		return true;
-	case InteractAction::TakeTongs:
-		// 台の火钳は工程に関係なく取れる(ユーザー決定)。既に手に持っている時だけ取れない。
-		//   ※工位で F で取るのは鍛打工程だけ(UpdateFlip 側)。
-		return !m_tongsInHand;
+	case InteractAction::GripIron:
+		return !m_carrying;		// 既に手に持っていれば掴む対象は無い
 	case InteractAction::ToggleDoor:
 		// 扉はいつでも開閉できる(回っている途中でも押し直せば引き返す)。
 		return true;
@@ -88,10 +93,34 @@ bool SceneForge::InteractEnabled(const Interactable& it) const
 	return false;
 }
 
-//--- ①範囲 ②視線 の2判定で「今 E で互動できる物件」m_focus を決める。複数当たれば視線上で一番手前。
+//--- 視線が複数の箱に当たった時の優先度(大きい方が勝つ。同じなら手前)。
+//    鉄は工位の箱の「中」に置かれている(炉の炭床、金床の上)ので、手前優先だけだと工位の箱に隠れて掴めない。
+//    → 鉄に視線が当たっていれば鉄を優先する。
+int SceneForge::InteractPriority(const Interactable& it) const
+{
+	return it.action == InteractAction::GripIron ? 1 : 0;
+}
+
+//--- 「E」の下に出す一言。押すと何が起きるかを言う(宏観の案内。KCD 未プレイの人でも流れが分かる様に)。
+const char* SceneForge::PromptLabel(const Interactable& it) const
+{
+	switch (it.action)
+	{
+	case InteractAction::EnterStation:
+		if (m_carrying)             return "Put the iron here";
+		if (m_workAt == it.station) return "Work here";
+		return "The iron is not here";
+	case InteractAction::GripIron:   return "Grip the iron with the tongs";
+	case InteractAction::ToggleDoor: return m_door.IsOpen() ? "Close the door" : "Open the door";
+	}
+	return "";
+}
+
+//--- ①範囲 ②視線 の2判定で「今 E で互動できる物件」m_focus を決める。複数当たれば優先度が高い物、同じなら視線上で一番手前。
 void SceneForge::UpdateInteract(float tick)
 {
 	int best = -1;
+	int bestPri = -1;
 	float bestT = FLT_MAX;
 	XMFLOAT3 bestCenter(0, 0, 0);
 
@@ -121,17 +150,27 @@ void SceneForge::UpdateInteract(float tick)
 			AimSystem::Hit h = AimSystem::Raycast(eye, fwd, XMMatrixIdentity(), pmn, pmx, 1);
 			if (!h.valid) continue;
 
-			if (h.t < bestT)
+			const int pri = InteractPriority(it);
+			if (pri > bestPri || (pri == bestPri && h.t < bestT))
 			{
+				bestPri = pri;
 				bestT = h.t;
 				best  = i;
-				bestCenter = XMFLOAT3((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f, (mn.z + mx.z) * 0.5f);
+				// 提示を出す点: 工位は「実際に作業する点」(炉=炭床 / 金床=砧面 / 砥石=輪の上 / 水槽=水面)。
+				//   箱の中心だと、煙突の高い炉では中心が視界の上に外れて提示が見えなくなる。
+				//   その他(火钳/扉)は箱の中心。
+				if (it.action == InteractAction::EnterStation) bestCenter = StationBase(it.station);
+				else bestCenter = XMFLOAT3((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f, (mn.z + mx.z) * 0.5f);
 			}
 		}
 	}
 
 	m_focus = best;
-	if (best >= 0) m_promptPoint = bestCenter;	// 消える時は最後の位置のままフェードアウト
+	if (best >= 0)	// 消える時は最後の位置/文言のままフェードアウト
+	{
+		m_promptPoint = bestCenter;
+		m_promptLabel = PromptLabel(INTERACTABLES[best]);
+	}
 	m_promptAlpha = Lerp::Damp(m_promptAlpha, best >= 0 ? 1.0f : 0.0f, m_promptLambda, tick);
 	m_player.SetCanInteract(best >= 0);			// Player::WantInteract の前提(両判定 true の時だけ E が効く)
 }
@@ -142,15 +181,16 @@ void SceneForge::DoInteract(const Interactable& it)
 	switch (it.action)
 	{
 	case InteractAction::EnterStation:
-		BeginEnterStation(it.station);
+		// 鉄は瞬間移動しない:
+		//   手に持っている     → その工位に置いて入る
+		//   その工位に置いてある → そのまま入る
+		//   別の所にある       → 入らない。鉄の在り処を言うだけ(玩家が自分で取りに行く。自動では動かない)
+		if (m_carrying)                   { PutIronAt(it.station); BeginEnterStation(it.station); }
+		else if (m_workAt == it.station)  BeginEnterStation(it.station);
+		else                              SayWhereIronIs();
 		break;
-	case InteractAction::TakeTongs:
-		// 火钳を手に取る(台上のモデルを消す)→ 工位へ移動 → 着いたら翻面の「火钳待命」から始める。
-		//   翻面中は E で工位から出られない規則なので、火钳を持って離れる状態は生まれない。
-		m_tongsInHand = true;
-		if (Prop* pl = GetProp("StPliers")) pl->hidden = true;
-		m_pendingFlip = true;
-		BeginEnterStation(it.station);
+	case InteractAction::GripIron:
+		GripIron();		// 腰の火钳で掴む → 以後、鉄は手の前に付いて来る(Carry.cpp)
 		break;
 	case InteractAction::ToggleDoor:
 		// 開閉を切り替えるだけ。回転・衝突(扉の凸包)・提示の位置は m_door の角度に全部追従する。
@@ -194,6 +234,18 @@ void SceneForge::DrawInteractPrompt()
 	float   px = disp.y * TEXT_RATIO;
 	ImVec2  ts = f->CalcTextSizeA(px, FLT_MAX, 0.0f, "E");
 	dl->AddText(f, px, ImVec2(sx - ts.x * 0.5f, sy - ts.y * 0.5f), IM_COL32(255, 200, 120, a), "E");	// 暖色=鍛冶の火
+
+	// 丸の下に「押すと何が起きるか」を一言(鉄を掴む/ここに置く/ここで作業/鉄はここに無い…)。
+	if (m_promptLabel && m_promptLabel[0])
+	{
+		const float LABEL_RATIO = 0.024f;	// 文言の文字の高さ
+		const float LABEL_GAP   = 0.010f;	// 丸との間
+		float  lpx = disp.y * LABEL_RATIO;
+		ImVec2 ls  = f->CalcTextSizeA(lpx, FLT_MAX, 0.0f, m_promptLabel);
+		ImVec2 lp(sx - ls.x * 0.5f, sy + r + disp.y * LABEL_GAP);
+		dl->AddText(f, lpx, ImVec2(lp.x + 1.0f, lp.y + 1.0f), IM_COL32(0, 0, 0, (int)(a * 0.8f)), m_promptLabel);	// 影(明るい背景でも読める)
+		dl->AddText(f, lpx, lp, IM_COL32(240, 225, 200, a), m_promptLabel);
+	}
 }
 
 //--- F1: 互動範囲の箱(①)を線で表示。

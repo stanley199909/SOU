@@ -16,6 +16,7 @@
 #include "Geometory.h"
 #include "Input.h"
 #include "DebugUI.h"
+#include "Lerp.h"
 #include "Defines.h"
 #include "Audio.h"
 #include "PostProcess.h"
@@ -107,15 +108,41 @@ void SceneForge::DrawHeatGauge()
 	// KCD式: 温度は緑帯(適温)/赤帯(過熱)の視覚だけで示す。「加熱しろ」等の指示テキストは出さない。
 }
 
+//--- ロゴ(ユーザーの絵コンテ通り左上)。alpha=1→0 で淡出(SPACE 後の導入運鏡の間)。
+//    位置と大きさは画面比(解像度非依存)。フォントは従来のタイトル用(ユーザーが気に入っている)。
+void SceneForge::DrawTitleLogo(float alpha)
+{
+	if (alpha <= 0.0f) return;
+	const float LOGO_X_RATIO   = 0.06f;	// 左端からの位置(画面幅比)
+	const float LOGO_Y_RATIO   = 0.08f;	// 上端からの位置(画面高さ比)
+	const float LOGO_H_RATIO   = 0.13f;	// 「FORGE」の文字の高さ(画面高さ比)
+	const float SUB_H_RATIO    = 0.030f;	// 副題の文字の高さ
+	const float SUB_GAP_RATIO  = 0.01f;	// ロゴと副題の間
+	ImVec2 disp = ImGui::GetIO().DisplaySize;
+	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImFont* title = DebugUI::FontTitle() ? DebugUI::FontTitle() : ImGui::GetFont();
+	ImFont* body  = DebugUI::FontBody()  ? DebugUI::FontBody()  : ImGui::GetFont();
+	const int a = (int)(255 * alpha);
+
+	float x = disp.x * LOGO_X_RATIO, y = disp.y * LOGO_Y_RATIO;
+	float logoPx = disp.y * LOGO_H_RATIO;
+	dl->AddText(title, logoPx, ImVec2(x, y), IM_COL32(255, 196, 110, a), "FORGE");
+	float subY = y + logoPx + disp.y * SUB_GAP_RATIO;
+	dl->AddText(body, disp.y * SUB_H_RATIO, ImVec2(x, subY), IM_COL32(230, 215, 195, (int)(235 * alpha)),
+	            "A  T I M I N G   B L A C K S M I T H");
+}
+
 void SceneForge::DrawTitleUI()
 {
-	ImFont* title = DebugUI::FontTitle();
-	ImFont* body  = DebugUI::FontBody();
-	CenterText("FORGE",                0.32f, 1.5f, IM_COL32(255, 196, 110, 255), title);
-	CenterText("A  T I M I N G   B L A C K S M I T H", 0.44f, 0.9f, IM_COL32(230, 215, 195, 235), body);
+	ImFont* body = DebugUI::FontBody();
+	// SPACE 後はロゴと開始プロンプトを m_logoFadeTime 秒で線形に消す(ユーザー指定: 1秒の lerp)
+	float alpha = 1.0f;
+	if (m_introPhase == IntroPhase::LogoFade && m_logoFadeTime > 0.0f)
+		alpha = Lerp::Linear(1.0f, 0.0f, fminf(m_introTimer / m_logoFadeTime, 1.0f));
+	DrawTitleLogo(alpha);
 	// 開始プロンプトは緩やかに明滅させて「操作可能」を伝える
-	float p = 0.6f + 0.4f * sinf(m_time * 3.0f);
-	CenterText("PRESS  SPACE  TO  START", 0.66f, 1.15f, IM_COL32(255, 255, 255, (int)(255 * p)), body);
+	float p = (0.6f + 0.4f * sinf(m_time * 3.0f)) * alpha;
+	CenterText("PRESS  SPACE  TO  START", 0.86f, 1.15f, IM_COL32(255, 255, 255, (int)(255 * p)), body);
 }
 
 //--- 映画的な終幕の黒帯(上下)。淬火後に QuenchStep が m_letterbox を 0→1 へ進める。
@@ -275,7 +302,10 @@ void SceneForge::DrawUI()
 	switch (m_state)
 	{
 	case GAME_TITLE:  DrawTitleUI();  break;
-	case GAME_PLAY:   DrawPlayUI();   break;
+	case GAME_PLAY:
+		// タイトル→金床へカメラが移っている間は何も出さない(ロゴは既に消えている。映像だけを見せる)。
+		if (m_introPhase != IntroPhase::CameraMove) DrawPlayUI();
+		break;
 	case GAME_RESULT: DrawResultUI(); break;
 	}
 
@@ -297,6 +327,8 @@ void SceneForge::DrawUI()
 		if (ImGui::Button("Save tuning")) SaveTuning();	// 手動保存(退出時にも自動保存)
 		// 衝突の可視化は折り畳みの中に隠さず最上段に置く(開いてすぐ見つかる様に)。F1を閉じても表示は残る。
 		ImGui::Checkbox("Show collision", &m_showCollision);
+		ImGui::SameLine();
+		ImGui::Checkbox("Show grass map", &m_showGrassMap);	// 草の踏み跡の貼图(真上から正射影)を小窓に表示
 		ImGui::Separator();
 
 		// --- Weapon: 工件モデルを砧面に合わせる(FBXが読めた時だけ) ---
@@ -428,8 +460,61 @@ void SceneForge::DrawUI()
 			ImGui::TextDisabled("cyan = hull / orange = wall / red = touching / yellow = player");
 		}
 
+		// --- Carry: 鉄の運搬(火钳で掴んで歩く)。見た目の位置合わせ ---
+		if (ImGui::CollapsingHeader("Carry"))
+		{
+			ImGui::Text(m_carrying ? "holding the iron" : "hands free (tongs on the left hip)");
+			ImGui::TextDisabled("-- held iron (first-person viewmodel, camera-relative) --");
+			ImGui::SliderFloat3("Grip point (R/U/F)", m_gripOff, -1.0f, 1.5f, "%.2f");	// 火钳が鉄を挟む点(カメラから 右/上/前)
+			ImGui::SliderFloat("Iron yaw (right)",  &m_carryYaw,   -1.5f, 1.5f, "%.2f");	// 鉄を視線から右へ振る角
+			ImGui::SliderFloat("Iron pitch (up)",   &m_carryPitch, -1.0f, 1.0f, "%.2f");	// 鉄を上へ起こす角
+			ImGui::SliderFloat("Grip along iron",   &m_gripAlong,   0.0f, 1.0f, "%.2f");	// 挟む位置(手前の端から何割)
+			ImGui::SliderFloat3("Tongs base (R/U/F)", m_tongsBase, -1.5f, 1.0f, "%.2f");	// 火钳の柄の根元(画面の下の外)
+			ImGui::SliderFloat("Sway follow", &m_vmSwayLambda, 2.0f, 40.0f, "%.1f");	// 視点を振った時の追従の速さ(小=重く遅れる)
+			ImGui::TextDisabled("-- walking while carrying --");
+			ImGui::SliderFloat("Carry walk speed x", &m_carrySpeedMul, 0.2f, 1.0f, "%.2f");	// 運んでいる時の速さの倍率
+			ImGui::SliderFloat("Bob up/down",        &m_bobAmp,        0.0f, 0.06f, "%.3f");	// 上下の揺れ幅
+			ImGui::SliderFloat("Bob side",           &m_bobSideAmp,    0.0f, 0.04f, "%.3f");	// 左右の揺れ幅
+			ImGui::SliderFloat("Bob steps per meter",&m_bobPerMeter,   0.5f, 4.0f,  "%.2f");	// 1m で何歩=揺れの細かさ
+			ImGui::SliderFloat("Tongs scale",   &m_tongsScale,   0.3f, 3.0f, "%.2f");	// 台上の火钳に対する大きさ
+			ImGui::SliderFloat3("Hip (L/height/F)", m_hipOff, -0.5f, 1.6f, "%.2f");	// 腰の火钳(体から 左/床からの高さ/前)
+		}
+
+		// --- Title: 標題カメラの取景(タイトル画面で開いて動かすと即反映。Save tuning で保存) ---
+		if (ImGui::CollapsingHeader("Title"))
+		{
+			ImGui::TextDisabled(m_state == GAME_TITLE ? "(on the title screen: changes show live)"
+			                                          : "(go back to the title screen to see it)");
+			// 走動中などで「この画がいい」と思った所で押す=今のカメラの位置と注視点をそのまま標題カメラにする。
+			//   (F1 を開くと入力は止まるので、開いた瞬間の画がそのまま取れる。Save tuning で保存)
+			if (ImGui::Button("Use current view as title camera"))
+				if (CameraBase* cam = GetObj<CameraBase>("Camera"))
+				{
+					XMFLOAT3 cp = cam->GetPos(), cl = cam->GetLook();
+					m_titleCamPos[0]  = cp.x; m_titleCamPos[1]  = cp.y; m_titleCamPos[2]  = cp.z;
+					m_titleCamLook[0] = cl.x; m_titleCamLook[1] = cl.y; m_titleCamLook[2] = cl.z;
+				}
+			ImGui::SliderFloat3("Title cam pos",  m_titleCamPos,  -8.0f, 8.0f, "%.2f");	// 標題カメラの位置
+			ImGui::SliderFloat3("Title cam look", m_titleCamLook, -8.0f, 8.0f, "%.2f");	// 注視点
+			// SPACE 後に金床へ移る秒数。上限 5 秒: 運鏡中も鉄は冷めるので、長すぎると START_HEAT(0.85)が
+			// 燃える温度(0.80)を下回り、最初の「加熱」工程が即完了しなくなる(0.85-0.80=0.05 / 冷却 0.008/秒 ≒ 6秒)。
+			ImGui::SliderFloat("Intro time", &m_titleIntroTime, 0.5f, 5.0f, "%.1f");
+			ImGui::SliderFloat("Logo fade time", &m_logoFadeTime, 0.2f, 3.0f, "%.1f");	// SPACE 後にロゴが消える秒数(カメラはその後)
+		}
+
+		// --- Grass: インタラクティブ草(玩家を避けて倒れ、離れると戻る) ---
+		if (ImGui::CollapsingHeader("Grass"))
+		{
+			ImGui::SliderFloat("Stamp radius",  &m_grassStampRadius,       0.2f, 2.0f, "%.2f");	// 足元で押し分ける円(world)
+			ImGui::SliderFloat("Lean",          &m_grassLean,              0.0f, 1.5f, "%.2f");	// 横へ倒れる量(草丈比)
+			ImGui::SliderFloat("Press down",    &m_grassPress,             0.0f, 1.0f, "%.2f");	// 足元で沈む量(草丈比)
+			ImGui::SliderFloat("Recover time",  &m_grassMap.recoverTime,   0.1f, 5.0f, "%.2f");	// 戻る速さ(秒。大=ゆっくり戻る)
+			ImGui::Text("map: %s", m_grassMap.IsReady() ? "ready" : "NOT READY (no StOutdoorGround / shader)");
+		}
+
 		ImGui::End();
 	}
+	DrawGrassMapPreview();	// 草の踏み跡の貼图(F1 のチェックで ON。F1 を閉じて歩きながらも見られる)
 
 	m_fade.Draw();	// 最後に全画面の黒幕(前景層)を重ねる=遷移の淡入淡出
 }

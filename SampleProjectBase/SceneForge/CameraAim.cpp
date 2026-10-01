@@ -115,20 +115,20 @@ void SceneForge::ApplyCamera()
 
 	// === 翻面の運鏡(火钳アニメの代替) ===================================
 	// 通常の機位/注視点を、重みで2つの目標へ寄せる(重み0なら従来と完全に同じ画)。
-	//   tongs: 注視点を火钳(StPliers)の中心へ、機位も m_tongsLean だけ火钳側へ(体を傾けて取る)。
+	//   tongs: 注視点を左腰の火钳(HipPoint)へ、機位も m_tongsLean だけそちらへ(体を傾けて抜く)。
 	//   grip : 注視点を刃(砧面アンカー)へ、機位を m_gripDolly だけ刃へ寄せる(夹む手元を覗き込む)。
 	// 目標はプロップ/アンカーから毎フレーム取る=配置を動かしても運鏡が追従する。
 	// ※照準の m_camFwd は上で保存済みの「通常の視線」のまま(翻面中は叩けないので影響なし)。
 	XMFLOAT3 eye(m_camPos[0], m_camPos[1], m_camPos[2]);
 	if (m_camTongsW > 0.0f)
-		if (Prop* pl = GetProp("StPliers"))
-		{
-			XMFLOAT3 c((pl->aabbMin.x + pl->aabbMax.x) * 0.5f, (pl->aabbMin.y + pl->aabbMax.y) * 0.5f, (pl->aabbMin.z + pl->aabbMax.z) * 0.5f);
-			XMFLOAT3 t; XMStoreFloat3(&t, XMVector3TransformCoord(XMLoadFloat3(&c), PropWorld(*pl)));	// 火钳のワールド中心
-			const float w = m_camTongsW, lean = m_tongsLean * m_camTongsW;
-			lf  = XMFLOAT3(lf.x + (t.x - lf.x) * w,     lf.y + (t.y - lf.y) * w,     lf.z + (t.z - lf.z) * w);
-			eye = XMFLOAT3(eye.x + (t.x - eye.x) * lean, eye.y + (t.y - eye.y) * lean, eye.z + (t.z - eye.z) * lean);
-		}
+	{
+		// 火钳は左腰に掛けてある(作業台ではない)。HipPoint は工位では金床カメラの「通常の機位と視線」
+		// (m_camPos/m_camLook)から求める=運鏡で動いた後のカメラに引きずられない(Carry.cpp)。
+		const XMFLOAT3 t = HipPoint();
+		const float w = m_camTongsW, lean = m_tongsLean * m_camTongsW;
+		lf  = XMFLOAT3(lf.x + (t.x - lf.x) * w,     lf.y + (t.y - lf.y) * w,     lf.z + (t.z - lf.z) * w);
+		eye = XMFLOAT3(eye.x + (t.x - eye.x) * lean, eye.y + (t.y - eye.y) * lean, eye.z + (t.z - eye.z) * lean);
+	}
 	if (m_camGripW > 0.0f)
 	{
 		const XMFLOAT3& t = m_barAnchor;	// 刃が乗る砧面の点
@@ -247,10 +247,9 @@ void SceneForge::BeginEnterStation(Station s)
 	if (!cam || Transitioning()) return;
 	BeginTransCommon(cam, m_transFromEye, m_transFromFwd);
 
-	// 行き先の工位を決め、刃もそこへ置く(手に持って来た=移動アニメの間に置く)。
+	// 行き先の工位を決める。鉄はここでは動かさない: 手に持って来た鉄を置くのは呼び出し側(DoInteract→PutIronAt)。
+	//   鉄が別の工位にある時はそもそも入れない(Interaction.cpp)=鉄が瞬間移動することは無い。
 	m_station  = s;
-	m_workAt   = s;
-	m_carrying = false;
 	if (s != Station::Anvil)
 	{
 		// 工位カメラは「玩家が近づいて来た側」から作業点を見る=どの向きに置いた道具でも正面から見える。
@@ -299,9 +298,8 @@ void SceneForge::BeginExitStation()
 	float horiz = len + m_exitStepBack;							// 目から作業点までの水平距離
 	m_walkPitch = atan2f(target.y - eyeY, horiz);				// 作業点を見下ろす角度
 
-	// 炉から出る時は鉄を火から取り出して手に持つ(置きっぱなしにすると焼けてしまう)。
-	// 他の工位では刃はその場に置いたまま。
-	if (m_station == Station::Hearth) m_carrying = true;
+	// 鉄はどの工位でもその場に置いたまま出る(炉でも。炭火だけなら過熱しない温度で止まる)。
+	// 持ち出すには、走動中に鉄を見て E で掴む(Carry.cpp)。
 	if (m_walkPitch >  m_walkPitchLim) m_walkPitch =  m_walkPitchLim;
 	if (m_walkPitch < -m_walkPitchLim) m_walkPitch = -m_walkPitchLim;
 
@@ -317,18 +315,11 @@ void SceneForge::UpdateModeTrans(float tick)
 	float dx, dy; ReadMouseDelta(dx, dy);	// 捨てる
 
 	m_transTimer += tick;
-	// 火钳を持って向かっている時は、移動しながらハンマーを置く(着いた時に既に火钳に持ち替え済み)。
-	if (m_pendingFlip) m_hammerStowW = Lerp::SmoothStep(m_transTimer / m_transDur);
 	if (m_transTimer < m_transDur) return;
 
 	m_walkMode  = (m_modeTrans == ModeTrans::Exit);	// 到着: Exit=走動へ / Enter=工位へ
 	m_canStrike = false;							// 工位に入った直後の誤打防止(一度離すまで叩かない)
-	if (m_modeTrans == ModeTrans::Enter && m_pendingFlip)
-	{
-		// 火钳を取って来た=翻面の「火钳待命」から始める(取り出し運鏡は台の所で済んでいる)。
-		m_flipPhase   = FlipPhase::Ready;
-		m_pendingFlip = false;
-	}
+	if (m_introPhase == IntroPhase::CameraMove) FinishIntro();	// タイトル→金床の導入もここで終わり(BGM 切替、HUD が出る)
 	m_modeTrans = ModeTrans::None;
 }
 
@@ -360,7 +351,8 @@ void SceneForge::ApplyTransCamera()
 //--- 今の状態に応じたカメラを適用(Update/Draw の両方から呼ぶ)。
 void SceneForge::ApplyViewCamera()
 {
-	if (Transitioning()) ApplyTransCamera();
+	if (m_state == GAME_TITLE) ApplyTitleCamera();		// タイトル: 固定の標題カメラ(Title.cpp)
+	else if (Transitioning()) ApplyTransCamera();
 	else if (m_walkMode) ApplyWalkCamera();				// 走動: 玩家目線の一人称カメラ
 	else if (m_station == Station::Anvil) ApplyCamera();	// 金床: FPS式受限環視カメラ
 	else                 ApplyWorkCamera();				// 炉/砥石/水槽: 固定の工位カメラ
@@ -427,12 +419,13 @@ XMFLOAT3 SceneForge::StationRight() const
 //    Y 軸回転 θ はベクトルの水平角 atan2(x,z) に θ を足すので、差を取れば揃う。
 float SceneForge::StationAlignYaw() const
 {
-	if (m_workAt == Station::Anvil) return 0.0f;
+	if (!m_carrying && m_workAt == Station::Anvil) return 0.0f;
 	const int la = AimSystem::LongAxis(m_wpMin, m_wpMax);
 	XMVECTOR axis = XMVectorSet(la == 0 ? 1.0f : 0.0f, la == 1 ? 1.0f : 0.0f, la == 2 ? 1.0f : 0.0f, 0.0f);
 	XMFLOAT3 L; XMStoreFloat3(&L, XMVector3TransformNormal(axis, XMMatrixRotationRollPitchYaw(m_wpPitch, m_wpYaw, m_wpRoll)));
 	if (L.x * L.x + L.z * L.z < 1e-6f) return 0.0f;	// 長軸が真上を向いている=水平に揃えようがない
-	XMFLOAT3 D = StationRight();
+	// 運んでいる時は長軸を手に持った向き m_heldDir の水平成分へ(上下の傾きは WeaponRot が足す)。工位ではカメラの左右へ。
+	XMFLOAT3 D = m_carrying ? m_heldDir : StationRight();
 	return atan2f(D.x, D.z) - atan2f(L.x, L.z);
 }
 
@@ -735,6 +728,18 @@ void SceneForge::SaveTuning()
 	fprintf(fp, "hfollow %.5f\n",    m_hammerFollow);
 	// -- カメラ --
 	fprintf(fp, "walkfloor %.5f\n", m_walkFloorY);
+	fprintf(fp, "titlecampos %.5f %.5f %.5f\n",  m_titleCamPos[0],  m_titleCamPos[1],  m_titleCamPos[2]);
+	fprintf(fp, "titlecamlook %.5f %.5f %.5f\n", m_titleCamLook[0], m_titleCamLook[1], m_titleCamLook[2]);
+	fprintf(fp, "titleintro %.5f\n", m_titleIntroTime);
+	fprintf(fp, "logofade %.5f\n",   m_logoFadeTime);
+	// -- 鉄の運搬(火钳) --
+	fprintf(fp, "viewgrip %.5f %.5f %.5f\n",  m_gripOff[0], m_gripOff[1], m_gripOff[2]);
+	fprintf(fp, "viewiron %.5f %.5f %.5f\n",  m_carryYaw, m_carryPitch, m_gripAlong);
+	fprintf(fp, "tongsbase %.5f %.5f %.5f\n", m_tongsBase[0], m_tongsBase[1], m_tongsBase[2]);
+	fprintf(fp, "tongsscale %.5f\n",          m_tongsScale);	// 火钳の向きはモデルから自動(InitTongsGeometry)
+	fprintf(fp, "vmsway %.5f\n",              m_vmSwayLambda);
+	fprintf(fp, "carrywalk %.5f %.5f %.5f %.5f\n", m_carrySpeedMul, m_bobAmp, m_bobSideAmp, m_bobPerMeter);
+	fprintf(fp, "hipoff %.5f %.5f %.5f\n",   m_hipOff[0], m_hipOff[1], m_hipOff[2]);
 	fprintf(fp, "campos %.5f %.5f %.5f\n",  m_camPos[0],  m_camPos[1],  m_camPos[2]);
 	fprintf(fp, "camlook %.5f %.5f %.5f\n", m_camLook[0], m_camLook[1], m_camLook[2]);
 	fprintf(fp, "camfov %.5f\n",     m_camFov);
@@ -792,6 +797,14 @@ void SceneForge::TuningRefs(std::vector<float*>& out)
 		&m_camPos[0], &m_camPos[1], &m_camPos[2],
 		&m_camLook[0], &m_camLook[1], &m_camLook[2],
 		&m_camFov, &m_camFollowZ, &m_camPanGain, &m_camLerpRate,
+		// -- Title camera --
+		&m_titleCamPos[0], &m_titleCamPos[1], &m_titleCamPos[2],
+		&m_titleCamLook[0], &m_titleCamLook[1], &m_titleCamLook[2], &m_titleIntroTime, &m_logoFadeTime,
+		// -- Carry (tongs) --
+		&m_gripOff[0], &m_gripOff[1], &m_gripOff[2], &m_carryYaw, &m_carryPitch, &m_gripAlong,
+		&m_tongsBase[0], &m_tongsBase[1], &m_tongsBase[2], &m_tongsScale, &m_vmSwayLambda,
+		&m_carrySpeedMul, &m_bobAmp, &m_bobSideAmp, &m_bobPerMeter,
+		&m_hipOff[0], &m_hipOff[1], &m_hipOff[2],
 		// -- Weapon align --
 		&m_wpYaw, &m_wpPitch, &m_wpRoll, &m_wpScale,
 		&m_wpOff[0], &m_wpOff[1], &m_wpOff[2],
@@ -856,6 +869,17 @@ void SceneForge::LoadTuning()
 		else if (strcmp(key, "aimsens")    == 0) sscanf_s(v, "%f", &m_aimSens);
 		else if (strcmp(key, "hfollow")    == 0) sscanf_s(v, "%f", &m_hammerFollow);
 		else if (strcmp(key, "walkfloor") == 0) sscanf_s(v, "%f", &m_walkFloorY);
+		else if (strcmp(key, "titlecampos")  == 0) sscanf_s(v, "%f %f %f", &m_titleCamPos[0],  &m_titleCamPos[1],  &m_titleCamPos[2]);
+		else if (strcmp(key, "titlecamlook") == 0) sscanf_s(v, "%f %f %f", &m_titleCamLook[0], &m_titleCamLook[1], &m_titleCamLook[2]);
+		else if (strcmp(key, "titleintro")   == 0) sscanf_s(v, "%f", &m_titleIntroTime);
+		else if (strcmp(key, "logofade")     == 0) sscanf_s(v, "%f", &m_logoFadeTime);
+		else if (strcmp(key, "viewgrip")     == 0) sscanf_s(v, "%f %f %f", &m_gripOff[0], &m_gripOff[1], &m_gripOff[2]);
+		else if (strcmp(key, "viewiron")     == 0) sscanf_s(v, "%f %f %f", &m_carryYaw, &m_carryPitch, &m_gripAlong);
+		else if (strcmp(key, "tongsbase")    == 0) sscanf_s(v, "%f %f %f", &m_tongsBase[0], &m_tongsBase[1], &m_tongsBase[2]);
+		else if (strcmp(key, "tongsscale")   == 0) sscanf_s(v, "%f", &m_tongsScale);
+		else if (strcmp(key, "vmsway")       == 0) sscanf_s(v, "%f", &m_vmSwayLambda);
+		else if (strcmp(key, "carrywalk")    == 0) sscanf_s(v, "%f %f %f %f", &m_carrySpeedMul, &m_bobAmp, &m_bobSideAmp, &m_bobPerMeter);
+		else if (strcmp(key, "hipoff")       == 0) sscanf_s(v, "%f %f %f", &m_hipOff[0], &m_hipOff[1], &m_hipOff[2]);
 		else if (strcmp(key, "campos")     == 0) sscanf_s(v, "%f %f %f", &m_camPos[0],  &m_camPos[1],  &m_camPos[2]);
 		else if (strcmp(key, "camlook")    == 0) sscanf_s(v, "%f %f %f", &m_camLook[0], &m_camLook[1], &m_camLook[2]);
 		else if (strcmp(key, "camfov")     == 0) sscanf_s(v, "%f", &m_camFov);

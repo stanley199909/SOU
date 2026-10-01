@@ -135,6 +135,9 @@
     <ClCompile Include="Sprite.cpp">
       <Filter>ソース ファイル\System</Filter>
     </ClCompile>
+    <ClCompile Include="InteractionMap.cpp">
+      <Filter>ソース ファイル\System</Filter>
+    </ClCompile>
     <ClCompile Include="SceneRoot.cpp">
       <Filter>ソース ファイル\App</Filter>
     </ClCompile>
@@ -181,6 +184,15 @@
       <Filter>ソース ファイル\App\Scene\SceneForge</Filter>
     </ClCompile>
     <ClCompile Include="SceneForge\Collision.cpp">
+      <Filter>ソース ファイル\App\Scene\SceneForge</Filter>
+    </ClCompile>
+    <ClCompile Include="SceneForge\InteractiveGrass.cpp">
+      <Filter>ソース ファイル\App\Scene\SceneForge</Filter>
+    </ClCompile>
+    <ClCompile Include="SceneForge\Title.cpp">
+      <Filter>ソース ファイル\App\Scene\SceneForge</Filter>
+    </ClCompile>
+    <ClCompile Include="SceneForge\Carry.cpp">
       <Filter>ソース ファイル\App\Scene\SceneForge</Filter>
     </ClCompile>
     <ClCompile Include="GameLogic\AimSystem.cpp">
@@ -305,6 +317,9 @@
     <ClInclude Include="Sprite.h">
       <Filter>ヘッダー ファイル\System</Filter>
     </ClInclude>
+    <ClInclude Include="InteractionMap.h">
+      <Filter>ヘッダー ファイル\System</Filter>
+    </ClInclude>
     <ClInclude Include="SceneRoot.h">
       <Filter>ヘッダー ファイル\App</Filter>
     </ClInclude>
@@ -417,6 +432,12 @@
     </FxCompile>
     <FxCompile Include="VS_Object.hlsl">
       <Filter>リソース ファイル\VertexShader</Filter>
+    </FxCompile>
+    <FxCompile Include="VS_Grass.hlsl">
+      <Filter>リソース ファイル\VertexShader</Filter>
+    </FxCompile>
+    <FxCompile Include="PS_InteractStamp.hlsl">
+      <Filter>リソース ファイル\PixelShader</Filter>
     </FxCompile>
   </ItemGroup>
 </Project>

@@ -273,9 +273,19 @@ XMMATRIX SceneForge::WeaponSpin() const
 //    WeaponWorld と法線の変換が同じ回転を使う=見た目と陰影が必ず一致する。
 XMMATRIX SceneForge::WeaponRot() const
 {
-	return WeaponSpin() *
+	XMMATRIX r = WeaponSpin() *
 		XMMatrixRotationRollPitchYaw(m_wpPitch, m_wpYaw, m_wpRoll) *
 		XMMatrixRotationY(StationAlignYaw());
+	// 手に持っている時: StationAlignYaw で水平の向きは m_heldDir に揃った。残りの「上へ起こす」傾きを足す
+	// (水平の向き → m_heldDir への最短回転)。m_heldDir は WorkAnchor→HeldPoint が先に計算している。
+	if (m_carrying)
+	{
+		XMVECTOR d  = XMLoadFloat3(&m_heldDir);
+		XMVECTOR dh = XMVectorSet(m_heldDir.x, 0.0f, m_heldDir.z, 0.0f);
+		const float HORIZONTAL_EPS = 1e-6f;	// 真上/真下を向いていたら水平成分が無い=傾けようがない
+		if (XMVectorGetX(XMVector3LengthSq(dh)) > HORIZONTAL_EPS) r = r * RotationFromTo(dh, d);
+	}
+	return r;
 }
 
 //--- 刃を置く点。工位の作業点に、その工位の「動き」を足す:
@@ -284,6 +294,7 @@ XMMATRIX SceneForge::WeaponRot() const
 //    水槽  : 淬火で水の中へ沈む(m_plunge)
 XMFLOAT3 SceneForge::WorkAnchor()
 {
+	if (m_carrying) return HeldPoint();	// 火钳で掴んで運んでいる=手の前(Carry.cpp)
 	XMFLOAT3 a = StationBase(m_workAt);
 	switch (m_workAt)
 	{

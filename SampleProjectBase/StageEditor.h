@@ -113,6 +113,22 @@ private:
 	bool  m_haveStartup = false;		// false until SnapshotLayout() runs
 	void  SnapshotLayout();				// current layout -> m_startup
 	void  RestoreLayout();				// m_startup -> current layout
+
+	//--- 親子関係(parent-child): 炭床/余燼は炉(StForge)の、水面は水槽(StTrough)の「子」。
+	//    親の位置/向きが変わったら(ギズモ/本体ドラッグ/スライダ何でも)、子も同じだけ平行移動し、
+	//    親を中心に同じ角度だけ回る。子の座標はファイルには絶対値のまま保存(ゲーム側は変更不要)。
+	struct Attachment
+	{
+		const char* parentKey;	// 親プロップのキー
+		float*      pos;		// 子の位置(ワールド, 3要素)
+		float*      yaw;		// 子の向き(無ければ nullptr=位置だけ追従)
+		float*      size;		// 子の広さ(2要素。親を拡大縮小すると同じ倍率で変わる。無ければ nullptr)
+	};
+	std::vector<Attachment> Attachments();	// 親子の表(データ)。子を増やす=1行足すだけ
+	struct ParentPose { std::string key; float pos[3]; float yaw; float scale; };
+	std::vector<ParentPose> m_parentPose;	// 各親の「前のフレームの姿勢」(変化量を出すため)
+	void  FollowParents();				// 親が動いた分だけ子を動かす(毎フレーム)
+	void  SyncParents();				// 子を動かさずに親の姿勢だけ記録し直す(読込/F8復元の直後)
 };
 
 #endif // __STAGE_EDITOR_H___

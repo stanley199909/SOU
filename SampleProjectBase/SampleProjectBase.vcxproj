@@ -199,6 +199,9 @@
     <ClCompile Include="SceneForge\CameraAim.cpp" />
     <ClCompile Include="SceneForge\Interaction.cpp" />
     <ClCompile Include="SceneForge\Collision.cpp" />
+    <ClCompile Include="SceneForge\InteractiveGrass.cpp" />
+    <ClCompile Include="SceneForge\Title.cpp" />
+    <ClCompile Include="SceneForge\Carry.cpp" />
     <ClCompile Include="SceneParticleLab.cpp" />
     <ClCompile Include="Audio.cpp" />
     <ClCompile Include="DebugUI.cpp" />
@@ -223,6 +226,7 @@
     <ClCompile Include="StageEditor.cpp" />
     <ClCompile Include="Shader.cpp" />
     <ClCompile Include="Sprite.cpp" />
+    <ClCompile Include="InteractionMap.cpp" />
     <ClCompile Include="Startup.cpp" />
     <ClCompile Include="Texture.cpp" />
     <ClCompile Include="TextureCache.cpp" />
@@ -281,6 +285,7 @@
     <ClInclude Include="SceneRoot.h" />
     <ClInclude Include="Shader.h" />
     <ClInclude Include="Sprite.h" />
+    <ClInclude Include="InteractionMap.h" />
     <ClInclude Include="Texture.h" />
     <ClInclude Include="TextureCache.h" />
   </ItemGroup>
@@ -320,6 +325,14 @@
     <FxCompile Include="VS_Wall.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Vertex</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Vertex</ShaderType>
+    </FxCompile>
+    <FxCompile Include="VS_Grass.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Vertex</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Vertex</ShaderType>
+    </FxCompile>
+    <FxCompile Include="PS_InteractStamp.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
     </FxCompile>
     <FxCompile Include="PS_Wall.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>

@@ -25,7 +25,7 @@ using namespace DirectX;
 
 //--- ぶつかる道具の表(データ, キーの前方一致)。新しい道具をぶつかる様にするには1行足すだけ。
 //    前方一致なので "StOutdoorTree" 1行で木 A/B/C… が全部入る(配置ファイルで本数を増やしてもコード不要)。
-//    入れない物: 小物(火钳/火かき棒/廃鉄=台の上にある・手に取る物)、床 StGround / StOutdoorGround。
+//    入れない物: 小物(火钳/火かき棒/廃鉄=台の上にある・手に取る物)、床 StGround / StOutdoorGround、草。
 //    整屋 StCottage は凸包ではなく断面の壁線で扱う(下の UpdateWallSlice)。
 //    Whole = 凸包1つ / PerPiece = 繋がった塊ごとに凸包(1モデルに離れた物が複数入っている時)。
 using HS = SceneForge::HullShape;
@@ -42,7 +42,7 @@ const SceneForge::Collider SceneForge::COLLIDERS[] = {
 	{ "StOutdoorTree",  HS::Whole },	// 屋外の木(背丈以下=幹だけ。葉は2千以上の塊なので Whole)
 	{ "StOutdoorRocks", HS::PerPiece },	// 屋外の石: 離れた4個の石 → 石ごと(間は通れる)
 	{ "StOutdoorLogs",  HS::Whole },	// 屋外の丸太の山: 積み重なった12本=山全体で1つ
-	{ "StOutdoorGrass", HS::Whole },	// 屋外の草むら(ユーザー指定でぶつかる。草むら全体=1つ)
+	// 草(StOutdoorGrass)は入れない: 踏み込める。代わりに草が玩家を避けて倒れる表現にする(ユーザー決定)。
 };
 const int SceneForge::NUM_COLLIDERS = _countof(SceneForge::COLLIDERS);
 

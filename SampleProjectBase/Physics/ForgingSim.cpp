@@ -23,7 +23,12 @@ void ForgingSim::Cool(float dt)
 
 void ForgingSim::AddHeat(float amount)
 {
-    m_heat += amount;
+    SetHeat(m_heat + amount);
+}
+
+void ForgingSim::SetHeat(float heat)
+{
+    m_heat = heat;
     if (m_heat < 0.0f) m_heat = 0.0f;
     if (m_heat > 1.0f) m_heat = 1.0f;
 }

@@ -216,7 +216,12 @@ void SceneForge::DrawScenery()
 			continue;
 		}
         if(OutdoorStage::IsOutdoor(p.key)) {
-            CottageRender::Draw(m,PropWorld(p),GetObj<CameraBase>("Camera"),GetObj<VertexShader>("VS_Wall"),GetObj<PixelShader>("PS_Wall"),m_coalPos,false,true);
+            // 草だけ VS_Grass(玩家を避けて倒れる)。出力は VS_Wall と同じなので PS/材質はそのまま。
+            const bool grass = IsGrass(p.key) && m_grassMap.IsReady();
+            VertexShader* vs = GetObj<VertexShader>(grass ? "VS_Grass" : "VS_Wall");
+            if (grass && vs) BindGrassParams(vs, p);
+            CottageRender::Draw(m,PropWorld(p),GetObj<CameraBase>("Camera"),vs,GetObj<PixelShader>("PS_Wall"),m_coalPos,false,true);
+            if (grass && vs) vs->SetTexture(0, nullptr);	// 次のフレームで貼图を描画先にする前に、読み取り側から外す
             continue;
         }
 		// 炉だけ、のっぺり感を抑えるため僅かに暗い暖色を掛ける(炉内が煤けて見える)
@@ -338,6 +343,7 @@ void SceneForge::DrawModelsTest()
 	if (!m_show3D) return;
 	DrawScenery();	// 床・樹桩・金床・炉・風箱・作業台・水槽・道具などを一括描画(金床もここ)
 	DrawHammer3D();
+	DrawCarry();	// 火钳(手に持っている時=鉄を咥える / そうでない時=左腰)
 }
 
 

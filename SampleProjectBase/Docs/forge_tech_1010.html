@@ -1,0 +1,296 @@
+<title>FORGE 技術まとめ</title>
+<style>
+/* layout: single readable column, sticky TOC on wide screens; tables scroll in their own box */
+:root{
+  --bg:#f6f5f2; --fg:#1f1d1a; --muted:#6b665e; --line:#dcd8cf; --card:#ffffff;
+  --accent:#b4501e; --ok:#2f7a45; --warn:#a8321e; --plan:#2f5f9a;
+  --sans:"Noto Sans JP","Hiragino Sans","Yu Gothic UI",system-ui,sans-serif;
+  --mono:ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#1a1917; --fg:#e8e5df; --muted:#a39d93; --line:#3a3732; --card:#23221f;
+  --accent:#e2804c; --ok:#6cc488; --warn:#ef7a62; --plan:#7fa9e0; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#1a1917; --fg:#e8e5df; --muted:#a39d93; --line:#3a3732; --card:#23221f;
+  --accent:#e2804c; --ok:#6cc488; --warn:#ef7a62; --plan:#7fa9e0; color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:15px;line-height:1.7}
+.wrap{max-width:1100px;margin:0 auto;padding-inline:16px;padding-block:24px 64px;display:grid;grid-template-columns:220px minmax(0,1fr);gap:40px}
+nav{position:sticky;top:env(safe-area-inset-top,0px);align-self:start;padding-top:8px;font-size:13px}
+nav a{display:block;color:var(--muted);text-decoration:none;padding:3px 0}
+nav a:hover{color:var(--accent)}
+main{min-width:0}
+h1{font-size:26px;margin:0 0 4px}
+.sub{color:var(--muted);font-size:13px;margin:0 0 24px}
+h2{font-size:20px;margin:44px 0 12px;padding-bottom:6px;border-bottom:2px solid var(--line);text-wrap:balance}
+h3{font-size:16px;margin:24px 0 6px}
+p,ul{margin:6px 0}
+ul{padding-left:1.3em}
+li{margin:2px 0}
+code{font-family:var(--mono);font-size:.88em;background:var(--card);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.path{color:var(--muted);font-size:13px}
+.tag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.05em;padding:1px 8px;border-radius:99px;border:1px solid currentColor;vertical-align:2px;margin-left:8px}
+.t-ok{color:var(--ok)} .t-warn{color:var(--warn)} .t-plan{color:var(--plan)}
+.why{border-left:3px solid var(--line);padding-left:10px;color:var(--muted);font-size:14px}
+.box{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:12px 16px;margin:12px 0}
+.box.warn{border-color:var(--warn)}
+.tbl{overflow-x:auto;margin:10px 0}
+table{border-collapse:collapse;width:100%;font-size:14px;background:var(--card)}
+th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+th{background:var(--bg);font-weight:700;white-space:nowrap}
+td:first-child{font-weight:700;white-space:nowrap}
+pre{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:12px;overflow-x:auto;font-family:var(--mono);font-size:13px;line-height:1.55}
+@media (max-width:760px){.wrap{grid-template-columns:1fr;gap:0} nav{position:static;border-bottom:1px solid var(--line);padding-bottom:12px;columns:2}}
+</style>
+
+<div class="wrap">
+<nav>
+  <a href="#s0">0. 作品概要</a>
+  <a href="#s1">1. 設計・アーキテクチャ</a>
+  <a href="#s2">2. 自作の物理シミュ ★</a>
+  <a href="#s3">3. ゲームプレイシステム</a>
+  <a href="#s4">4. レンダリング</a>
+  <a href="#s5">5. 試作のみ・未接続 ⚠</a>
+  <a href="#s6">6. 今後の予定</a>
+  <a href="#s7">7. 想定質問</a>
+</nav>
+<main>
+<h1>FORGE 技術まとめ</h1>
+<p class="sub">2026-10-10 プレゼン用 ・ 2026-10-01 時点の実コードで確認できたものだけ記載<br>
+<span class="tag t-ok">実装済み</span><span class="tag t-warn">試作のみ・未接続</span><span class="tag t-plan">予定</span></p>
+
+<!-- ================= 0 ================= -->
+<h2 id="s0">0. 作品概要（30秒）</h2>
+<ul>
+  <li><b>ジャンル</b>：中世の鍛冶屋で剣を一本鍛え上げる一人称の鍛造シミュレーション</li>
+  <li><b>出発点</b>：『Kingdom Come: Deliverance II』の鍛冶ミニゲームの再現 → 現実の鍛造工程（加熱・鍛打・裏返し・研ぎ・焼入れ）へ拡張</li>
+  <li><b>環境</b>：C++ / DirectX 11 / HLSL（学校の教材フレームワークがベース。商用エンジン不使用）</li>
+  <li><b>アピールの軸</b>
+    <ol>
+      <li><b>自作の物理シミュレーション</b>（ハンマー・金属の流れ・パーティクル・衝突）</li>
+      <li><b>ゲームプレイのシステム設計</b>（階層型ステートマシン＋データ駆動レシピ）</li>
+      <li>それを見やすくする<b>レンダリングパイプライン一式</b>（リニア空間・HDR・PBR・シャドウ）</li>
+    </ol>
+  </li>
+</ul>
+
+<!-- ================= 1 ================= -->
+<h2 id="s1">1. 設計・アーキテクチャ <span class="tag t-ok">実装済み</span></h2>
+
+<h3>1-1. 階層型ステートマシン（HSM）</h3>
+<ul>
+  <li><b>上位</b>：シーンの状態（タイトル / プレイ / リザルト）</li>
+  <li><b>下位</b>：プレイ中の<b>工程ステートマシン</b>（1工程＝1状態）<br>
+    <code>HeatStep</code> 加熱 / <code>ForgeStep</code> 鍛打 / <code>GrindStep</code> 研ぎ / <code>QuenchStep</code> 焼入れ</li>
+  <li>フレームワーク <code>StateMachine</code> は前作『statemachinechase』から再利用。文字列キーで状態を登録し、<code>std::function</code> で Enter / Update / Exit を持つ</li>
+  <li>状態機は「いつ遷移するか」を知らない。遷移の判断は持ち主（SceneForge）側</li>
+</ul>
+<p class="why">選定理由：工程がはっきり分かれているゲームなので FSM が一番素直。前作で使い慣れていて保守しやすい。</p>
+<p class="path">📁 StateMachine/ ・ StateMachine/Player/*Step.cpp</p>
+
+<h3>1-2. データ駆動（レシピ）</h3>
+<ul>
+  <li>武器＝「工程の順番＋各工程の案内文」を持つデータ（<code>WeaponRecipe</code> 構造体）</li>
+  <li><b>新しい武器を追加する＝レシピを1つ足すだけ。状態機のコードは変えない</b></li>
+  <li>同じ工程を何度でも使える（例：鍛打の前と焼入れの前に「加熱」を2回）</li>
+</ul>
+<p class="why">不採用：コマンドパターン（undo / replay が要らないので過剰）。</p>
+<p class="path">📁 GameData/WeaponRecipe.h/.cpp</p>
+
+<h3>1-3. シミュレーションと描画の分離（デカップリング）</h3>
+<ul>
+  <li><code>Physics/</code> 物理 ・ <code>GameLogic/</code> 汎用システム ・ <code>StateMachine/</code> 制御 ・ <code>GameData/</code> データ ・ <code>SceneForge/</code> 描画と指揮</li>
+  <li>例：<code>ForgingSim</code> は「打撃を受けたら鉄がどう変形するか」だけを答える。得点・音・セリフはシーン側が結果（<code>StrikeOutcome</code>）を見て決める</li>
+  <li>効果：見た目を作り直しても（アニメ外注など）ゲームの正しさが崩れない</li>
+</ul>
+
+<h3>1-4. ステージエディタ（データ駆動の配置）</h3>
+<ul>
+  <li>専用シーンでクリック選択・XYZ ギズモで道具を配置 → <code>stage_layout.txt</code> に保存 → ゲーム本編が同じファイルを読む</li>
+  <li>マウスからの<b>レイキャストによるピッキング（逆投影）</b>、炉を動かすと炭・火の粉が付いてくる<b>親子関係</b></li>
+</ul>
+<p class="path">📁 StageEditor.cpp</p>
+
+<h3>1-5. AABB アンカーによる自動配置</h3>
+<p>モデル読込時に AABB（軸平行境界ボックス）を計算し、「金床の上面中心」等のアンカーへ自動で乗せる。モデルを差し替えても座標の手調整が不要。</p>
+
+<h3>1-6. アセット共有とシーン切替の高速化</h3>
+<p>モデルはルートシーンが所有し、サブシーンは参照だけ。テクスチャはパスをキーにしたキャッシュ（<code>TextureCache</code>）で一度だけデコード。→ シーン切替時の 4〜5 秒の停止を解消。</p>
+
+<h3>1-7. チューニング値の外部化（マジックナンバー排除）</h3>
+<p>数値は名前付き定数・ImGui のスライダ・テキストファイル（<code>forge_tuning.txt</code> 等）に集約。F1 でデバッグ UI、見えないシステム（当たり判定など）はデバッグ描画で可視化。</p>
+
+<!-- ================= 2 ================= -->
+<h2 id="s2">2. 自作の物理シミュレーション ★ <span class="tag t-ok">実装済み</span></h2>
+
+<h3>2-1. ハンマー：ばね-ダンパモデル</h3>
+<ul>
+  <li>質量 m のハンマー頭が自然長のばねに付いているモデル</li>
+  <li>合力＝<b>復元力（フックの法則 −kx）＋減衰力（−cv）</b> → 加速度 → <b>セミインプリシット・オイラー法</b>で積分</li>
+  <li>打撃時に<b>力積 J</b> を与えて初速 v0 = J/m → オーバーシュートしてから静止位置に収束</li>
+  <li>剛性 k・減衰 c・質量 m はスライダで調整可（臨界減衰 = 2√(km)）</li>
+</ul>
+<p class="why">選定理由：計算が軽く、陽的オイラー法より安定（エネルギーが発散しにくい）。</p>
+<p class="path">📁 Physics/HammerPhysics.h/.cpp</p>
+
+<h3>2-2. 鉄の変形：体積保存のハイトフィールド</h3>
+<ul>
+  <li>鉄を <b>20×6 のグリッド（高さ場）</b>で持つ（長さ5区画 × 表裏2面で進捗管理）</li>
+  <li>叩いたセルの高さを目標に近づけ、押し出した分を<b>余剰の少ない近傍セルへ重み付きで再分配</b></li>
+  <li>重みを<b>正規化</b>（合計1）するので総体積が保存される（金属は非圧縮）。叩くほど目標形状に<b>収束</b></li>
+  <li>結果を <code>Shaped / ColdHit / OverHit / AlreadyDone</code> で返す</li>
+</ul>
+<p class="path">📁 Physics/ForgingSim.h/.cpp</p>
+
+<h3>2-3. 温度モデル</h3>
+<p>温度は「鉄の状態」として毎フレーム自然冷却（歩いている間も冷える）。炉で加熱・打撃で金床へ熱が逃げる。一定温度以上で表面から火花（＝加熱完了の合図）。温度 → 色（暗赤 → 橙 → 黄 → 白）。</p>
+
+<h3>2-4. 武器のモーフ（頂点補間）</h3>
+<ul>
+  <li>同じトポロジーの FBX（粗い素材 <code>stage_0</code> → 完成品 <code>stage_final</code>）を読み、進捗に応じて頂点補間</li>
+  <li>区画ごとに進捗を持ち、叩いた区画だけが変形。照準・描画・進捗が同じ区画分割の規約を使うのでズレない</li>
+</ul>
+
+<h3>2-5. 研ぎ車（足踏み式砥石）</h3>
+<ul>
+  <li>1回の踏み込み＝角速度の力積、その間は摩擦で減速：dω/dt = −kω</li>
+  <li>解析解 ω *= exp(−k·dt) で積分 → <b>フレームレート非依存</b>。刃を当てると抵抗が増える</li>
+</ul>
+<p class="path">📁 Physics/GrindWheel.h/.cpp</p>
+
+<h3>2-6. CPU パーティクル</h3>
+<ul>
+  <li>火花：<b>重力＋地面でバウンド</b></li>
+  <li>火の粉（余燼）：<b>浮力</b>で上昇・揺れて消える</li>
+  <li>焼入れの蒸気：<b>浮力＋空気抵抗</b>で減速しながら膨らむ</li>
+  <li>描画はカメラ向きビルボード＋加算合成</li>
+</ul>
+<p class="path">📁 Physics/Particles.h/.cpp</p>
+
+<h3>2-7. 歩行の衝突判定（2D）</h3>
+<ul>
+  <li>床を歩くだけなので 3D を上から見た 2D（XZ 平面）に落とした</li>
+  <li>プレイヤー＝<b>円</b>（上から見たカプセル）→ 角に引っかからない</li>
+  <li>衝突形状はモデルから自動生成：道具＝床に投影した<b>凸包</b>（Andrew's monotone chain）、建物（凹形状）＝腰の高さの<b>断面スライス</b>線分（戸口は自然に通れる）</li>
+  <li>応答＝<b>押し出し</b> → 残った成分で<b>壁ずり</b>。蝶番で開くドア（<code>HingedDoor</code>）</li>
+</ul>
+<p class="path">📁 Physics/Collision2D.h/.cpp ・ SceneForge/Collision.cpp</p>
+
+<h3>2-8. フレームレート非依存の補間</h3>
+<p><code>a = lerp(a, target, 1 − exp(−λ·dt))</code>（指数減衰による平滑化）。30fps でも 144fps でも同じ動き。<span class="path">📁 GameLogic/Lerp</span></p>
+
+<!-- ================= 3 ================= -->
+<h2 id="s3">3. ゲームプレイシステム <span class="tag t-ok">実装済み</span></h2>
+<div class="tbl"><table>
+<tr><th>システム</th><th>内容</th><th>場所</th></tr>
+<tr><td>FPS ヒットスキャン照準</td><td>画面中心のレイを、武器を区画分割したボックス群と交差判定（レイをローカル空間へ移して slab test）。最手前の区画が打撃対象。外れたら空振り</td><td>GameLogic/AimSystem</td></tr>
+<tr><td>インタラクション</td><td>範囲トリガー＋視線レイで「E」表示。対象はデータテーブルで定義</td><td>SceneForge/Interaction.cpp</td></tr>
+<tr><td>作業場（ステーション）</td><td>金床・炉・砥石・水槽へ歩いて E。工程で行動をロックしない（UI は案内だけ）</td><td></td></tr>
+<tr><td>運搬</td><td>火ばさみで鉄を持って歩き、別の作業場へ置く（瞬間移動なし）</td><td>SceneForge/Carry.cpp</td></tr>
+<tr><td>リズム</td><td>一定テンポで叩くと効率アップ（KCD2 準拠）</td><td></td></tr>
+<tr><td>負のフィードバックのみ</td><td>「ここを叩け」は教えない。間違えた時だけセリフ（冷えている／熱しすぎ／もう完成済み）</td><td></td></tr>
+<tr><td>裏返し</td><td>表裏それぞれ独立に鍛える</td><td></td></tr>
+<tr><td>工程の案内</td><td>「今どの工程か」だけを常時表示（文はレシピのデータ）</td><td></td></tr>
+<tr><td>ワールド内タイトル</td><td>タイトルも 3D 空間内、イントロカメラ</td><td>SceneForge/Title.cpp</td></tr>
+<tr><td>オーディオ</td><td>XAudio2。BGM ループ・ハンマー音の交互再生・合成音フォールバック</td><td>Audio.cpp</td></tr>
+</table></div>
+
+<!-- ================= 4 ================= -->
+<h2 id="s4">4. レンダリング <span class="tag t-ok">実装済み</span></h2>
+<h3>4-1. フレームの流れ</h3>
+<pre>[シャドウパス]   太陽から深度だけ描く（2048² 深度テクスチャ）
+      ↓
+[シーンパス]     HDR オフスクリーン RT（R16G16B16A16_FLOAT）へフォワード描画
+                 不透明（壁・床・道具） → 発光（鉄・炭） → 半透明（水・パーティクル）
+      ↓
+[ポストプロセス] ブルーム（輝度抽出 → 横ブラー → 縦ブラー）
+      ↓
+                 FXAA ＋ ACES トーンマッピング → sRGB バックバッファへ</pre>
+
+<h3>4-2. 一覧</h3>
+<div class="tbl"><table>
+<tr><th>技術</th><th>内容</th><th>理由・ポイント</th></tr>
+<tr><td>フォワードレンダリング</td><td>全物体をライティング込みで描画</td><td>光源が少ない（太陽＋炉火）、半透明・発光が多い、内蔵 GPU で G-Buffer の帯域を節約（→ 5章）</td></tr>
+<tr><td>リニア空間ライティング</td><td>色テクスチャは <code>R8G8B8A8_UNORM_SRGB</code> で読み GPU が自動でリニア化。法線・ラフネスはリニアのまま。出力 RTV も sRGB</td><td>光の足し算・掛け算はリニア空間でないと物理的に正しくならない</td></tr>
+<tr><td>HDR</td><td>16bit 浮動小数点 RT に 1.0 を超える明るさを保持</td><td>白熱した鉄・炭の眩しさを潰さない</td></tr>
+<tr><td>ACES トーンマッピング</td><td>Narkowicz 2015 の近似式で HDR → 0〜1 へ S 字カーブで圧縮</td><td>白飛びせず映画的な階調。FXAA を切っても必ず通る</td></tr>
+<tr><td>ブルーム</td><td>閾値で明部抽出 → 分離可能ガウシアンブラー（横・縦）→ 加算</td><td>熱い鉄・炭が光って見える</td></tr>
+<tr><td>FXAA</td><td>エッジだけ検出して均す（1パス）</td><td>MSAA より軽い。テクスチャのちらつきは mipmap で対処</td></tr>
+<tr><td>PBR</td><td>Cook-Torrance BRDF：D=GGX、G=Schlick-GGX、F=Schlick。メタリック / ラフネス。非金属 F0=0.04</td><td>小屋の石壁・床・地面（Poly Haven の実写 PBR テクスチャ）</td></tr>
+<tr><td>ノーマルマップ</td><td>頂点に接線を持たず、<b>ddx/ddy（スクリーン空間微分）</b>で接線空間を復元（cotangent frame）</td><td>メッシュに接線データが無くても使える</td></tr>
+<tr><td>シャドウマップ</td><td>太陽＝平行光源 → 正射影で深度描画。2×2 バイリニア PCF、法線オフセットでアクネ対策、太陽が動かない間は再描画しない（キャッシュ）</td><td>暗い室内に窓から差す光と影</td></tr>
+<tr><td>炉火の点光源</td><td>炉の位置から逆二乗減衰の光を加算</td><td>火が部屋を照らす</td></tr>
+<tr><td>道具のライティング</td><td>ランバート拡散＋ブリン-フォン鏡面＋影＋炉火</td><td>軽量（PBR ではない）</td></tr>
+<tr><td>トリプラナー投影</td><td>UV なしで XYZ 3方向から投影し法線で混ぜる。オブジェクト空間なので炉を動かしても模様が滑らない</td><td>炉の UV の継ぎ目で石の大きさが揃わない問題の解決</td></tr>
+<tr><td>熱色（温度 → 色）</td><td>温度から暗赤〜白熱の色を決め、発光としてブルームへ</td><td>冷えた鋼は BaseColor、発光は温度で駆動</td></tr>
+<tr><td>武器の金属シェーダー</td><td>2色の半球（空・地面）で<b>擬似環境反射</b>＋フレネル＋研いだ部分は滑らかな地金</td><td>IBL の安価な代用（IBL ではない）</td></tr>
+<tr><td>屈折する水</td><td>シーンをコピーして背後を歪めてサンプル。深度バッファから水深（浅い所は透明）、Schlick フレネル、壁との境に泡の線</td><td>平面テクスチャに見えない水</td></tr>
+<tr><td>炭シェーダー</td><td>熱い部分だけ value noise でその場で明滅</td><td>内蔵 GPU 向けに軽量</td></tr>
+<tr><td>インタラクティブ草</td><td>真上からの<b>正射影カメラ</b>でレンダーテクスチャに踏み跡（MAX ブレンド）→ 乗算ブレンドで<b>指数減衰</b> → 頂点シェーダーが<b>勾配（中心差分）</b>方向へ倒す</td><td>汎用 <code>InteractionMap</code>。炭や床にも流用可</td></tr>
+<tr><td>プロシージャル空・フォグ</td><td>高さで空色を補間＋太陽のハロー、遠景は距離フォグ</td><td></td></tr>
+<tr><td>シェーダービルド管線</td><td><code>.hlsl → fxc（MSBuild）→ .cso → Load</code>。D3DReflect で頂点入力レイアウトを自動生成</td><td>実行時コンパイルの文字列を廃止</td></tr>
+</table></div>
+<p class="why">位置付け：レンダリングは主役ではなく「物理とシステムを見やすくする支え」。ただしパイプライン全体（リニア空間 → HDR → トーンマッピング）を理解していることを示す。</p>
+
+<!-- ================= 5 ================= -->
+<h2 id="s5">5. 試作のみ・未接続 <span class="tag t-warn">発表で「使っている」と言わない</span></h2>
+<div class="box warn">
+<h3 style="margin-top:0">5-1. ディファードレンダリング（Deferred Shading）</h3>
+<ul>
+  <li><code>Deferred.cpp/.h</code> に G-Buffer（アルベド / ワールド法線 / ワールド座標の3枚）と全画面ライティングパスを試作。ビルドにも含まれている</li>
+  <li><b>ただしどこからも呼ばれていない。実際の描画は 100% フォワード</b></li>
+</ul>
+<p><b>おすすめの言い方：</b>「ディファードも試作して比較しました。本作は光源が太陽と炉火の2つだけで、水やパーティクルなど半透明・発光が多く、内蔵 GPU では G-Buffer の帯域コストも大きいので、フォワードを採用しました。」</p>
+<p class="why">→ 技術選定の理由を語れるアピールになる。本当に比較したかは自分で確認してから使う。</p>
+</div>
+<h3>5-2. その他</h3>
+<ul>
+  <li>武器モーフ・発光鉄条のシェーダーはまだ実行時コンパイル（文字列）。他と同じ <code>.cso</code> 管線へ移す予定</li>
+  <li>SSAA（スーパーサンプリング）の仕組みはあるが倍率 1＝無効</li>
+</ul>
+
+<!-- ================= 6 ================= -->
+<h2 id="s6">6. 今後の予定 <span class="tag t-plan">未実装</span></h2>
+<h3>レンダリング</h3>
+<div class="tbl"><table>
+<tr><th>技術</th><th>狙い</th></tr>
+<tr><td>IBL（イメージベースドライティング）</td><td>放射照度マップ＋プリフィルタ環境マップ＋BRDF LUT（split-sum 近似）。今の擬似環境反射の置き換え</td></tr>
+<tr><td>道具にも PBR＋Normal / ORM</td><td>購入素材の Normal / ORM が未使用。今は道具だけブリン-フォン</td></tr>
+<tr><td>熱い鉄を実際の光源に</td><td>白熱した鉄が金床や手を赤く照らす（エミッシブ → 点光源）</td></tr>
+<tr><td>SSAO・カラーグレーディング・ビネット</td><td>仕上げのポストプロセス</td></tr>
+<tr><td>3D の炭モデル</td><td>平面＋テクスチャ → 立体の炭塊の隙間だけ赤熱</td></tr>
+<tr><td>レターボックスの完成演出</td><td>完成の瞬間に上下の黒帯＋完成アニメ → リザルトへ</td></tr>
+</table></div>
+<h3>物理・GPU</h3>
+<div class="tbl"><table>
+<tr><th>技術</th><th>狙い</th></tr>
+<tr><td>コンピュートシェーダー</td><td>パーティクル（火花・火の粉・蒸気）を CPU から GPU へ移植</td></tr>
+<tr><td>打撃位置で火花が変わる</td><td>鉄の中心に近いほど火花が赤く・明るく・多く（物理駆動のフィードバック）</td></tr>
+</table></div>
+<h3>アニメーション</h3>
+<div class="tbl"><table>
+<tr><th>技術</th><th>狙い</th></tr>
+<tr><td>一人称の手のアニメ</td><td>工程ごとの独立クリップ、ルートモーション無し、ソケットで道具を装着。工程ステートマシンが対応クリップを再生（レシピに「アニメ名」）</td></tr>
+<tr><td>2ボーン IK</td><td>ループ完成後、火ばさみの柄を握る部分だけ</td></tr>
+</table></div>
+<h3>ゲームプレイ</h3>
+<div class="tbl"><table>
+<tr><th>技術</th><th>狙い</th></tr>
+<tr><td>武器選択（複数レシピ）</td><td>レシピを足すだけで新しい武器＝データ駆動の効果を見せる</td></tr>
+<tr><td>新しい工程（例：折り返し鍛造）</td><td>全く新しい操作の時だけ新しい状態クラスを足す</td></tr>
+<tr><td>鍛冶屋のキャラクター</td><td>ドワーフのキャラクター</td></tr>
+</table></div>
+
+<!-- ================= 7 ================= -->
+<h2 id="s7">7. 想定質問（準備メモ）</h2>
+<ul>
+  <li>なぜ<b>リニア空間</b>でライティングするのか？ガンマ補正はパイプラインのどこか？</li>
+  <li>GGX の <b>D / G / F</b> はそれぞれ何をしているか？金属と非金属の <b>F0</b> の違いは？</li>
+  <li>なぜ<b>フォワード</b>でディファードではないのか？（5-1）</li>
+  <li>ばね-ダンパでなぜ<b>セミインプリシット・オイラー</b>？タイムステップが大きくなったら？（dt の上限クランプ）</li>
+  <li><b>体積保存</b>はどう保証しているか？（重みの正規化）</li>
+  <li>ステートマシンで<b>遷移は誰が決める</b>？新しい武器を足す時に何を変える？（データだけ）</li>
+  <li>衝突をなぜ <b>2D</b> に落としたのか？凹形状の建物は？（断面スライス）</li>
+  <li>なぜ CPU パーティクルで、いつ GPU に移すのか？</li>
+</ul>
+</main>
+</div>

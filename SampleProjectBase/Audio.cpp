@@ -364,6 +364,7 @@ namespace Audio
 			"Assets/Sound/SE/burn_loop.wav",	// SE_BURN_LOOP(無ければ合成音)
 			"Assets/Sound/SE/grind_loop.wav",	// SE_GRIND_LOOP(無ければ合成音)
 			"Assets/Sound/SE/steam.wav",		// SE_STEAM(無ければ合成音)
+			"Assets/Sound/SE/title_fade.wav",	// SE_TITLE_FADE(ロゴ淡出。無ければ無音)
 			"Assets/Sound/BGM/title_bgm.wav",	// BGM_TITLE(工場環境音。無ければ無音)
 			"Assets/Sound/BGM/play_bgm.wav",	// BGM_PLAY(medieval。無ければ無音)
 			"Assets/Sound/BGM/result_bgm.wav",	// BGM_RESULT(無ければ無音)
@@ -442,7 +443,7 @@ namespace Audio
 		Sound& s = g_sound[id];
 		if (s.voices.empty()) return;
 		g_loopVolume[id] = volume;
-		s.voices[0]->SetVolume(volume);
+		s.voices[0]->SetVolume((IsBgm(id) && g_bgmMuted) ? 0.0f : volume);	// BGM ミュート中は無音のまま(PlayLoop と同じ規則)
 		s.voices[0]->SetFrequencyRatio(pitch);
 	}
 

@@ -218,7 +218,8 @@ void SceneForge::Init()
 	m_mesh = std::make_shared<MeshBuffer>(desc);
 
 	// 鉄を一様な厚板(進捗0)・無傷に初期化し、目標形状も作る(全て ForgingSim が担当)。
-	m_forging.Reset();
+	// タイトルは金床の上で熱い鉄を打ち続ける画なので、その状態で用意する(Title.cpp)。
+	ResetTitleStage();
 
 	// --- 【3D化テスト】鍛冶素材モデルの読み込み ---
 	VertexShader* mvs = CreateObj<VertexShader>("VS_ForgeObj");
@@ -235,6 +236,10 @@ void SceneForge::Init()
 	PixelShader* wallPS = CreateObj<PixelShader>("PS_Wall");
 	if (FAILED(wallPS->Load("Assets/Shader/PS_Wall.cso")))
 		MessageBox(nullptr, "PS_Wall.cso", "Shader Error", MB_OK);
+	// 草: VS_Wall と同じ出力 + 玩家を避けて倒れる(InteractionMap を読む)。PS は PS_Wall をそのまま使う。
+	VertexShader* grassVS = CreateObj<VertexShader>("VS_Grass");
+	if (FAILED(grassVS->Load("Assets/Shader/VS_Grass.cso")))
+		MessageBox(nullptr, "VS_Grass.cso", "Shader Error", MB_OK);
 
 	// --- 3D鉄条メッシュ用シェーダーと動的メッシュ ---
 	VertexShader* bvs = CreateObj<VertexShader>("VS_Bar");
@@ -308,7 +313,7 @@ void SceneForge::Init()
 	const std::string kSharp    = P + "Sharpner/Textures/T_Sharpner_V1_BaseColor.png";
 	const std::string kTools    = P + "Tools/Textures/1024x512/T_BS_Tools_BaseColor.png";
 	const std::string kMetal    = P + "Metal Parts/Textures/T_Metal_parts_BaseColor.png";
-	// 炉は石壁の実写テクスチャを世界座標で投影する(UV/材質の継ぎ目で石の大きさが揃わない対策。PS_StageProp)
+	// 炉は石壁の実写テクスチャを triplanar(炉自身の物体空間)で投影する(UV/材質の継ぎ目で石の大きさが揃わない対策。PS_StageProp)
 	const char* kForgeStone = "Assets/PolyHaven_RockWall17/rock_wall_17_Diffuse_2k.png";
 
 	LoadProp("StGround",   "Assets/Model/plane/plane.fbx", "Assets/Model/field/wooden-plank-textured-background-material.jpg", 12.0f, 0.0f, 0.0f, 0.0f, 0.0f, true);
@@ -371,6 +376,8 @@ void SceneForge::Init()
 	}
 	LoadLayout();
 	InitBuildingCollision();	// 家の壁線用の三角形と、裏口の扉の蝶番/凸包(Collision.cpp)
+	InitGrassMap();				// 草の踏み跡の貼图(範囲=屋外の地面。配置が決まった後に)
+	InitTongsGeometry();		// 火钳モデルの形(口の端・挟む点・輪の向き)を読む(Carry.cpp)
 	CottageRender::Load();
 	LoadTuning();	// F1で調整したハンマー/カメラ値(forge_tuning.txt)を復元
 	BuildPropHulls();	// 衝突の凸包: 配置(LoadLayout)と床の高さ(LoadTuning)が決まった後=背丈以下の頂点を選べる
@@ -383,12 +390,13 @@ void SceneForge::Init()
 	Strike();	// 開始直後から火花を出す
 	// ロード完了後にここで音を開始(起動途中でBGMが鳴らないように Main から移動)
 	// 起動はタイトル状態 → タイトルBGM(工場環境音)をループ。
-	Audio::PlayLoop(Audio::BGM_TITLE, 0.40f);
+	Audio::PlayLoop(Audio::BGM_TITLE, TITLE_BGM_VOLUME);
 }
 
 void SceneForge::Uninit()
 {
 	SaveTuning();	// F1で調整したハンマー/カメラ値を書き出す(次回起動で復元)
+	m_grassMap.Uninit();	// 草の踏み跡の貼图(ブレンドステートを解放)
 	DestroyObj("VS_Forge");
 	DestroyObj("PS_Forge");
 	DestroyObj("VS_ForgeObj");
@@ -435,29 +443,28 @@ void SceneForge::Strike(float scale)
 //====================================================================
 void SceneForge::StartGame()
 {
-	Audio::Stop(Audio::BGM_TITLE);				// タイトルBGMを止める
-	Audio::PlayLoop(Audio::BGM_PLAY, 0.45f);	// ゲーム中BGM(medieval)
+	// BGM はここでは切り替えない: カメラが金床へ移る間にタイトル BGM を淡出し、着いてから切り替える(FinishIntro)。
 	m_heatSndOn = false;						// 加熱持続音の状態をリセット
 	m_state    = GAME_PLAY;
-	// ゲーム開始時は「走動モード」から。工坊を歩いて工位に着き、Eで鍛造に入る。
+	// 状態は一旦「走動」にし、UpdateTitle が直後に金床への導入運鏡を始める(着くと工位=鍛打へ)。
 	m_walkMode = true;
 	m_modeTrans = ModeTrans::None;	// 走動⇔工位の移動アニメも解除
-	m_pendingFlip = false; m_focus = -1; m_promptAlpha = 0.0f;	// 互動の状態も初期化
+	m_focus = -1; m_promptAlpha = 0.0f;	// 互動の状態も初期化
 	m_walkPitch = 0.0f;
 	m_player.Init(DirectX::XMFLOAT3(0.0f, m_walkFloorY, -2.0f), 0.0f);	// 開始位置/向きを戻す
 	m_door.Reset();			// 裏口の扉は閉じた状態から
 	m_score    = 0;
 	m_forging.Reset();		// 鉄を厚板・無傷・進捗0へ(表面が上に戻る。目標形状も再生成)
+	m_forging.SetHeat(START_HEAT);	// タイトルで打っていた熱い鉄のまま始まる(最初の加熱工程は即完了)
 	m_forgeProg = 0.0f;		// 武器モーフのプレビュー進捗も戻す
 	m_match = 0.0f;
 	m_flipAngle = 0.0f;		// 翻面回転も表(0)へ戻す
 	m_flipPhase = FlipPhase::None;	// 翻面子状態機も初期化(鍛打中に戻す)
 	m_camTongsW = 0.0f; m_camGripW = 0.0f;	// 運鏡の寄りも解除
 	m_hammerStowW = 0.0f;					// ハンマーは構え位置へ
-	m_tongsInHand = false;					// 火钳は台の上へ
-	if (Prop* pl = GetProp("StPliers")) pl->hidden = false;
+	m_tongsInHand = false;					// 火钳は左腰に掛かっている
 
-	// 工位と刃の置き場所: 鉄坯は金床の上から始まる(まず炉へ持って行って熱する)。
+	// 工位と刃の置き場所: 鉄坯は金床の上から始まる(熱い状態=そのまま鍛打へ)。
 	m_station = Station::Anvil; m_workAt = Station::Anvil; m_carrying = false;
 	m_overheatWarned = false;
 	m_burnSparkAcc = 0.0f;
@@ -557,7 +564,7 @@ void SceneForge::UpdateFlip(float tick, bool inputOn)
 	case FlipPhase::TongsOut:								// 火钳を取り出す運鏡(慢い)
 	{
 		m_flipTimer += tick;
-		// 振り向いて静止している区間の中点=「手に取った」瞬間。台上の火钳を消す。
+		// 腰へ振り向いて静止している区間の中点=「手に取った」瞬間。腰の火钳を消す。
 		const float grabAt = FLIP_TONGS_OUT_TIME * (FLIP_REACH_FRAC + FLIP_RETURN_FRAC) * 0.5f;
 		if (m_flipTimer >= grabAt) m_tongsInHand = true;
 		if (m_flipTimer >= FLIP_TONGS_OUT_TIME) m_flipPhase = FlipPhase::Ready;
@@ -602,7 +609,7 @@ void SceneForge::UpdateFlip(float tick, bool inputOn)
 	case FlipPhase::PutBack:								// 火钳を戻す運鏡→鍛打へ復帰
 	{
 		m_flipTimer += tick;
-		// TongsOut と対称: 振り向いた静止区間の中点で火钳を台へ置く(モデルを再表示)。
+		// TongsOut と対称: 振り向いた静止区間の中点で火钳を腰へ戻す(モデルを再表示)。
 		const float putAt = FLIP_PUTBACK_TIME * (FLIP_REACH_FRAC + FLIP_RETURN_FRAC) * 0.5f;
 		if (m_flipTimer >= putAt) m_tongsInHand = false;
 		if (m_flipTimer >= FLIP_PUTBACK_TIME) m_flipPhase = FlipPhase::None;
@@ -649,9 +656,7 @@ void SceneForge::UpdateFlipCamera(float tick)
 	case FlipPhase::None:     m_hammerStowW = 0.0f; break;
 	default:                  m_hammerStowW = 1.0f; break;	// Ready/Gripping/Flipping=火钳を持っている
 	}
-
-	// 台上の火钳モデルの表示は「手に持っているか」に従う。
-	if (Prop* pl = GetProp("StPliers")) pl->hidden = m_tongsInHand;
+	// 腰の火钳モデルの表示は m_tongsInHand に従う(DrawCarry が読む。作業台の火钳は飾りで、隠さない)。
 }
 
 void SceneForge::FinishGame()
@@ -672,11 +677,26 @@ void SceneForge::FinishGame()
 //--- タイトル: 雰囲気で自動的に火花を出しつつ、SPACEで開始
 void SceneForge::UpdateTitle(float /*tick*/)
 {
-	if (IsKeyTrigger(VK_SPACE) && !m_fade.IsBusy())
+	// 黒転じは使わない: タイトルはゲーム世界そのもの。SPACE → ロゴ淡出 → カメラが金床へ → 鍛打(Title.cpp UpdateIntro)。
+	if (m_introPhase == IntroPhase::None && IsKeyTrigger(VK_SPACE) && !m_fade.IsBusy())
 	{
-		m_fade.Transition([this] { StartGame(); });	// 黒転じでゲーム開始(淡入淡出)
-		return;		// 開始したフレームでは叩かない
+		m_introPhase = IntroPhase::LogoFade;
+		m_introTimer = 0.0f;
+		Audio::Play(Audio::SE_TITLE_FADE, TITLE_FADE_SE_VOLUME);
 	}
+}
+
+//--- 鎚の横位置を平滑追従: 準心が格子単位で跳ぶのを Lerp::Damp で滑らかに。
+//    目標は現在の照準点(m_aimWorld)＋既定オフセット。Draw はこの m_hammerPos を読む。
+void SceneForge::UpdateHammerFollow(float tick)
+{
+	DirectX::XMFLOAT3 tgt = {
+		m_aimWorld.x + m_hammerOff[0],
+		0.0f,							// y は使わない(高さは m_hammerLift のアニメで別途)
+		m_aimWorld.z + m_hammerOff[2],
+	};
+	if (!m_hammerPosInit) { m_hammerPos = tgt; m_hammerPosInit = true; }	// 起動時は瞬間セット
+	m_hammerPos = Lerp::Damp(m_hammerPos, tgt, m_hammerFollow, tick);
 }
 
 //--- 鍛造中
@@ -828,17 +848,7 @@ void SceneForge::UpdatePlay(float tick)
 	if (m_charging) m_hammer.Hold(m_charge);	// 蓄力中は手で保持(高さ=静止高+蓄力量, 速度0)
 	else            m_hammer.Update(tick);		// 離した後はバネ-阻尼で静止高へ収束(積分はクラス内)
 
-	// --- ハンマーの横位置を平滑追従: 準心が格子単位で跳ぶのを Lerp::Damp で滑らかに ---
-	// 目標は現在の照準点(m_aimWorld)＋既定オフセット。Draw はこの m_hammerPos を読む。
-	{
-		DirectX::XMFLOAT3 tgt = {
-			m_aimWorld.x + m_hammerOff[0],
-			0.0f,							// y は使わない(高さは m_hammerLift のアニメで別途)
-			m_aimWorld.z + m_hammerOff[2],
-		};
-		if (!m_hammerPosInit) { m_hammerPos = tgt; m_hammerPosInit = true; }	// 起動時は瞬間セット
-		m_hammerPos = Lerp::Damp(m_hammerPos, tgt, m_hammerFollow, tick);
-	}
+	UpdateHammerFollow(tick);	// 鎚の横位置を照準点へ平滑追従
 
 	// --- フィードバックの減衰 ---
 	if (m_shake > 0.0f)     { m_shake -= tick * 3.0f; if (m_shake < 0.0f) m_shake = 0.0f; }
@@ -960,7 +970,8 @@ XMFLOAT3 SceneForge::RandomBladePoint() const
 //    温度(状態)で発火するイベント駆動の演出=アニメや工程に紐付けない(§8 デカップリング)。
 void SceneForge::UpdateBurnFx(float tick)
 {
-	const bool show = (m_state == GAME_PLAY) && m_forging.IsBurning() && !m_carrying && m_plunge <= 0.0f;
+	// 運んでいる間も燃えていれば火花を噴く(鉄は手の前に描かれ、RandomBladePoint もその位置を返す)。
+	const bool show = (m_state == GAME_PLAY) && m_forging.IsBurning() && m_plunge <= 0.0f;
 	if (show)
 	{
 		m_burnSparkAcc += BURN_SPARK_RATE * tick;
@@ -1067,8 +1078,9 @@ void SceneForge::UpdateResult(float /*tick*/)
 	{
 		m_fade.Transition([this] {
 			m_state = GAME_TITLE;
+			ResetTitleStage();	// 金床の上を「新しい熱い鉄」に戻す(完成した剣は片付ける)
 			Audio::Stop(Audio::BGM_RESULT);				// 結果BGMを止める
-			Audio::PlayLoop(Audio::BGM_TITLE, 0.40f);	// タイトルBGMを再開
+			Audio::PlayLoop(Audio::BGM_TITLE, TITLE_BGM_VOLUME);	// タイトルBGMを再開
 		});
 	}
 }
@@ -1078,6 +1090,7 @@ void SceneForge::Update(float tick)
 	m_time += tick;
 	m_fade.Update(tick);	// 画面フェード(黒幕)を進める。遷移はTransitionの黒転じで実行される
 	m_door.Update(tick);	// 扉の開閉の回転(E で切り替えた後、入力と無関係に最後まで回り切る)
+	m_grassMapDt += tick;	// 草の踏み跡が薄れる時間(GPU の Fade は Draw の最初でまとめて)
 
 	// F8 = 全調整値を起動時スナップショットへ一発リセット(F1デバッグ表示中のみ=誤爆防止)。
 	if (DebugUI::IsVisible() && IsKeyTrigger(VK_F8)) RestoreTuning();
@@ -1097,9 +1110,14 @@ void SceneForge::Update(float tick)
 		{
 			// --- 走動モード: 一人称で工坊を歩く ---
 			UpdateWalkLook();				// マウス→玩家yaw(左右)/カメラpitch(上下)
-			m_player.SetMoveSpeed(m_walkSpeed);	// F1スライダの速度を毎フレーム反映
+			// F1スライダの速度を毎フレーム反映。重い鉄を運んでいる間は遅くなる(m_carrySpeedMul, F1「Carry」)
+			m_player.SetMoveSpeed(m_walkSpeed * (m_carrying ? m_carrySpeedMul : 1.0f));
 			BuildCollisionWorld();					// 道具の凸包/壁線/扉を今の配置でワールドへ(Collision.cpp)
+			const XMFLOAT3 before = m_player.GetPosition();
 			m_player.Update(tick, m_collision);		// WASDで一人称移動+道具/壁から押し出す(壁に沿って滑る)
+			const XMFLOAT3 after = m_player.GetPosition();
+			const float walked = sqrtf((after.x - before.x) * (after.x - before.x) + (after.z - before.z) * (after.z - before.z));
+			UpdateCarryBob(tick, walked);			// 実際に進んだ距離で揺らす(壁に当たって止まれば揺れも止まる)
 
 			// 互動: ①範囲 ②視線 の両方が true の物件だけ E が効く(Interaction.cpp)。
 			//   金床=工位へ移動 / 火钳=取って工位へ移動→翻面。退出(工位→走動)は UpdatePlay 側で E/ESC。
@@ -1139,18 +1157,16 @@ void SceneForge::Update(float tick)
 	}
 	// 過渡中=補間カメラ / 走動=玩家目線 / 工位=FPS式受限環視カメラ(編集は STAGESETTING シーンで行う)。
 	ApplyViewCamera();
+	UpdateViewmodelSway(tick);	// 手に持った物がカメラの向きへ少し遅れて付いて来る(武器の揺れ。Carry.cpp)
 	UpdateBarAnchor();	// 金床の砧面の高さに鉄条を自動配置
 
 	// PLAY中はOSカーソルを隠す(照準は光るセグメントで示す)。デバッグUI表示中は出す
 	bool wantCursor = (m_state != GAME_PLAY) || DebugUI::IsVisible();
 	if (wantCursor != m_cursorShown) { ShowCursor(wantCursor); m_cursorShown = wantCursor; }
 
-	// タイトル中は雰囲気用に自動で火花を出す
-	if (m_state == GAME_TITLE)
-	{
-		m_autoTimer += tick;
-		if (m_autoTimer >= TITLE_INTERVAL) { Strike(); m_autoTimer = 0.0f; }
-	}
+	// タイトル中は金床で鎚が自動で打ち続ける(振りかぶり→打撃→跳ね返り、火花+金床音。Title.cpp)
+	if (m_state == GAME_TITLE) UpdateTitleHammer(tick);
+	UpdateIntro(tick);	// SPACE 後の導入(ロゴ淡出→カメラ移動+BGM 淡出)。導入中でなければ何もしない
 
 	// 状態ごとの処理
 	switch (m_state)
@@ -1178,10 +1194,12 @@ void SceneForge::Update(float tick)
 
 void SceneForge::Draw()
 {
+	UpdateGrassMap();	// 草の踏み跡の貼图を更新(一時的に描画先を差し替え→戻す)。シーンを描き始める前に
     CottageRender::ClearExterior();
 	ApplyViewCamera();	// Update と同じ規約でDrawでも適用(GetViewの前に)
 	DrawModelsTest();	// 先に不透明な3Dモデル(金床)を描く
-	if (!m_carrying)	// 手に持って歩いている間は描かない(一人称の手は未実装)
+	// 鉄は置かれた工位に描く。運んでいる間は手のビューモデルとして最後に描く(DrawViewmodel。めり込み防止)。
+	if (!m_carrying)
 	{
 		if (m_wpOk) DrawWeapon();	// Blender武器モデルを進捗でモーフ(あれば優先)
 		else        Draw3DBillet();	// 無ければ従来の高さ場メッシュ
@@ -1193,6 +1211,7 @@ void SceneForge::Draw()
 
 	DrawEmbers();		// 炭火から立ち上る余燼(火花描画より前に。火花が無くても出す)
 	DrawSteam();		// 淬火の蒸気(柔らかい白い煙)
+	DrawViewmodel();	// 手に持った鉄+火钳(深度範囲を詰めて手前に。運んでいない時は何もしない。Carry.cpp)
 
 	CameraBase* pCamera = GetObj<CameraBase>("Camera");
 	VertexShader* vs = GetObj<VertexShader>("VS_Forge");

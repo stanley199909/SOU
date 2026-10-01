@@ -15,6 +15,7 @@
 #include "DirectX.h"
 #include "MeshBuffer.h"
 #include "Input.h"
+#include "AimSystem.h"	// ray vs box (the same slab test the game's aim uses) for click picking
 #include "imgui/imgui.h"
 #include "PostProcess.h"
 #include <cstdio>
@@ -105,7 +106,7 @@ void SceneStageEditor::Init()
 	const std::string kSharp    = P + "Sharpner/Textures/T_Sharpner_V1_BaseColor.png";
 	const std::string kTools    = P + "Tools/Textures/1024x512/T_BS_Tools_BaseColor.png";
 	const std::string kMetal    = P + "Metal Parts/Textures/T_Metal_parts_BaseColor.png";
-	const std::string kForgeStone = "Assets/PolyHaven_RockWall17/rock_wall_17_Diffuse_2k.png";	// world-projected in PS_StageProp
+	const std::string kForgeStone = "Assets/PolyHaven_RockWall17/rock_wall_17_Diffuse_2k.png";	// triplanar-projected (object space) in PS_StageProp
 
 	// KCD layout (anvil at origin, others around). args = (targetSize, X, Z, Yaw)
 	LoadProp("StGround",   "Assets/Model/plane/plane.fbx", "Assets/Model/field/wooden-plank-textured-background-material.jpg", 12.0f, 0.0f, 0.0f, 0.0f);
@@ -204,6 +205,7 @@ void SceneStageEditor::Init()
 	}
 	LoadLayout();	// override defaults with the saved arrangement if it exists
 	SnapshotLayout();	// remember this as the "startup" layout (F8 / button restores it)
+	SyncParents();		// 読込直後の親の姿勢を記録(ここからの変化だけ子に掛ける)
 }
 
 //--- coal embers: spawn from the coal bed center, rise with buoyancy, fade out
@@ -564,10 +566,44 @@ static XMFLOAT3 PropCenter(SceneStageEditor* /*self*/, const XMMATRIX& world, co
 	return out;
 }
 
-//--- pick the prop whose screen center is nearest the cursor (within a pixel radius)
+//--- pick a prop under the cursor.
+//  1) Ray picking (the standard way): shoot a ray from the camera through the mouse and take the
+//     FIRST prop box it enters. A prop in front wins over one behind it, so a big object whose
+//     centre is near other props' centres (e.g. the forge next to the bellows) can be picked.
+//     A box that CONTAINS the camera (the cottage while you are inside it) is skipped, otherwise
+//     it would always be hit first at distance 0.
+//  2) If the ray hits nothing, fall back to "screen centre nearest the cursor" so thin props
+//     (poker, tongs) stay easy to grab when you click slightly beside them.
 int SceneStageEditor::PickProp(float mx, float my)
 {
-	int best = -1; float bestD = 70.0f;	// selection radius in px
+	if (CameraBase* cam = GetObj<CameraBase>("Camera"))
+	{
+		// Mouse -> world ray: un-project the cursor at the near and far planes (inverse view*proj).
+		XMFLOAT4X4 v = cam->GetView(false), pr = cam->GetProj(false);	// CPU math: non-transposed
+		XMMATRIX invVP = XMMatrixInverse(nullptr, XMLoadFloat4x4(&v) * XMLoadFloat4x4(&pr));
+		ImVec2 disp = ImGui::GetIO().DisplaySize;
+		float ndcX = mx / disp.x * 2.0f - 1.0f;
+		float ndcY = 1.0f - my / disp.y * 2.0f;
+		XMVECTOR nearP = XMVector3TransformCoord(XMVectorSet(ndcX, ndcY, 0.0f, 1.0f), invVP);
+		XMVECTOR farP  = XMVector3TransformCoord(XMVectorSet(ndcX, ndcY, 1.0f, 1.0f), invVP);
+		XMFLOAT3 origin, dir;
+		XMStoreFloat3(&origin, nearP);
+		XMStoreFloat3(&dir, XMVector3Normalize(farP - nearP));
+
+		const float INSIDE_T = 1e-4f;	// entry distance ~0 = the ray starts inside that box
+		int rayBest = -1; float rayT = FLT_MAX;
+		for (int i = 0; i < (int)m_props.size(); ++i)
+		{
+			if (m_props[i].key == "StGround" || m_props[i].key == "StOutdoorGround") continue;	// don't pick the floor
+			AimSystem::Hit h = AimSystem::Raycast(origin, dir, PropWorld(m_props[i]),
+			                                      m_props[i].aabbMin, m_props[i].aabbMax, 1);
+			if (!h.valid || h.t <= INSIDE_T) continue;	// missed, or the camera is inside this box
+			if (h.t < rayT) { rayT = h.t; rayBest = i; }
+		}
+		if (rayBest >= 0) return rayBest;
+	}
+
+	int best = -1; float bestD = 70.0f;	// fallback: selection radius in px
 	for (int i = 0; i < (int)m_props.size(); ++i)
 	{
 		if (m_props[i].key == "StGround" || m_props[i].key == "StOutdoorGround") continue;	// don't pick the floor
@@ -793,6 +829,70 @@ void SceneStageEditor::RestoreLayout()
 	m_waterYaw = m_startup.waterYaw;
 	memcpy(m_waterSize, m_startup.waterSize, sizeof(m_waterSize));
 	m_editSel = -1;	// selection may point past the restored list; clear it
+	SyncParents();	// 親と子を同時に戻したので、子を追従させずに記録だけ合わせる
+}
+
+//--- 親子の表(データ)。炉を動かすと炭床と余燼の発生点が、水槽を動かすと水面が付いて来る。
+std::vector<SceneStageEditor::Attachment> SceneStageEditor::Attachments()
+{
+	return {
+		{ "StForge",  m_coalPos,  &m_coalYaw,  m_coalSize  },	// 炭床(炉の火床)
+		{ "StForge",  m_emberPos, nullptr,     m_emberArea },	// 余燼の発生点(向きは無い。広がりは炉に合わせる)
+		{ "StTrough", m_waterPos, &m_waterYaw, m_waterSize },	// 水面
+	};
+}
+
+//--- 子を動かさずに、親の今の姿勢を記録し直す(読込/F8復元で親子を同時に書き換えた直後。二重に動かさない)。
+void SceneStageEditor::SyncParents()
+{
+	m_parentPose.clear();
+	for (const Attachment& a : Attachments())
+	{
+		bool known = false;
+		for (const ParentPose& pp : m_parentPose) if (pp.key == a.parentKey) known = true;
+		if (known) continue;
+		for (const Prop& p : m_props)
+			if (p.key == a.parentKey)
+				m_parentPose.push_back(ParentPose{ p.key, { p.pos[0], p.pos[1], p.pos[2] }, p.yaw, p.scale });
+	}
+}
+
+//--- 親が前のフレームから動いた分(平行移動 + Y軸回転)を子に掛ける。
+//    回転の中心は親の原点(PropWorld が回してから pos へ運ぶ点)=親をその場で回すと子も一緒に回る。
+void SceneStageEditor::FollowParents()
+{
+	const float MOVE_EPS = 1e-6f;	// これ未満の変化は「動いていない」
+	for (ParentPose& pp : m_parentPose)
+	{
+		const Prop* parent = nullptr;
+		for (const Prop& p : m_props) if (p.key == pp.key) parent = &p;
+		if (!parent) continue;
+
+		const float dx = parent->pos[0] - pp.pos[0], dy = parent->pos[1] - pp.pos[1], dz = parent->pos[2] - pp.pos[2];
+		const float dyaw = parent->yaw - pp.yaw;
+		const float k = (pp.scale > MOVE_EPS) ? parent->scale / pp.scale : 1.0f;	// 拡大縮小の倍率
+		if (fabsf(dx) < MOVE_EPS && fabsf(dy) < MOVE_EPS && fabsf(dz) < MOVE_EPS && fabsf(dyaw) < MOVE_EPS
+		    && fabsf(k - 1.0f) < MOVE_EPS) continue;
+
+		// 高さの拡大の基準点 = 親の pos[1]。groundSnap の親は底面が pos[1] の高さにあり(拡大しても底は動かない)、
+		// groundSnap でない親は原点が pos[1] にある。どちらも「前の pos[1] からの高さ」を k 倍して新しい pos[1] に乗せる。
+		const XMMATRIX spin = XMMatrixRotationY(dyaw);	// PropWorld と同じ回転規約
+		for (const Attachment& a : Attachments())
+		{
+			if (pp.key != a.parentKey) continue;
+			// 子の位置を「前の親の原点から見た相対位置」にし、拡大・回転して、新しい親の原点へ置き直す
+			XMVECTOR rel = XMVectorSet((a.pos[0] - pp.pos[0]) * k, 0.0f, (a.pos[2] - pp.pos[2]) * k, 0.0f);
+			XMFLOAT3 r; XMStoreFloat3(&r, XMVector3Transform(rel, spin));
+			a.pos[0] = parent->pos[0] + r.x;
+			a.pos[1] = parent->pos[1] + (a.pos[1] - pp.pos[1]) * k;	// 高さ: 親の基準からの高さを倍率で伸ばす(上下移動も含む)
+			a.pos[2] = parent->pos[2] + r.z;
+			if (a.yaw)  *a.yaw += dyaw;
+			if (a.size) { a.size[0] *= k; a.size[1] *= k; }
+		}
+		pp.pos[0] = parent->pos[0]; pp.pos[1] = parent->pos[1]; pp.pos[2] = parent->pos[2];
+		pp.yaw = parent->yaw;
+		pp.scale = parent->scale;
+	}
 }
 
 void SceneStageEditor::Update(float tick)
@@ -801,6 +901,7 @@ void SceneStageEditor::Update(float tick)
 	// F8 = restore the whole layout to how it was at startup (undo any editing mess).
 	if (IsKeyTrigger(VK_F8)) RestoreLayout();
 	UpdateEditorDrag();
+	FollowParents();	// 炉/水槽を動かしたら炭床・余燼・水面も一緒に(前フレームの UI スライダの変更もここで拾う)
 	UpdateEmbers(tick);	// coal embers rise even while editing
 }
 

@@ -27,6 +27,11 @@ float frand(float a, float b);
 // Mouse position in client pixels + client size. Defined in SceneForge.cpp.
 void GetMouseClient(float& mx, float& my, float& cw, float& ch);
 
+// Shortest-arc rotation that turns direction 'from' into direction 'to' (both any length).
+// Rotation axis = cross(from, to), angle = acos(dot). Opposite directions -> half turn about
+// any axis perpendicular to 'from'. Defined in Carry.cpp (tongs and held iron use it).
+DirectX::XMMATRIX RotationFromTo(DirectX::FXMVECTOR from, DirectX::FXMVECTOR to);
+
 // Scene-snapshot post process (global owned by Main), used by the water refraction pass.
 extern std::shared_ptr<PostProcess> g_pPost;
 

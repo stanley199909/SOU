@@ -46,6 +46,7 @@ public:
     // and push heat in/out through AddHeat.
     void  Cool(float dt);        // natural cooling over time (call every simulated frame)
     void  AddHeat(float amount); // +heat from the forge, -heat lost to a strike (clamped 0..1)
+    void  SetHeat(float heat);   // set directly (clamped 0..1). For the opening: the iron is already hot on the anvil
     float Heat() const { return m_heat; }
     float coolRate = 0.008f;     // natural cooling speed (/sec). ~65 s from burning (0.87) to too cold (0.35). Tunable
 

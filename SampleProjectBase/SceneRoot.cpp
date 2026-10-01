@@ -153,7 +153,7 @@ void SceneRoot::LoadSharedProps()
 	const std::string kSharp = P + "Sharpner/Textures/T_Sharpner_V1_BaseColor.png";
 	const std::string kTools = P + "Tools/Textures/1024x512/T_BS_Tools_BaseColor.png";
 	const std::string kMetal = P + "Metal Parts/Textures/T_Metal_parts_BaseColor.png";
-	// 炉=石壁の実写テクスチャ。PS_StageProp が世界座標(triplanar)で投影する前提の「繰り返せる石」。
+	// 炉=石壁の実写テクスチャ。PS_StageProp が物体空間の triplanar で投影する前提の「繰り返せる石」。
 	// ※炉付属のアトラス(T_Forge_1_UV*)は UV 前提なので、triplanar で読むと破綻する
 	const std::string kStone = "Assets/PolyHaven_RockWall17/rock_wall_17_Diffuse_2k.png";
 	const std::string kGround= "Assets/Model/field/wooden-plank-textured-background-material.jpg";

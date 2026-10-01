@@ -21,6 +21,7 @@ namespace Audio
 		SE_BURN_LOOP,	// 鋼が燃えている(火花を噴く)間のパチパチ音。燃えている間ループ
 		SE_GRIND_LOOP,	// 砥石で研いでいる間の「シャー」。刃を押し当てている間ループ
 		SE_STEAM,	// 淬火の大量の蒸気「シュワーーッ」(一回・長め。SE_QUENCH の後ろに重ねる)
+		SE_TITLE_FADE,	// タイトルのロゴが淡出する時の効果音(一回。ユーザーが素材を用意。無ければ無音)
 		// ※BGM_* は必ず最後にまとめる(IsBgm が BGM_TITLE..BGM_RESULT の範囲で判定する)
 		BGM_TITLE,	// タイトル画面BGM(TITLE状態でループ)
 		BGM_PLAY,	// ゲーム中BGM(PLAY状態でループ)

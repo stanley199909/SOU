@@ -17,6 +17,7 @@
 #include "Collision2D.h"	// Physics: 走動の衝突(上から見た2D。円×凸包/壁線)
 #include "HingedDoor.h"		// GameLogic: 蝶番で開閉する扉(状態と角度)
 #include "CottageDoor.h"	// 整屋の裏口の扉(データ+蝶番の幾何)
+#include "InteractionMap.h"	// 真上から正射影で見た「最近押された所」の貼图(草の倒れ等)
 #include <DirectXMath.h>
 #include <memory>
 #include <vector>
@@ -156,7 +157,7 @@ private:
 	//    StepStation(工程) が決める(データ)。刃は「最後に入った工位」に置かれ、工位を出ると手に持つ。
 	Station m_station  = Station::Anvil;			// 今(または移動アニメの到着先で)作業している工位
 	Station m_workAt   = Station::Anvil;			// 刃が置かれている工位(開始時は金床の上)
-	bool    m_carrying = false;						// 工位を出て刃を手に持って歩いている(=描かない・炉で熱されない)
+	bool    m_carrying = false;						// 刃を火钳で掴んで手に持っている(カメラの前に描く・炉で熱されない)。Carry.cpp
 	DirectX::XMFLOAT3 m_stationViewDir = { 0, 0, -1 };	// 工位(金床以外)の視点方向=入った時に玩家が居た側(水平単位)
 	float m_stationCamDist   = 1.00f;				// 工位カメラ: 作業点から手前へ離れる水平距離
 	float m_stationCamHeight = 0.75f;				// 工位カメラ: 作業点からの目の高さ
@@ -287,12 +288,12 @@ private:
 	//      ①範囲: 玩家の足元が物件の「互動範囲の箱」(物件のワールドAABBを水平に reach だけ広げた箱)の中
 	//      ②視線: 目線の射線が物件の箱(m_lookPad だけ膨らませた)に当たる(照準と同じ AimSystem::Raycast)
 	//    物件と行為の対応は表 INTERACTABLES(データ)。新しい互動は表に1行足す+行為を1つ書くだけ。
-	enum class InteractAction { EnterStation, TakeTongs, ToggleDoor };
+	enum class InteractAction { EnterStation, GripIron, ToggleDoor };
 	struct Interactable
 	{
 		const char*    propKey;	// どのプロップか(配置は stage_layout.txt に従う=箱も自動で追従)。扉は家の部品なので DOOR_KEY
 		InteractAction action;	// E で何をするか
-		Station        station;	// EnterStation の時に入る工位(TakeTongs では金床)
+		Station        station;	// EnterStation の時に入る工位(他の行為では使わない)
 		float          reach;	// 互動範囲: 物件の箱から水平にどこまで離れても届くか(単位)
 	};
 	static const Interactable INTERACTABLES[];
@@ -300,10 +301,12 @@ private:
 	int   m_focus = -1;							// 今 E で互動できる物件(INTERACTABLES の番号)。-1=無し
 	DirectX::XMFLOAT3 m_promptPoint = { 0,0,0 };	// 提示を出すワールド点(最後に注視した物件の中心)
 	float m_promptAlpha  = 0.0f;				// 提示のフェード 0..1(出る/消えるをなめらかに)
+	const char* m_promptLabel = "";				// 「E」の下の一言(最後に注視した物件の文言。PromptLabel)
 	float m_promptLambda = 12.0f;				// フェードの速さ(Damp率, 1/秒)
-	float m_lookPad      = 0.12f;				// 視線判定の箱を膨らませる量(細い火钳でも狙える様に)
-	bool  m_pendingFlip  = false;				// 火钳を取って工位へ移動中=着いたら翻面(火钳待命)から始める
-	bool  InteractEnabled(const Interactable& it) const;	// 今この互動ができる状況か(例: 砥石は研磨工程だけ)
+	float m_lookPad      = 0.12f;				// 視線判定の箱を膨らませる量(細い鉄でも狙える様に)
+	bool  InteractEnabled(const Interactable& it) const;	// 今この互動ができる状況か(例: 鉄は手に持っていない時だけ掴める)
+	int   InteractPriority(const Interactable& it) const;	// 視線が複数に当たった時の優先度(鉄は工位の箱の中にあるので鉄を優先)
+	const char* PromptLabel(const Interactable& it) const;	// 「E」の下に出す一言(何が起きるか)
 	bool  PropWorldBox(Prop& p, DirectX::XMFLOAT3& mn, DirectX::XMFLOAT3& mx);	// プロップのワールドAABB
 	bool  InteractBox(const Interactable& it, DirectX::XMFLOAT3& mn, DirectX::XMFLOAT3& mx);	// 互動物件のワールドAABB(扉は今の角度で)
 	void  UpdateInteract(float tick);			// 2判定→m_focus を決める(走動中のみ)
@@ -343,6 +346,88 @@ private:
 	static constexpr float WALL_RESLICE_EPS = 1e-3f;	// 切る高さがこれ以上変わったら切り直す(家のモデル空間)
 	void  UpdateWallSlice(const DirectX::XMMATRIX& houseWorld);	// 必要なら壁線を切り直す
 	void  InitBuildingCollision();					// 家の三角形・扉の蝶番/凸包を用意する(Init で1回)
+
+	//--- 鉄の運搬(SceneForge/Carry.cpp)。鉄は「置かれた工位」から瞬間移動しない: 玩家が火钳で掴んで運ぶ。
+	//    状態は m_carrying の1つだけ(手に持っている/いない)。火钳は普段は左腰に掛けてあり(ユーザーの設定)、
+	//    鉄を掴む時に抜き、鉄を置くと腰へ戻る。
+	//      掴む : 走動中に鉄を見て E(火钳は腰から自動で抜く)
+	//      運ぶ : 鉄と火钳をカメラの前に描く(HeldPoint)
+	//      置く : 工位を見て E → その工位に置いて入る
+	//      鉄が無い工位で E → 入れない。主人公が鉄の在り処を言う(自動では動かない=玩家が自分で歩く)
+	static constexpr const char* IRON_KEY = "Iron";	// 互動の表での鉄のキー(プロップではない)
+	//    手に持った時の見た目 = 一人称のビューモデル(first-person viewmodel)。鉄も火钳もカメラ基準で置く
+	//    =どこを見ても画面上の構図が同じ(ユーザーの絵コンテ: 鉄は左下から右奥へ斜めに伸び、火钳は画面下から伸びて
+	//    鉄の手前寄りを挟む)。
+	float m_gripOff[3]    = { -0.20f, -0.30f, 0.70f };	// 火钳が鉄を挟む点(カメラから 右/上/前, world)
+	float m_carryYaw      = 0.70f;					// 鉄の向き: 視線から右へ振る角(rad)。0=真っ直ぐ前
+	float m_carryPitch    = 0.10f;					// 鉄の向き: 上へ起こす角(rad)
+	float m_gripAlong     = 0.20f;					// 挟む位置: 鉄の手前の端から何割の所か(0=端 .. 1=奥の端)
+	float m_tongsBase[3]  = { 0.10f, -0.85f, 0.20f };	// 火钳の柄の根元(カメラから 右/上/前)。画面の下の外=手元
+	DirectX::XMFLOAT3 m_heldDir = { 0, 0, 1 };		// 手に持った鉄の長軸の向き(HeldPoint が毎回計算。WeaponRot が読む)
+	//    ① 武器の揺れ(weapon sway): ビューモデルの「前方」はカメラの前方を Damp で少し遅れて追う
+	//       =視点を振ると手の物が一瞬遅れて付いて来る(腕の重さ)。値が大きいほど機敏(遅れが小さい)。
+	//    ② めり込み防止(depth range hack): ビューモデルは深度範囲を [0, VIEWMODEL_DEPTH_RANGE] に詰めて最後に描く
+	//       =深度が常に場面より手前になり、床や壁にめり込まない(Quake/Source 系の古典的手法)。
+	DirectX::XMFLOAT3 m_vmFwd = { 0, 0, 1 };		// ビューモデル用の(遅れて追う)前方
+	bool  m_vmFwdInit = false;						// 初回/掴んだ瞬間はカメラの前方へ即合わせる
+	float m_vmSwayLambda = 14.0f;					// 揺れの追従の速さ(Damp率, 1/秒。小=重く遅れる)
+	static constexpr float VIEWMODEL_DEPTH_RANGE = 0.02f;	// ビューモデルの深度の上限(0..1 の手前 2%)
+	void  UpdateViewmodelSway(float tick);			// m_vmFwd をカメラの前方へ追わせる(Update で毎フレーム)
+	//    ③ 運んでいる時の歩き: 重い鉄を持つので遅くなる + 歩みに合わせて手の物が上下に揺れる(view bobbing)。
+	//       揺れの位相は「時間」でなく「歩いた距離」で進める=速く歩けば速く揺れ、止まれば止まる(足取りと一致)。
+	//       上下は1歩に1回、左右はその半分の周波数=小さな∞字を描く(日本のゲームでよく見る歩きの手応え)。
+	float m_carrySpeedMul = 0.6f;					// 運んでいる時の歩く速さの倍率(1=普段通り)
+	float m_bobAmp        = 0.015f;					// 上下の揺れ幅(world)
+	float m_bobSideAmp    = 0.008f;					// 左右の揺れ幅(world)
+	float m_bobPerMeter   = 1.6f;					// 1m 歩く間の揺れ(上下)の回数=歩幅の逆数
+	float m_bobPhase      = 0.0f;					// 揺れの位相(回数。歩いた距離 × m_bobPerMeter)
+	float m_bobWeight     = 0.0f;					// 揺れの強さ 0..1(歩き出し/止まりで Damp=急に始まらない)
+	static constexpr float BOB_FADE_LAMBDA = 8.0f;	// 揺れの出入りの速さ(Damp率, 1/秒)
+	static constexpr float BOB_MOVE_EPS    = 1e-4f;	// 1フレームにこれ未満しか動いていなければ「止まっている」
+	void  UpdateCarryBob(float tick, float walked);	// 歩いた距離から揺れの位相と強さを進める
+	DirectX::XMVECTOR ViewmodelBob(DirectX::FXMVECTOR right, DirectX::FXMVECTOR up) const;	// 今の揺れ(カメラ基準のずれ)
+	void  DrawViewmodel();							// 手に持った鉄と火钳を、深度範囲を詰めて最後に描く
+	float m_tongsScale    = 1.0f;					// 手/腰の火钳の大きさ(台上のプロップの大きさに対する倍率)
+	//    火钳モデルの形はモデルから自動で読む(手で向きを合わせない。InitTongsGeometry):
+	//      長軸 = 箱の最長辺 / 開閉の平面 = 長軸と2番目に長い辺 / 薄い軸 = 残り(鉄はこの向きに輪を通る)
+	//      要(かなめ)の鋲 = 一番小さい部品(繋がった三角形の塊)。口 = 長軸の端のうち鋲に近い方。
+	//      挟む点 = 口の先端と鋲の間(TONGS_JAW_CENTER_FRAC)= 口が作る輪の中心。
+	bool  m_tongsGeomOk   = false;
+	int   m_tongsLongAx   = 2, m_tongsThinAx = 1;	// 長軸 / 薄い軸(0=x,1=y,2=z)
+	float m_tongsJawSign  = -1.0f;					// 口がある端(長軸の -端=-1 / +端=+1)
+	DirectX::XMFLOAT3 m_tongsGripLocal = { 0, 0, 0 };	// 挟む点(火钳モデル空間)
+	static constexpr float TONGS_JAW_CENTER_FRAC = 0.5f;	// 挟む点 = 口の先端→鋲 のこの割合の所
+	void  InitTongsGeometry();						// 上の値を火钳モデルから求める(Init で1回)
+	float m_hipOff[3]     = { 0.28f, 0.95f, 0.12f };	// 腰の火钳の位置(体から 左/床からの高さ/前, world)
+	DirectX::XMFLOAT3 HeldPoint();					// 手に持った鉄の中心(挟む点から m_heldDir へずらした所)。m_heldDir も更新
+	DirectX::XMFLOAT3 HeldGrip();					// 火钳が鉄を挟む点(カメラ基準)
+	bool  CameraBasis(DirectX::XMVECTOR& eye, DirectX::XMVECTOR& fwd, DirectX::XMVECTOR& right, DirectX::XMVECTOR& up);	// 今のカメラの位置と向き
+	DirectX::XMFLOAT3 BodyForward();				// 体の水平前方(走動=玩家の向き / 工位=カメラの水平視線)
+	DirectX::XMFLOAT3 HipPoint();					// 左腰の点(火钳を掛ける所。翻面の運鏡もここを見る)
+	DirectX::XMMATRIX TongsWorld(const DirectX::XMFLOAT3& approach, const DirectX::XMFLOAT3& barDir,
+	                             const DirectX::XMFLOAT3& gripAt);	// 挟む点を gripAt に、柄→口を approach へ、輪を barDir が通る様に
+	void  GripIron();								// 鉄を火钳で掴む(手に持つ)
+	void  PutIronAt(Station s);						// 手の鉄を工位に置く
+	void  SayWhereIronIs();							// 鉄の在り処を独白で知らせる(鉄の無い工位で E)
+	void  DrawCarry();								// 火钳(手/腰)を描く
+
+	//--- インタラクティブ草(SceneForge/InteractiveGrass.cpp)。草は玩家を避けて倒れ、離れると戻る。
+	//    InteractionMap(真上から正射影で見た「最近押された所」の貼图)に毎フレーム玩家の足元を押し、
+	//    草の頂点シェーダー(VS_Grass)がそれを読んで葉先を動かす。草に衝突は無い(踏み込める)。
+	InteractionMap m_grassMap;
+	float m_grassMapDt       = 0.0f;			// Update で溜めた経過時間 → Draw の Fade へ(GPU の処理は Draw で行う)
+	float m_grassStampRadius = 0.7f;			// 足元で草を押し分ける円の半径(world)。体(円 0.3)より広い=周りの草も避ける
+	float m_grassLean        = 0.6f;			// 横へ倒れる量(草の高さに対する割合。坂が最も急な所で約1.5倍)
+	float m_grassPress       = 0.5f;			// 足元で葉先が沈む量(草の高さに対する割合)
+	bool  m_showGrassMap     = false;			// F1: 貼图そのものを画面に表示(押した跡が見える)
+	static constexpr UINT GRASS_MAP_RESOLUTION = 512;	// 貼图の解像度(一辺)。範囲は屋外の地面から自動
+	static constexpr const char* GRASS_KEY_PREFIX = "StOutdoorGrass";	// このキーで始まるプロップを草として描く
+	struct GrassParams { DirectX::XMFLOAT4 area, bend, slope; };	// VS_Grass の cbuffer b1 と同じ並び
+	void  InitGrassMap();						// 屋外の地面の範囲で貼图を作る(Init で1回)
+	void  UpdateGrassMap();						// Draw の最初: 薄める → 足元を押す → 描画先を元に戻す
+	bool  IsGrass(const std::string& key) const;
+	void  BindGrassParams(VertexShader* vs, Prop& p);	// 草1株ぶんの cbuffer と貼图を VS へ
+	void  DrawGrassMapPreview();				// F1: 貼图を ImGui で表示
 
 	//--- 整屋の裏口の扉(開閉する独立物件。CottageDoor.h / GameLogic/HingedDoor)。E で開閉。
 	//    絵(DoorWorld で描く)・衝突(扉の凸包を同じ行列で運ぶ)・互動(扉の箱)が全部同じ角度を読む。
@@ -441,11 +526,11 @@ private:
 	float m_flipSens     = 0.0002f;				// マウス横移動→刃の回転(1pxあたり何半回転, 1:1 raw)。小=大きく振らないと回らない=重さ
 
 	//--- 翻面の運鏡(火钳アニメの代替)。カメラは2つの「寄り」を重み付きで混ぜる:
-	//    tongs=火钳(StPliers プロップ)の方へ振り向く / grip=刃(砧面アンカー)へ寄って見下ろす。
-	//    目標点はプロップ/アンカーから取る=配置を変えても運鏡が自動で追従(座標のベタ書き無し)。
+	//    tongs=左腰に掛けた火钳(HipPoint)の方へ振り向く / grip=刃(砧面アンカー)へ寄って見下ろす。
+	//    目標点は体の位置/アンカーから取る=配置を変えても運鏡が自動で追従(座標のベタ書き無し)。
 	float m_camTongsW = 0.0f;					// 火钳方向への重み 0..1(TongsOut/PutBack の曲線で決まる)
 	float m_camGripW  = 0.0f;					// 刃への寄りの重み 0..1(Gripping で上がり、Ready で戻る)
-	bool  m_tongsInHand = false;				// 火钳を手に取っている(=台上の火钳モデルを隠す)
+	bool  m_tongsInHand = false;				// 翻面で火钳を手に取っている(=腰の火钳モデルを描かない)
 	float m_tongsLean = 0.20f;					// 火钳へ振り向く時、カメラ本体も寄る割合(体を傾ける)
 	float m_gripDolly = 0.30f;					// 夹む時、カメラ本体が刃へ寄る割合
 	float m_gripLambda = 5.0f;					// 寄り→元の視点へ戻る速さ(Damp率, 1/秒)
@@ -501,7 +586,7 @@ private:
 		float             pos[3] = { 0,0,0 };
 		float             yaw   = 0.0f;
 		bool              groundSnap = true;	// AABB下面を床の高さに合わせる
-		bool              hidden = false;		// 一時的に描かない(例: 火钳を手に取っている間の台上の火钳)
+		bool              hidden = false;		// 一時的に描かない(描画/互動/衝突から外す)
 		DirectX::XMFLOAT3 aabbMin = { 0,0,0 };	// モデル空間AABB(Loadでキャッシュ)
 		DirectX::XMFLOAT3 aabbMax = { 0,0,0 };
 		std::vector<Collision2D::Hull> hullsLocal;	// 衝突用: モデル空間の頂点を床(XZ)へ投影した凸包(塊ごとなら複数)。空=ぶつからない
@@ -598,16 +683,48 @@ private:
 	int   m_strikeCount = 0;
 
 	static constexpr float TITLE_INTERVAL = 1.0f;	// タイトルで自動的に叩く間隔(秒)
+	static constexpr float TITLE_WINDUP   = 0.45f;	// 叩く前に鎚を振りかぶる時間(秒。間隔の終わりのこの間だけ持ち上げる)
+	static constexpr float TITLE_STRIKE_VOLUME = 0.6f;	// タイトルの自動打撃の金床音(ゲーム中の打撃より控えめ)
+
+	//--- タイトル画面 = ゲーム世界そのもの(別の絵ではない)。固定の標題カメラから、金床で鎚が打ち続ける様子を映す。
+	//    SPACE → ロゴが淡出しながら、カメラが標題の位置から金床の工位へゆっくり移る(導入運鏡)→ 鍛打から開始。
+	float m_titleCamPos[3]  = { 0.2f, 1.9f, -4.8f };	// 標題カメラの位置(F1「Title」で取景→forge_tuning.txt に保存)
+	float m_titleCamLook[3] = { 0.2f, 1.1f,  0.3f };	// 標題カメラの注視点
+	float m_titleIntroTime  = 3.0f;					// ロゴが消えた後、標題→金床へカメラが移る時間(秒。長い=ゆっくり)
+	float m_logoFadeTime    = 1.0f;					// SPACE 後、ロゴが線形に淡出する時間(秒)。カメラはこの後に動き出す
+	//    導入の段階(ユーザーの演出指示: 一つ終わってから次へ):
+	//      LogoFade   : ロゴ(と開始プロンプト)が淡出 + 効果音。まだタイトル(鎚は打ち続ける)。
+	//      CameraMove : カメラが金床へ移る。タイトル BGM はカメラの進みに合わせて音量 1→0。HUD はまだ出さない。
+	//      到着       : タイトル BGM を止め、ゲーム BGM を開始 → None(鍛打の操作開始)。
+	enum class IntroPhase { None, LogoFade, CameraMove };
+	IntroPhase m_introPhase = IntroPhase::None;
+	float m_introTimer = 0.0f;						// LogoFade の経過秒
+	static constexpr float TITLE_BGM_VOLUME     = 0.40f;	// タイトル BGM の音量(淡出はここから 0 へ)
+	static constexpr float PLAY_BGM_VOLUME      = 0.45f;	// ゲーム中 BGM の音量
+	static constexpr float TITLE_FADE_SE_VOLUME = 1.0f;		// ロゴ淡出の効果音の音量
+	void  UpdateIntro(float tick);					// 導入の段階を進める(LogoFade→CameraMove、BGM の淡出)
+	void  FinishIntro();							// 金床に着いた: BGM を切り替えて導入を終える
+	void  ApplyTitleCamera();						// 標題カメラを適用
+	void  ResetTitleStage();						// タイトルの舞台: 金床の上に新しい熱い鉄(起動時/結果→タイトル)
+	void  UpdateTitleHammer(float tick);			// タイトル: 鎚が一定間隔で振りかぶって打つ(火花+金床音)
+	void  UpdateHammerFollow(float tick);			// 鎚の横位置(XZ)を照準点へ平滑追従(タイトル/鍛造で共用)
+	void  DrawTitleLogo(float alpha);				// ロゴ「FORGE」(左上。alpha で淡出)
 
 	//--- 温度パラメータ(加熱速度は上の COAL_HEAT_RATE / BELLOWS_HEAT_RATE)
 	// 打撃CDは調整しやすいようメンバー変数(m_strikeCDMax)。自然冷却速度は m_forging.coolRate
 	static constexpr float IDEAL_MIN = 0.55f;	// 最適温度帯(下限)
 	static constexpr float IDEAL_MAX = 0.85f;	// 最適温度帯(上限)
 	static constexpr float OVERHEAT  = 0.92f;	// これ以上は過熱(鋼を痛める)
+	// 開局の鉄の温度 = 適温帯の上限(ユーザー決定)。タイトルで打ち続けていた「熱い鉄」をそのまま受け継ぐ。
+	//   BURN_TEMP 以上なので配方の最初の「加熱」工程は即完了=鍛打から始まる(配方は変えない)。
+	static constexpr float START_HEAT = IDEAL_MAX;
 	// 炭火だけの温度は「燃える」と「過熱」の間でなければならない(=放置で燃え始め、しかし焼けない)。
 	// 調整で崩したらコンパイルエラーで気付ける様にする。
 	static_assert(COAL_FIRE_TEMP > ForgingSim::BURN_TEMP && COAL_FIRE_TEMP < OVERHEAT,
 	              "COAL_FIRE_TEMP must lie between BURN_TEMP and OVERHEAT");
+	// 開局の温度が燃える温度を下回ると、最初の「加熱」工程が即完了せず「鍛打から開始」が崩れる。
+	static_assert(START_HEAT >= ForgingSim::BURN_TEMP && START_HEAT < OVERHEAT,
+	              "START_HEAT must be burning-hot (skips the first Heat step) but not overheated");
 
 	//--- 打撃パラメータ
 	static constexpr float CHARGE_RATE = 1.6f;	// 蓄力速度(/秒, 満蓄力まで約0.6秒)

@@ -85,17 +85,21 @@ inline void Sky(CameraBase* camera,const XMFLOAT4& sun,const XMFLOAT4& color) {
  for(unsigned i=0;i<r.sky.GetMeshNum();++i)r.sky.GetMesh(i)->mesh->Draw();
  GetContext()->RSSetState(old.Get());SetDepthTest(DEPTH_ENABLE_WRITE_TEST);SetBlendMode(BLEND_ALPHA);
 }
-// material.x: 1 = sample baseMap by world-space triplanar projection instead of mesh UV
+// material.x: 1 = sample baseMap by triplanar projection instead of mesh UV
 // (the texture itself is whatever the model was loaded with; this only changes HOW it is sampled).
-struct PropParams {XMFLOAT4 tint,eye,sun,ambient,fire;XMFLOAT4X4 lightVP;XMFLOAT4 shadow;XMFLOAT4 material;};
-static_assert(sizeof(PropParams)==176,"PS_StageProp constants");
+// material.y: the prop's uniform world scale. The projection runs in the prop's OBJECT space
+// (worldToLocal) scaled back to metres, so the stones stick to the prop when it is moved or
+// rotated (world-space projection made them "swim" across a moving prop).
+struct PropParams {XMFLOAT4 tint,eye,sun,ambient,fire;XMFLOAT4X4 lightVP;XMFLOAT4 shadow;XMFLOAT4 material;XMFLOAT4X4 worldToLocal;};
+static_assert(sizeof(PropParams)==240,"PS_StageProp constants");
 inline void LitProp(Model* model,FXMMATRIX world,CameraBase* camera,const XMFLOAT4& tint,
                     const XMFLOAT4& sun,const XMFLOAT4& ambient,const float* fire,float fill,bool worldProjection=false) {
  if(!model || !camera || !Init())return;auto& r=Data();auto eye=camera->GetPos();
  XMFLOAT4X4 mat[3];XMStoreFloat4x4(&mat[0],XMMatrixTranspose(world));mat[1]=camera->GetView();mat[2]=camera->GetProj();r.vs.WriteBuffer(0,mat);
  PropParams p{};p.tint=tint;p.eye={eye.x,eye.y,eye.z,0};p.sun=sun;p.ambient={ambient.x,ambient.y,ambient.z,fill};p.fire={fire[0],fire[1],fire[2],ambient.w};p.lightVP=r.lightVP;
  p.shadow={r.hasShadow?1.0f:0.0f,1.0f/ShadowSize,ShadowDepthBias,ReceiverOffset};
- p.material={worldProjection?1.0f:0.0f,0,0,0};
+ p.material={worldProjection?1.0f:0.0f,XMVectorGetX(XMVector3Length(world.r[0])),0,0};
+ XMStoreFloat4x4(&p.worldToLocal,XMMatrixTranspose(XMMatrixInverse(nullptr,world)));
  r.propPS.WriteBuffer(0,&p);r.vs.Bind();SetDepthTest(DEPTH_ENABLE_WRITE_TEST);SetBlendMode(BLEND_NONE);
  for(unsigned i=0;i<model->GetMeshNum();++i){auto* mesh=model->GetMesh(i);r.propPS.SetTexture(0,model->GetTextureAt(mesh->materialID));r.propPS.Bind();BindShadow();mesh->mesh->Draw();}
  SetBlendMode(BLEND_ALPHA);

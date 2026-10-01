@@ -2,7 +2,7 @@ struct PS_IN {float4 pos:SV_POSITION0;float2 uv:TEXCOORD0;float3 normal:NORMAL0;
 Texture2D baseMap:register(t0);
 Texture2D<float> sunDepth:register(t3);
 SamplerState samp:register(s0);
-cbuffer PropParam:register(b0){float4 tint;float4 eye;float4 sun;float4 ambient;float4 fire;float4x4 lightVP;float4 shadow;float4 material;};
+cbuffer PropParam:register(b0){float4 tint;float4 eye;float4 sun;float4 ambient;float4 fire;float4x4 lightVP;float4 shadow;float4 material;float4x4 worldToLocal;};
 #include "SunShadow.hlsli"
 static const float PI=3.14159265;
 static const float FIRE_SOFTENING=1;
@@ -16,10 +16,11 @@ static const float SOOT_DARKENING=.65;       // darkening right at the fire (0..
 
 // Sample the texture three times (projected along X, Y, Z) and blend by how much the
 // surface faces each axis. No UVs needed, so seams in the mesh's UV layout disappear.
-float4 SampleTriplanar(float3 worldPos,float3 normal) {
+// pos/normal are in the prop's OBJECT space, already scaled to metres (see main).
+float4 SampleTriplanar(float3 pos,float3 normal) {
     float3 weights=pow(abs(normalize(normal)),PROJECTION_SHARPNESS);
     weights/=dot(weights,float3(1,1,1));     // weights sum to 1
-    float3 coord=worldPos/TILE_METERS;
+    float3 coord=pos/TILE_METERS;
     return baseMap.Sample(samp,coord.zy)*weights.x
          + baseMap.Sample(samp,coord.xz)*weights.y
          + baseMap.Sample(samp,coord.xy)*weights.z;
@@ -28,7 +29,12 @@ float4 SampleTriplanar(float3 worldPos,float3 normal) {
 float4 main(PS_IN p):SV_TARGET {
  float4 tex=baseMap.Sample(samp,p.uv);
  if(material.x>.5) {
-  tex=SampleTriplanar(p.worldPos,p.normal);
+  // Object space (not world space): the projection moves/rotates WITH the prop, so the stones
+  // stay glued to it. Scaled by the prop's world scale so TILE_METERS is still in metres.
+  float3 localPos=mul(float4(p.worldPos,1),worldToLocal).xyz*material.y;
+  float3 localNrm=mul(p.normal,(float3x3)worldToLocal);
+  tex=SampleTriplanar(localPos,localNrm);
+  // Soot belongs to the fire's position in the room, so it stays in world space.
   float soot=1-saturate(length(p.worldPos-fire.xyz)/SOOT_RADIUS);
   tex.rgb*=1-soot*SOOT_DARKENING;
  }
