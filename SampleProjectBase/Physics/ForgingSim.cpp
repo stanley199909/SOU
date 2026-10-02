@@ -58,7 +58,7 @@ void ForgingSim::BuildTarget()
             ridgeH = 0.90f + (0.72f - 0.90f) * v;
         }
         else                    // blade: width and height taper toward the tip
-        {
+        {   
             float v = (u - 0.30f) / 0.70f;
             wfrac  = 0.95f + (0.05f - 0.95f) * v; // wide root -> pointed tip
             ridgeH = 0.72f + (0.14f - 0.72f) * v; // thick root -> thin tip
@@ -173,8 +173,10 @@ ForgingSim::StrikeOutcome ForgingSim::ApplyStrike(int ci, int cj, int seg,
     // Good strike on an unfinished segment: advance its shaping (forward only).
     //   FORGE_STEP is "how much of the whole progresses"; a segment is 1/NSEG of the
     //   length, so scale by NSEG to keep hits-per-segment near the old whole-bar count.
+    //   Divided by workNeeded: half the work needed = each strike counts double.
+    const float MIN_WORK = 0.05f;   // guard against a zero/negative slider value
     float& prog = m_segProg[m_side][seg];
-    prog += FORGE_STEP * NSEG * power * grooveMult;
+    prog += FORGE_STEP * NSEG * power * grooveMult / fmaxf(workNeeded, MIN_WORK);
     if (prog > 1.0f) prog = 1.0f;
     return StrikeOutcome::Shaped;
 }

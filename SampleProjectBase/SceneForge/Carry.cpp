@@ -24,6 +24,7 @@ using namespace DirectX;
 //    体の向き(=腰の位置)は動かない。
 XMFLOAT3 SceneForge::BodyForward()
 {
+	if (SequencePlaying()) return m_seqBodyFwd;	// 拍子表の再生中は首だけ回る(体=腰の位置は動かない)
 	if (m_walkMode) return m_player.GetForward();
 	float dx = m_camLook[0] - m_camPos[0], dz = m_camLook[2] - m_camPos[2], len = sqrtf(dx * dx + dz * dz);
 	if (len < 1e-4f) return XMFLOAT3(0, 0, 1);
@@ -271,6 +272,11 @@ void SceneForge::DrawCarry()
 	Model* tongs = GetObj<Model>("StPliers");
 	if (!tongs) return;
 
+	if (SequencePlaying())	// 拍子表の再生中: 補間中の火钳の姿勢で描く(Sequence.cpp)
+	{
+		DrawModelWorld(tongs, TongsWorld(m_seqTongs.approach, m_seqTongs.barDir, m_seqTongs.grip));
+		return;
+	}
 	if (m_carrying) return;	// 手の火钳は DrawViewmodel が最後に描く(めり込み防止)
 	const bool atAnvil = !m_walkMode && !Transitioning() && m_station == Station::Anvil;
 	if ((m_walkMode || atAnvil) && !m_tongsInHand)

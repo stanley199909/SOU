@@ -49,6 +49,10 @@ public:
     void  SetHeat(float heat);   // set directly (clamped 0..1). For the opening: the iron is already hot on the anvil
     float Heat() const { return m_heat; }
     float coolRate = 0.008f;     // natural cooling speed (/sec). ~65 s from burning (0.87) to too cold (0.35). Tunable
+    // How much hammering a face needs, as a fraction of the original design (1 = original,
+    // 0.5 = half as many good strikes). The forge step was too long next to heat/grind/quench
+    // (user playtest 2026-10-02: 1m30s + 2m30s for the two faces, as an experienced player). Tunable
+    float workNeeded = 0.5f;
 
     // At this temperature the steel starts to throw sparks from its surface ("burning").
     // It is the visible signal a smith reads: the iron is ready (Heat step target).

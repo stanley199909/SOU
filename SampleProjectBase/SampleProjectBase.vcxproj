@@ -202,6 +202,7 @@
     <ClCompile Include="SceneForge\InteractiveGrass.cpp" />
     <ClCompile Include="SceneForge\Title.cpp" />
     <ClCompile Include="SceneForge\Carry.cpp" />
+    <ClCompile Include="SceneForge\Sequence.cpp" />
     <ClCompile Include="SceneParticleLab.cpp" />
     <ClCompile Include="Audio.cpp" />
     <ClCompile Include="DebugUI.cpp" />

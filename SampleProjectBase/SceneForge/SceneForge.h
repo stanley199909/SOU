@@ -131,6 +131,11 @@ private:
 	std::shared_ptr<Texture>    m_glow;
 	std::shared_ptr<Texture>    m_uiParchment;	// UI: 羊皮紙パネル(結果/失敗画面の下地。抠いた透明PNG)
 	std::shared_ptr<Texture>    m_uiFrame;		// UI: 飾り枠付き羊皮紙(工程リストの下地。ナインスライスで描く)
+	std::shared_ptr<Texture>    m_gaugeFrame;	// UI: 温度ゲージの金属外框(槽の暗い地を含む=一番下の層)
+	std::shared_ptr<Texture>    m_gaugeOverlay;	// UI: 槽をくり抜いた外框(一番上の層。金の縁が範囲の紋理の端を覆う)
+	std::shared_ptr<Texture>    m_gaugeMarker;	// UI: 温度ゲージの指針(表示サイズへ縮小済み)
+	std::shared_ptr<Texture>    m_gaugeIdeal;	// UI: 適温帯の紋理(範囲は IDEAL_MIN..IDEAL_MAX を程序で切り出す)
+	std::shared_ptr<Texture>    m_gaugeOver;	// UI: 過熱帯の紋理(OVERHEAT..1)
 
 	float m_time      = 0.0f;
 	float m_autoTimer = 0.0f;	// タイトルの雰囲気用に自動で火花を出す間隔
@@ -168,6 +173,10 @@ private:
 	float m_troughHover = 0.30f;					// 水槽: 水面の上に刃を構える高さ
 	DirectX::XMFLOAT3 StationBase(Station s);		// 工位の作業点(刃を置く点。砥石の滑り/淬火の沈みは含まない)
 	DirectX::XMFLOAT3 StationRight() const;			// 工位カメラから見た右方向(刃の長軸をこれに揃える)
+	// 砥石だけは「近づいた側」でなく砥石自身の向きから視点を決める(どこから入っても刃の置き方が同じ)。
+	//   視点 = 輪の軸に直交する水平方向 → 刃の長軸(StationRight)は輪の軸に沿う=刃が輪の縁を横切る置き方。
+	float m_grindViewYaw = 0.0f;					// その視点方向に足す回転(rad)。反対側から見たい時は π。F1 Stations
+	DirectX::XMFLOAT3 GrindViewDir();				// 砥石の固定視点方向(水平単位)
 	float StationAlignYaw() const;					// 刃の長軸を StationRight に揃える追加 yaw(金床では 0)
 	void  StationView(Station s, DirectX::XMFLOAT3& eye, DirectX::XMFLOAT3& target);	// 工位の視点と注視点
 	void  ApplyWorkCamera();						// 金床以外の工位の固定カメラ
@@ -408,6 +417,54 @@ private:
 	DirectX::XMMATRIX TongsWorld(const DirectX::XMFLOAT3& approach, const DirectX::XMFLOAT3& barDir,
 	                             const DirectX::XMFLOAT3& gripAt);	// 挟む点を gripAt に、柄→口を approach へ、輪を barDir が通る様に
 	void  GripIron();								// 鉄を火钳で掴む(手に持つ)
+
+	//--- 拍子表(スクリプトシーケンス, Sequence.cpp)。過渡動画を「拍(ビート)の表=データ」で書き、1つの再生器で流す。
+	//    1拍 = 「カメラがどこを見るか」+「火钳がどこへ行くか」+「鉄がどこへ行くか」+ 秒数。
+	//    拍の始めの姿勢から、拍の目標へイージングで補間する。目標は毎フレーム解決する(カメラが動いても追従)。
+	//    再生中は入力を受けない(移動アニメと同じ)。最後の拍が終わると onEnd の行為(例: 鉄を手に持つ)を実行。
+	//    新しい動作 = 表を1つ足すだけ(Unity の Timeline / UE の Sequencer と同じ考え方の最小版)。
+	enum class SeqLook  { Hip, Iron, Home };		// カメラの注視先: 左腰 / 鉄 / 再生開始時に見ていた方向
+	enum class SeqTongs { Hip, Iron, Held };		// 火钳の行き先: 腰に下げた所 / 鉄を挟む所 / 手元(ビューモデルの位置)
+	enum class SeqIron  { Rest, Held };				// 鉄の行き先: 置いてある所 / 手に持った所
+	enum class SeqEnd   { GripIron };				// 再生し終えた時の行為
+	struct SeqBeat
+	{
+		SeqLook  look;
+		SeqTongs tongs;
+		SeqIron  iron;
+		float    seconds;	// この拍の長さ
+	};
+	struct Sequence
+	{
+		const SeqBeat* beats;
+		int            count;
+		SeqEnd         onEnd;
+	};
+	static const SeqBeat  GRIP_IRON_BEATS[];		// その拍の表(Sequence.cpp)
+	static const Sequence SEQ_GRIP_IRON;			// 腰から火钳を抜く → 鉄を見る → 挟む → 持ち上げる
+	bool  m_heldFlip = false;						// 手に持った鉄の前後を入れ替える(掴んだ端=手元側。掴んだ時に決める)
+	struct TongsPose { DirectX::XMFLOAT3 grip, approach, barDir; };	// TongsWorld の3引数(挟む点/柄→口/輪を通る向き)
+	const Sequence* m_seq = nullptr;				// 再生中の拍子表(nullptr=再生していない)
+	int   m_seqBeat  = 0;							// 今の拍
+	float m_seqTimer = 0.0f;						// 今の拍の経過秒
+	DirectX::XMFLOAT3 m_seqHomeFwd  = { 0, 0, 1 };	// 再生開始時の視線(SeqLook::Home)
+	DirectX::XMFLOAT3 m_seqBodyFwd  = { 0, 0, 1 };	// 再生中の体の向き(固定)。腰の点は体の向きから決まるので、
+													// 視線で体まで回すと腰が逃げて視線が追い続けてしまう→再生中は首だけ回す
+	DirectX::XMFLOAT3 m_seqFromFwd  = { 0, 0, 1 };	// 今の拍の開始時の視線
+	TongsPose         m_seqFromTongs = {};			// 今の拍の開始時の火钳
+	TongsPose         m_seqTongs     = {};			// 今フレームの火钳(描画用)
+	DirectX::XMFLOAT4X4 m_seqFromIron = {};			// 今の拍の開始時の鉄のワールド行列
+	bool  m_seqIronOverride = false;				// true の間 WeaponWorld/WeaponRot は下の値を返す(鉄が拍子表で動いている)
+	DirectX::XMFLOAT4X4 m_seqIronWorld = {};
+	DirectX::XMFLOAT4X4 m_seqIronRot   = {};
+	bool  SequencePlaying() const { return m_seq != nullptr; }
+	void  PlaySequence(const Sequence& seq);		// 再生開始(走動中に呼ぶ)
+	void  UpdateSequence(float tick);				// 拍を進め、カメラ/火钳/鉄を補間する
+	void  StopSequence();							// 途中で打ち切る(状態遷移時の後始末。onEnd は実行しない)
+	void  BeginSeqBeat();							// 拍の開始姿勢を記録
+	DirectX::XMFLOAT3 SeqLookTarget(SeqLook l);		// 注視先のワールド点
+	TongsPose SeqTongsPose(SeqTongs t);				// 火钳の行き先の姿勢
+	DirectX::XMMATRIX SeqIronWorld(SeqIron i);		// 鉄の行き先のワールド行列(置いてある/手に持った)
 	void  PutIronAt(Station s);						// 手の鉄を工位に置く
 	void  SayWhereIronIs();							// 鉄の在り処を独白で知らせる(鉄の無い工位で E)
 	void  DrawCarry();								// 火钳(手/腰)を描く
@@ -752,6 +809,9 @@ private:
 	static constexpr float IDEAL_MIN = 0.55f;	// 最適温度帯(下限)
 	static constexpr float IDEAL_MAX = 0.85f;	// 最適温度帯(上限)
 	static constexpr float OVERHEAT  = 0.92f;	// これ以上は過熱(鋼を痛める)
+	// 淬火できる温度の上限。過熱した鋼を急冷すると結晶が粗く脆くなり、淬割れ(焼き割れ)する。
+	//   → 淬火は「QUENCH_MIN_TEMP 以上、QUENCH_MAX_TEMP 以下」の窓の中だけ(ユーザー同意 2026-10-02)。
+	static constexpr float QUENCH_MAX_TEMP = OVERHEAT;
 	// 開局の鉄の温度 = 適温帯の上限(ユーザー決定)。タイトルで打ち続けていた「熱い鉄」をそのまま受け継ぐ。
 	//   BURN_TEMP 以上なので配方の最初の「加熱」工程は即完了=鍛打から始まる(配方は変えない)。
 	static constexpr float START_HEAT = IDEAL_MAX;

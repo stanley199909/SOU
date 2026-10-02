@@ -300,7 +300,14 @@ void SceneForge::Init()
 	// UI: 羊皮紙パネル(結果/失敗画面の下地)。透明PNGを読み、ImGuiのAddImageで貼る。
 	m_uiParchment = TextureCache::Get("Assets/Ui/parchment.png");
 	// UI: 飾り枠付きの羊皮紙(工程リストの下地)。ナインスライスで縦長に伸ばしても四隅の飾りは歪まない。
-	m_uiFrame = TextureCache::Get("Assets/UI/parchment_frame.jpg");
+	//   parchment_frame_ui.png = 元画像を Tools/ui_prescale.py で高さ 680 へ縮小した物(四隅の飾りが画面の約2倍=ぼけない)
+	m_uiFrame = TextureCache::Get("Assets/UI/parchment_frame_ui.png");
+	// UI: 温度ゲージ(ChatGPT 製の絵。範囲の位置は程序で決める=DrawHeatGauge)
+	m_gaugeFrame   = TextureCache::Get("Assets/UI/Heat_Gauge/heat_gauge_frame.png");
+	m_gaugeOverlay = TextureCache::Get("Assets/UI/Heat_Gauge/heat_gauge_frame_overlay.png");	// 槽をくり抜いた外框(ツールで生成)
+	m_gaugeMarker  = TextureCache::Get("Assets/UI/Heat_Gauge/heat_gauge_marker_ui.png");		// 表示サイズへ縮小済みの指針
+	m_gaugeIdeal   = TextureCache::Get("Assets/UI/Heat_Gauge/heat_zone_ideal.png");
+	m_gaugeOver    = TextureCache::Get("Assets/UI/Heat_Gauge/heat_zone_over.png");
 
 	// --- シーン装飾: 編集シーン(StageEditor)と同じ道具一式・同じキー(St...)で読み込む ---
 	//   キーを St... に統一したので Assets/stage_layout.txt を両シーンで共有できる。
@@ -497,6 +504,7 @@ void SceneForge::StartGame()
 	m_stepIdx = 0;
 	m_stepChangedAt = m_time;	// 指引 UI: 最初の案内文も淡入させる
 	m_trackerRows.clear();		// 工程リストの済状態を作り直す(UpdateTracker が配方の工程数で用意する)
+	StopSequence();				// 前の回の拍子表が途中なら打ち切る
 	m_stepMachine.ChangeState(StepKey(m_recipe->steps[0].type));
 }
 
@@ -1060,6 +1068,12 @@ bool SceneForge::TryQuench()
 		Say((const char*)u8"冷めてしまった…炉でもう一度熱してから", IM_COL32(120, 170, 255, 255));
 		return false;
 	}
+	if (m_forging.Heat() > QUENCH_MAX_TEMP)
+	{
+		// 過熱のまま水に入れると割れる。少し冷めるのを待たせる(負向フィードバック=独白だけ。罰は無し)
+		Say((const char*)u8"熱すぎる…このまま水に入れたら割れる。少し冷ましてから", IM_COL32(255, 120, 120, 255));
+		return false;
+	}
 	Audio::Play(Audio::SE_QUENCH, 0.9f);	// 水に入った瞬間の「ジュワッ」
 	Audio::Play(Audio::SE_STEAM,  0.9f);	// 続く大量の蒸気「シュワーーッ」
 	m_steamTimer = STEAM_DURATION;			// 蒸気の発生を開始(Update で弱まりながら続く)
@@ -1111,6 +1125,13 @@ void SceneForge::Update(float tick)
 		{
 			// 走動⇔工位の移動アニメ中: 取り消し不可。計時だけ進め、入力は捨てる(F1中は一時停止)。
 			UpdateModeTrans(tick);
+		}
+		else if (SequencePlaying())
+		{
+			// 拍子表の再生中(火钳を抜いて鉄を掴む等): 取り消し不可。カメラも物も拍子表が動かす(Sequence.cpp)。
+			// マウス移動は読んで捨てる=終わった瞬間に溜まった移動量で視点が跳ばない。
+			UpdateSequence(tick);
+			float dx, dy; ReadMouseDelta(dx, dy);
 		}
 		else if (m_walkMode)
 		{

@@ -192,6 +192,9 @@
     <ClCompile Include="SceneForge\Title.cpp">
       <Filter>ソース ファイル\App\Scene\SceneForge</Filter>
     </ClCompile>
+    <ClCompile Include="SceneForge\Sequence.cpp">
+      <Filter>ソース ファイル\App\Scene\SceneForge</Filter>
+    </ClCompile>
     <ClCompile Include="SceneForge\Carry.cpp">
       <Filter>ソース ファイル\App\Scene\SceneForge</Filter>
     </ClCompile>

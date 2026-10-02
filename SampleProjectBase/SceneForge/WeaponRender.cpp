@@ -273,6 +273,7 @@ XMMATRIX SceneForge::WeaponSpin() const
 //    WeaponWorld と法線の変換が同じ回転を使う=見た目と陰影が必ず一致する。
 XMMATRIX SceneForge::WeaponRot() const
 {
+	if (m_seqIronOverride) return XMLoadFloat4x4(&m_seqIronRot);	// 拍子表で動かしている間(Sequence.cpp)
 	XMMATRIX r = WeaponSpin() *
 		XMMatrixRotationRollPitchYaw(m_wpPitch, m_wpYaw, m_wpRoll) *
 		XMMatrixRotationY(StationAlignYaw());
@@ -321,6 +322,7 @@ XMFLOAT3 SceneForge::WorkAnchor()
 
 XMMATRIX SceneForge::WeaponWorld()
 {
+	if (m_seqIronOverride) return XMLoadFloat4x4(&m_seqIronWorld);	// 拍子表で動かしている間(Sequence.cpp)
 	float ex = m_wpMax.x - m_wpMin.x, ey = m_wpMax.y - m_wpMin.y, ez = m_wpMax.z - m_wpMin.z;
 	float maxE = fmaxf(ex, fmaxf(ey, ez)); if (maxE < 1e-5f) maxE = 1.0f;
 	float fit = (m_barLen / maxE) * m_wpScale;

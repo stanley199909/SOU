@@ -47,6 +47,7 @@ static void CenterText(const char* text, float yRatio, float scale = 1.0f,
 	ImVec2 disp = ImGui::GetIO().DisplaySize;	// 実際の画面サイズ(解像度非依存)
 	ImFont* f = font ? font : ImGui::GetFont();
 	float px = f->FontSize * scale;
+	if (f == DebugUI::FontJP()) f = DebugUI::FontJPFor(px);	// 日本語は描く大きさに一番近い実寸で焼いた物へ(縮小ぼけ防止)
 	ImVec2 sz = f->CalcTextSizeA(px, FLT_MAX, 0.0f, text);
 	float x = (disp.x - sz.x) * 0.5f;
 	float y =  disp.y * yRatio - sz.y * 0.5f;
@@ -106,7 +107,8 @@ static void DrawNineSlice(ImDrawList* dl, Texture* tex, ImVec2 a, ImVec2 b, floa
 //    明るい炉の前でも沈まない様に、黒く染めた同じ画像を少しずらして下に敷く(影)。
 void SceneForge::DrawKeyHints(const KeyHint* hints, int count, float yRatio, float alpha)
 {
-	const std::string ICON_DIR = "Assets/UI/Keyboard & Mouse/Double/";	// 128px 版(大画面でも縁がぼけない)
+	// 64px 版。画面上は約45px(1080p)=ほぼ等倍。128px 版だと約2.8倍の縮小になり、ミップマップの平均でぼやけた。
+	const std::string ICON_DIR = "Assets/UI/Keyboard & Mouse/Default/";
 	const float ICON_RATIO      = 0.042f;	// アイコンの大きさ(画面高さ比)
 	const float ICON_GAP_RATIO  = 0.002f;	// 1つの説明の中のアイコン同士の間
 	const float LABEL_GAP_RATIO = 0.004f;	// アイコンと一言の間
@@ -115,8 +117,8 @@ void SceneForge::DrawKeyHints(const KeyHint* hints, int count, float yRatio, flo
 	const float SHADOW_PX       = 2.0f;		// 影のずれ(px)
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
 	ImDrawList* dl = ImGui::GetForegroundDrawList();
-	ImFont* jp = DebugUI::FontJP();
 	const float icon = disp.y * ICON_RATIO, px = disp.y * TEXT_RATIO;
+	ImFont* jp = DebugUI::FontJPFor(px);	// 描く大きさに一番近い実寸のフォント
 	const int   a = (int)(255 * alpha);
 
 	// 1) 全体の幅を測って中央揃えの開始位置を決める
@@ -181,7 +183,11 @@ static ImU32 HeatColor(float h, float alpha = 1.0f)
 	return IM_COL32((int)(r * 255), (int)(g * 255), (int)(b * 255), (int)(alpha * 255));
 }
 
-//--- 温度ゲージ(HUD)
+//--- 温度ゲージ(HUD)。
+//    見た目は画像(ChatGPT 製, Assets/UI/Heat_Gauge/): 金属の外框 / 指針 / 適温・過熱の紋理 / 火花の記号。
+//    「どこからどこまでが適温か」は画像に描かず、温度の定数(IDEAL_MIN 等)から程序で決めて紋理をその範囲だけ貼る
+//    (UV で切り出す)。=温度を調整しても絵が合わなくならない。画像が無ければ従来の矩形の描画に戻る。
+//    画像はどれも周りに大きな透明の余白があるので、中身の位置(px)を測って定数にした(元画像の寸法に対する比で使う)。
 void SceneForge::DrawHeatGauge()
 {
 	ImDrawList* dl = ImGui::GetForegroundDrawList();
@@ -192,6 +198,83 @@ void SceneForge::DrawHeatGauge()
 	const float y  = disp.y * 0.80f;
 	const float hgt = 20.0f;
 	auto lerpX = [&](float t) { return x0 + (x1 - x0) * t; };
+
+	Texture* frame   = m_gaugeFrame.get();
+	Texture* overlay = m_gaugeOverlay.get();
+	Texture* marker  = m_gaugeMarker.get();
+	if (frame && frame->GetResource() && overlay && overlay->GetResource() && marker && marker->GetResource())
+	{
+		// 3枚を重ねて描く(レイヤー。下から):
+		//   ① 外框(heat_gauge_frame.png)      … 槽の暗い地を含めた全体
+		//   ② 適温/過熱の紋理                 … 槽の範囲に、温度の定数で決めた区間だけ
+		//   ③ 槽をくり抜いた外框(…_overlay.png) … 金の縁が②の端を覆う=槽の丸い両端にもぴったり収まる
+		//   ③ はツールで作った: 槽の中心から各行を左右へ走査し、金の縁で止めた範囲を透明にした(行ごとの外れ値は中央値で除去)。
+		// --- 外框の寸法(1586x992 で測定。①③は同じ寸法・同じ位置) ---
+		const float F_W = 1586.0f, F_H = 992.0f;			// 測った時の画像の寸法(実際の寸法との比で換算する)
+		const float F_LEFT = 27.0f,  F_RIGHT = 1558.0f;	// 不透明な部分の左右端
+		const float F_TOP  = 435.0f, F_BOTTOM = 559.0f;	// 不透明な部分の上下端
+		const float T_LEFT = 125.0f, T_RIGHT = 1458.0f;	// くり抜いた槽の左右端(=温度 0 と 1 の位置)
+		const float T_TOP  = 462.0f, T_BOTTOM = 532.0f;	// 同 上下端
+		const float CAP_L  = 190.0f, CAP_R = 1395.0f;	// 端の飾り(鋲+槽の丸い端)の内側の境=ここから内は直線なので横に伸ばしてよい
+		// --- 画面での大きさ(画面比) ---
+		const float TRACK_W_RATIO = 0.46f;		// 槽の幅(画面幅比)
+		const float TRACK_H_RATIO = 0.026f;		// 槽の高さ(画面高さ比)。外框の倍率はこれで決まる(縦横同倍率=鋲が歪まない)
+		const float TRACK_Y_RATIO = 0.80f;		// 槽の上端(画面高さ比)
+		const float MARKER_H_RATIO = 0.040f;	// 指針の高さ(画面高さ比)。heat_gauge_marker_ui.png はこの2倍(1080p)で縮小済み
+		const float MARKER_DIP     = 0.35f;		// 指針の先を槽へ食い込ませる量(槽の高さに対する比)
+		const ImU32 TINT = IM_COL32(255, 255, 255, 255);
+
+		const float kx = frame->GetWidth() / F_W, ky = frame->GetHeight() / F_H;	// 書き出し解像度が変わった時の換算
+		const float tw = disp.x * TRACK_W_RATIO, th = disp.y * TRACK_H_RATIO;
+		const float tx0 = (disp.x - tw) * 0.5f, tx1 = tx0 + tw, ty0 = disp.y * TRACK_Y_RATIO, ty1 = ty0 + th;
+		const float s = th / ((T_BOTTOM - T_TOP) * ky);	// 画像1px → 画面px(縦で決め、端の飾りにも同じ倍率)
+		auto U = [&](float px) { return px * kx / frame->GetWidth(); };
+		auto V = [&](float py) { return py * ky / frame->GetHeight(); };
+		const float fy0 = ty0 - (T_TOP - F_TOP) * ky * s, fy1 = ty1 + (F_BOTTOM - T_BOTTOM) * ky * s;
+		// 横は3分割(左の飾り / 伸ばす中央 / 右の飾り)。飾りは同倍率、中央だけ槽の幅に合わせて伸ばす
+		const float lx0 = tx0 - (T_LEFT - F_LEFT) * kx * s, lx1 = tx0 + (CAP_L - T_LEFT) * kx * s;
+		const float rx0 = tx1 - (T_RIGHT - CAP_R) * kx * s, rx1 = tx1 + (F_RIGHT - T_RIGHT) * kx * s;
+		auto DrawFrame = [&](Texture* t)	// ① と ③ は同じ切り方で描く
+		{
+			ImTextureID id = (ImTextureID)t->GetResource();
+			dl->AddImage(id, ImVec2(lx0, fy0), ImVec2(lx1, fy1), ImVec2(U(F_LEFT), V(F_TOP)), ImVec2(U(CAP_L),   V(F_BOTTOM)), TINT);
+			dl->AddImage(id, ImVec2(lx1, fy0), ImVec2(rx0, fy1), ImVec2(U(CAP_L),  V(F_TOP)), ImVec2(U(CAP_R),   V(F_BOTTOM)), TINT);
+			dl->AddImage(id, ImVec2(rx0, fy0), ImVec2(rx1, fy1), ImVec2(U(CAP_R),  V(F_TOP)), ImVec2(U(F_RIGHT), V(F_BOTTOM)), TINT);
+		};
+
+		DrawFrame(frame);	// ①
+
+		// ② 温度の範囲: 紋理の「その範囲に当たる部分」だけを槽に貼る(UV の u = 温度)
+		//    紋理は上下に透明の余白がある → 不透明な帯(v の範囲)だけ使う(2172x724 で測定)
+		auto heatX = [&](float t) { return tx0 + tw * t; };
+		const float ZONE_SRC_H = 724.0f;	// 紋理を測った時の画像の高さ(下の帯の位置はこれに対する px)
+		auto DrawZone = [&](Texture* z, float from, float to, float vTop, float vBottom)
+		{
+			if (!z || !z->GetResource() || to <= from) return;
+			dl->AddImage((ImTextureID)z->GetResource(), ImVec2(heatX(from), ty0), ImVec2(heatX(to), ty1),
+			             ImVec2(from, vTop / ZONE_SRC_H), ImVec2(to, vBottom / ZONE_SRC_H), TINT);
+		};
+		const float IDEAL_V_TOP = 243.0f, IDEAL_V_BOTTOM = 481.0f;	// heat_zone_ideal.png の不透明な帯
+		const float OVER_V_TOP  = 265.0f, OVER_V_BOTTOM  = 462.0f;	// heat_zone_over.png の不透明な帯
+		DrawZone(m_gaugeIdeal.get(), IDEAL_MIN, IDEAL_MAX, IDEAL_V_TOP, IDEAL_V_BOTTOM);
+		DrawZone(m_gaugeOver.get(),  OVERHEAT,  1.0f,      OVER_V_TOP,  OVER_V_BOTTOM);
+
+		DrawFrame(overlay);	// ③ 金の縁が②の端を覆う
+
+		// --- 指針: 先端(下の頂点)を今の温度の位置に。槽へ少し食い込ませる ---
+		//   heat_gauge_marker_ui.png は中身だけを切り出し、画面での大きさの2倍へ高品質(Lanczos)で縮小済み
+		//   (元の 1254px を実行時に約20分の1へ縮めると、ミップマップの平均でぼやけるため)。
+		{
+			const float mh = disp.y * MARKER_H_RATIO;
+			const float mw = mh * marker->GetWidth() / (float)marker->GetHeight();
+			const float mx = heatX(m_forging.Heat()), tipY = ty0 + th * MARKER_DIP;
+			dl->AddImage((ImTextureID)marker->GetResource(), ImVec2(mx - mw * 0.5f, tipY - mh), ImVec2(mx + mw * 0.5f, tipY),
+			             ImVec2(0, 0), ImVec2(1, 1), TINT);
+		}
+		return;
+	}
+
+	// ---- 画像が無い時の従来の描画 ----
 
 	// トラック
 	dl->AddRectFilled(ImVec2(x0, y), ImVec2(x1, y + hgt), IM_COL32(30, 30, 34, 220), 4.0f);
@@ -430,7 +513,7 @@ void SceneForge::DrawStepTracker()
 	if (!m_recipe) return;
 	ImVec2 disp = ImGui::GetIO().DisplaySize;		// 寸法はすべて画面比(解像度非依存)
 	ImDrawList* dl = ImGui::GetForegroundDrawList();
-	ImFont* jp = DebugUI::FontJP();
+	auto JP = [](float px) { return DebugUI::FontJPFor(px); };	// 見出し/工程名/表裏で大きさが違う→それぞれ一番近い実寸
 
 	// --- 羊皮紙パネル ---
 	const float PANEL_X_RATIO   = 0.015f;	// パネルの左端(画面幅比)
@@ -498,7 +581,7 @@ void SceneForge::DrawStepTracker()
 
 	const float x  = pa.x + corner * INSET_SIDE;
 	float       cy = pa.y + corner * INSET_TOP;
-	dl->AddText(jp, disp.y * HEAD_RATIO, ImVec2(x, cy), INK_HEAD, (const char*)u8"工程");
+	dl->AddText(JP(disp.y * HEAD_RATIO), disp.y * HEAD_RATIO, ImVec2(x, cy), INK_HEAD, (const char*)u8"工程");
 	cy += row * HEAD_GAP;
 
 	// 取り消し線のアニメ: 済になった瞬間から左→右へ引き、済でなくなった瞬間から右→左へ消す。
@@ -532,10 +615,10 @@ void SceneForge::DrawStepTracker()
 
 		const char* label = m_recipe->steps[i].label;
 		ImVec2 tp(x + r * 2.0f * NOW_DOT_SCALE + disp.y * TEXT_GAP_RATIO, cy);
-		dl->AddText(jp, px, tp, col, label);
+		dl->AddText(JP(px), px, tp, col, label);
 		if (!now && strike > 0.0f)	// 取り消し線(左から strike の割合だけ)
 		{
-			ImVec2 ts = jp->CalcTextSizeA(px, FLT_MAX, 0.0f, label);
+			ImVec2 ts = JP(px)->CalcTextSizeA(px, FLT_MAX, 0.0f, label);
 			float ly = tp.y + ts.y * STRIKE_Y;
 			dl->AddLine(ImVec2(tp.x, ly), ImVec2(tp.x + ts.x * strike, ly), INK_DONE, STRIKE_W);
 		}
@@ -548,7 +631,7 @@ void SceneForge::DrawStepTracker()
 			float spx = disp.y * SUB_TEXT_RATIO;
 			ImVec2 sp(tp.x, cy + (row - subRow));
 			ImU32  sc = subs[k].active ? INK_NOW : INK_DONE;
-			dl->AddText(jp, spx, sp, sc, subs[k].name);
+			dl->AddText(JP(spx), spx, sp, sc, subs[k].name);
 			float bx0 = sp.x + spx + disp.y * BAR_GAP_RATIO, bx1 = bx0 + disp.x * BAR_W_RATIO;
 			float bh  = disp.y * BAR_H_RATIO, by = sp.y + (spx - bh) * 0.5f;
 			dl->AddRectFilled(ImVec2(bx0, by), ImVec2(bx1, by + bh), BAR_BG_COL);
@@ -593,6 +676,7 @@ const char* SceneForge::GuideFor(Station& goal) const
 			return (const char*)u8"十分に熱くなった。水槽へ運ぶ";
 		}
 		if (heat < MinWorkTemp(st.type)) { goal = Station::Hearth; return (const char*)u8"刃が冷めた。炉で熱し直してから水へ"; }
+		if (heat > QUENCH_MAX_TEMP) return (const char*)u8"熱すぎる。赤い所から外れるまで少し冷ます";	// 窓の上限(行き先は水槽のまま)
 		return st.instruction;
 
 	default:
@@ -688,7 +772,7 @@ void SceneForge::UpdateTracker()
 //    工位で作業中(走動でない)/視点の移動中は出さない。
 bool SceneForge::GuideTarget(XMFLOAT3& pos, const char*& label)
 {
-	if (m_state != GAME_PLAY || !m_walkMode || Transitioning()) return false;
+	if (m_state != GAME_PLAY || !m_walkMode || Transitioning() || SequencePlaying()) return false;
 	const Station goal = m_guideGoal;
 	if (!m_carrying && m_workAt != goal)
 	{
@@ -741,7 +825,7 @@ void SceneForge::DrawObjectiveMarker()
 
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
 	ImDrawList* dl = ImGui::GetForegroundDrawList();
-	ImFont* jp = DebugUI::FontJP();
+	ImFont* jp = DebugUI::FontJPFor(disp.y * LABEL_RATIO);	// 行き先名の大きさに一番近い実寸のフォント
 	const float s = disp.y * SIZE_RATIO;
 	const float edge = disp.y * EDGE_RATIO;
 
@@ -952,6 +1036,9 @@ void SceneForge::DrawUI()
 			ImGui::SliderFloat("Hearth lift",  &m_hearthLift,  -0.3f, 0.3f, "%.3f");	// 炭床の上の高さ
 			ImGui::SliderFloat("Grind lift",   &m_grindLift,   -0.5f, 0.5f, "%.3f");	// 砥石上端からの高さ
 			ImGui::SliderFloat("Trough hover", &m_troughHover,  0.0f, 1.0f, "%.3f");	// 水面の上に構える高さ
+			if (ImGui::SliderAngle("Grind view", &m_grindViewYaw, -180.0f, 180.0f)	// 砥石の固定視点の向き(0/180=輪の両側)
+			    && m_station == Station::Grindstone && !m_walkMode)
+				m_stationViewDir = GrindViewDir();	// 研磨中ならその場で反映
 			ImGui::TextDisabled("-- Grindstone feel --");
 			ImGui::SliderFloat("Pedal impulse", &m_wheel.pedalImpulse, 0.5f, 6.0f,  "%.2f");	// 1回踏んだ時の加速
 			ImGui::SliderFloat("Wheel max",     &m_wheel.maxSpeed,     2.0f, 30.0f, "%.1f");	// 最高回転
@@ -984,6 +1071,7 @@ void SceneForge::DrawUI()
 		{
 			ImGui::SliderFloat("Aim sens",     &m_aimSens,      0.0006f, 0.0050f, "%.4f");	// 低=重い
 			ImGui::SliderFloat("Hammer follow",&m_hammerFollow, 3.0f, 24.0f, "%.1f");		// 低=遅れて重い
+			ImGui::SliderFloat("Forge work",   &m_forging.workNeeded, 0.2f, 1.0f, "%.2f");	// 1面を仕上げるのに要る打撃量(1=元の量)
 		}
 
 		// --- Walk / Player: 一人称の走動 ---

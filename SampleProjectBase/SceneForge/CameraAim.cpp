@@ -260,7 +260,11 @@ void SceneForge::BeginEnterStation(Station s)
 		float len = sqrtf(dx * dx + dz * dz);
 		if (len > 1e-4f) m_stationViewDir = XMFLOAT3(dx / len, 0.0f, dz / len);
 	}
-	if (s == Station::Grindstone) m_grindU = 0.5f;	// 刃の中央から研ぎ始める
+	if (s == Station::Grindstone)
+	{
+		m_stationViewDir = GrindViewDir();	// 近づいた側に関係なく固定(刃の位置が毎回同じになる)
+		m_grindU = 0.5f;					// 刃の中央から研ぎ始める
+	}
 
 	// 工位の視点は「正面の既定」から始める(前回の視角のずれを持ち越さない)。
 	m_lookYaw = 0.0f; m_lookPitch = 0.0f;
@@ -408,6 +412,36 @@ XMFLOAT3 SceneForge::StationBase(Station s)
 	return m_barAnchor;
 }
 
+//--- 砥石の固定視点方向。輪(StGrindWheel)のモデル箱で一番薄い軸=車軸(円盤は軸方向に薄い)。
+//    それを砥石の配置行列で回し、水平に直したものが車軸の向き A。視点はそれに直交する水平方向
+//    (=輪を横から見る)。直交方向は2つあるので m_grindViewYaw で選ぶ/微調整する。
+//    道具の配置(stage_layout.txt)を変えても、車軸から計算し直すので自動で追従する。
+XMFLOAT3 SceneForge::GrindViewDir()
+{
+	XMFLOAT3 axle(1.0f, 0.0f, 0.0f);	// 輪が見つからない時の既定(ワールド X を車軸とみなす)
+	Prop* g = GetProp("StGrind");
+	const PropPart* part = FindPropPart("StGrind");
+	Model* wheel = part ? GetObj<Model>(part->partKey) : nullptr;
+	if (g && wheel)
+	{
+		XMFLOAT3 lmn, lmx; wheel->GetLocalAABB(lmn, lmx);
+		float ex = lmx.x - lmn.x, ey = lmx.y - lmn.y, ez = lmx.z - lmn.z;
+		XMVECTOR local = (ex <= ey && ex <= ez) ? XMVectorSet(1, 0, 0, 0)
+		               : (ey <= ez)             ? XMVectorSet(0, 1, 0, 0)
+		                                        : XMVectorSet(0, 0, 1, 0);
+		XMStoreFloat3(&axle, XMVector3TransformNormal(local, PropWorld(*g)));
+	}
+	axle.y = 0.0f;
+	float len = sqrtf(axle.x * axle.x + axle.z * axle.z);
+	const float HORIZONTAL_EPS = 1e-4f;	// 車軸が真上を向く(輪が寝ている)と水平成分が無い
+	if (len < HORIZONTAL_EPS) { axle = XMFLOAT3(1.0f, 0.0f, 0.0f); len = 1.0f; }
+	axle.x /= len; axle.z /= len;
+	// 車軸に直交する水平方向を m_grindViewYaw だけ回す(Y 軸回転)
+	XMFLOAT3 d(axle.z, 0.0f, -axle.x);
+	const float c = cosf(m_grindViewYaw), s = sinf(m_grindViewYaw);
+	return XMFLOAT3(d.x * c + d.z * s, 0.0f, -d.x * s + d.z * c);
+}
+
 //--- 工位カメラから見た右方向。視線 f = -m_stationViewDir(作業点の方)、右 = up × f = (f.z, 0, -f.x)。
 XMFLOAT3 SceneForge::StationRight() const
 {
@@ -426,6 +460,8 @@ float SceneForge::StationAlignYaw() const
 	if (L.x * L.x + L.z * L.z < 1e-6f) return 0.0f;	// 長軸が真上を向いている=水平に揃えようがない
 	// 運んでいる時は長軸を手に持った向き m_heldDir の水平成分へ(上下の傾きは WeaponRot が足す)。工位ではカメラの左右へ。
 	XMFLOAT3 D = m_carrying ? m_heldDir : StationRight();
+	// 掴んだ端が長軸の + 側なら、手元側(-m_heldDir)へ + 側を向ける=掴んだ端がそのまま手元に来る(PlaySequence で決定)
+	if (m_carrying && m_heldFlip) D = XMFLOAT3(-D.x, -D.y, -D.z);
 	return atan2f(D.x, D.z) - atan2f(L.x, L.z);
 }
 
@@ -768,6 +804,8 @@ void SceneForge::SaveTuning()
 	fprintf(fp, "bladelift %.5f %.5f %.5f\n",  m_hearthLift, m_grindLift, m_troughHover);
 	fprintf(fp, "wheel %.5f %.5f %.5f %.5f\n", m_wheel.pedalImpulse, m_wheel.maxSpeed, m_wheel.friction, m_wheel.bladeDrag);
 	fprintf(fp, "grindsens %.6f\n", m_grindSens);
+	fprintf(fp, "forgework %.5f\n", m_forging.workNeeded);
+	fprintf(fp, "grindview %.5f\n", m_grindViewYaw);
 
 	fclose(fp);
 }
@@ -817,6 +855,7 @@ void SceneForge::TuningRefs(std::vector<float*>& out)
 		&m_stationCamDist, &m_stationCamHeight, &m_stationLookLift,
 		&m_hearthLift, &m_grindLift, &m_troughHover,
 		&m_wheel.pedalImpulse, &m_wheel.maxSpeed, &m_wheel.friction, &m_wheel.bladeDrag, &m_grindSens,
+		&m_forging.workNeeded, &m_grindViewYaw,
 	};
 	out.assign(r, r + _countof(r));
 }
@@ -904,6 +943,8 @@ void SceneForge::LoadTuning()
 		else if (strcmp(key, "bladelift")  == 0) sscanf_s(v, "%f %f %f", &m_hearthLift, &m_grindLift, &m_troughHover);
 		else if (strcmp(key, "wheel")      == 0) sscanf_s(v, "%f %f %f %f", &m_wheel.pedalImpulse, &m_wheel.maxSpeed, &m_wheel.friction, &m_wheel.bladeDrag);
 		else if (strcmp(key, "grindsens")  == 0) sscanf_s(v, "%f", &m_grindSens);
+		else if (strcmp(key, "forgework")  == 0) sscanf_s(v, "%f", &m_forging.workNeeded);
+		else if (strcmp(key, "grindview")  == 0) sscanf_s(v, "%f", &m_grindViewYaw);
 	}
 	fclose(fp);
 }

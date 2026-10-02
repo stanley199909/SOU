@@ -124,7 +124,7 @@ void SceneForge::UpdateInteract(float tick)
 	float bestT = FLT_MAX;
 	XMFLOAT3 bestCenter(0, 0, 0);
 
-	if (m_state == GAME_PLAY && m_walkMode && !Transitioning())
+	if (m_state == GAME_PLAY && m_walkMode && !Transitioning() && !SequencePlaying())
 	{
 		// 目線の射線(ApplyWalkCamera と同じ規約で、玩家の状態から直接作る=カメラ適用順に依存しない)
 		XMFLOAT3 foot = m_player.GetPosition();
@@ -190,7 +190,9 @@ void SceneForge::DoInteract(const Interactable& it)
 		else                              SayWhereIronIs();
 		break;
 	case InteractAction::GripIron:
-		GripIron();		// 腰の火钳で掴む → 以後、鉄は手の前に付いて来る(Carry.cpp)
+		// 腰の火钳を抜く → 鉄を見る → 挟む → 持ち上げる(拍子表 Sequence.cpp)。終わった時に GripIron が呼ばれ、
+		// 以後、鉄は手の前に付いて来る(Carry.cpp)
+		PlaySequence(SEQ_GRIP_IRON);
 		break;
 	case InteractAction::ToggleDoor:
 		// 開閉を切り替えるだけ。回転・衝突(扉の凸包)・提示の位置は m_door の角度に全部追従する。
@@ -240,8 +242,8 @@ void SceneForge::DrawInteractPrompt()
 	{
 		const float LABEL_RATIO = 0.026f;	// 文言の文字の高さ
 		const float LABEL_GAP   = 0.010f;	// 丸との間
-		ImFont* jp = DebugUI::FontJP();		// 文言は日本語(游明朝)。「E」だけ英字フォント
 		float  lpx = disp.y * LABEL_RATIO;
+		ImFont* jp = DebugUI::FontJPFor(lpx);	// 文言は日本語(游明朝。大きさに一番近い実寸)。「E」だけ英字フォント
 		ImVec2 ls  = jp->CalcTextSizeA(lpx, FLT_MAX, 0.0f, m_promptLabel);
 		ImVec2 lp(sx - ls.x * 0.5f, sy + r + disp.y * LABEL_GAP);
 		dl->AddText(jp, lpx, ImVec2(lp.x + 1.0f, lp.y + 1.0f), IM_COL32(0, 0, 0, (int)(a * 0.8f)), m_promptLabel);	// 影(明るい背景でも読める)
