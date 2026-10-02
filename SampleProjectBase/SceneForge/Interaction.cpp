@@ -107,11 +107,11 @@ const char* SceneForge::PromptLabel(const Interactable& it) const
 	switch (it.action)
 	{
 	case InteractAction::EnterStation:
-		if (m_carrying)             return "Put the iron here";
-		if (m_workAt == it.station) return "Work here";
-		return "The iron is not here";
-	case InteractAction::GripIron:   return "Grip the iron with the tongs";
-	case InteractAction::ToggleDoor: return m_door.IsOpen() ? "Close the door" : "Open the door";
+		if (m_carrying)             return (const char*)u8"ここに鉄を置く";
+		if (m_workAt == it.station) return (const char*)u8"ここで作業する";
+		return (const char*)u8"鉄はここに無い";
+	case InteractAction::GripIron:   return (const char*)u8"火ばさみで鉄を掴む";
+	case InteractAction::ToggleDoor: return m_door.IsOpen() ? (const char*)u8"扉を閉める" : (const char*)u8"扉を開ける";
 	}
 	return "";
 }
@@ -238,13 +238,14 @@ void SceneForge::DrawInteractPrompt()
 	// 丸の下に「押すと何が起きるか」を一言(鉄を掴む/ここに置く/ここで作業/鉄はここに無い…)。
 	if (m_promptLabel && m_promptLabel[0])
 	{
-		const float LABEL_RATIO = 0.024f;	// 文言の文字の高さ
+		const float LABEL_RATIO = 0.026f;	// 文言の文字の高さ
 		const float LABEL_GAP   = 0.010f;	// 丸との間
+		ImFont* jp = DebugUI::FontJP();		// 文言は日本語(游明朝)。「E」だけ英字フォント
 		float  lpx = disp.y * LABEL_RATIO;
-		ImVec2 ls  = f->CalcTextSizeA(lpx, FLT_MAX, 0.0f, m_promptLabel);
+		ImVec2 ls  = jp->CalcTextSizeA(lpx, FLT_MAX, 0.0f, m_promptLabel);
 		ImVec2 lp(sx - ls.x * 0.5f, sy + r + disp.y * LABEL_GAP);
-		dl->AddText(f, lpx, ImVec2(lp.x + 1.0f, lp.y + 1.0f), IM_COL32(0, 0, 0, (int)(a * 0.8f)), m_promptLabel);	// 影(明るい背景でも読める)
-		dl->AddText(f, lpx, lp, IM_COL32(240, 225, 200, a), m_promptLabel);
+		dl->AddText(jp, lpx, ImVec2(lp.x + 1.0f, lp.y + 1.0f), IM_COL32(0, 0, 0, (int)(a * 0.8f)), m_promptLabel);	// 影(明るい背景でも読める)
+		dl->AddText(jp, lpx, lp, IM_COL32(240, 225, 200, a), m_promptLabel);
 	}
 }
 

@@ -10,6 +10,7 @@
 #include "MeshBuffer.h"
 #include "Shader.h"
 #include "Texture.h"
+#include "TextureCache.h"
 #include "CameraBase.h"
 #include "LightBase.h"
 #include "Model.h"
@@ -52,6 +53,109 @@ static void CenterText(const char* text, float yRatio, float scale = 1.0f,
 	ImU32 shadow = IM_COL32(0, 0, 0, (int)(((col >> IM_COL32_A_SHIFT) & 0xFF) * 0.6f));
 	dl->AddText(f, px, ImVec2(x + 2.0f, y + 2.0f), shadow, text);	// 影
 	dl->AddText(f, px, ImVec2(x, y), col, text);					// 本体
+}
+
+//--- 2色を t(0..1) で線形補間(ImU32 の RGBA 各成分ごと)。
+static ImU32 LerpColor(ImU32 a, ImU32 b, float t)
+{
+	ImVec4 ca = ImGui::ColorConvertU32ToFloat4(a), cb = ImGui::ColorConvertU32ToFloat4(b);
+	return ImGui::ColorConvertFloat4ToU32(ImVec4(Lerp::Linear(ca.x, cb.x, t), Lerp::Linear(ca.y, cb.y, t),
+	                                             Lerp::Linear(ca.z, cb.z, t), Lerp::Linear(ca.w, cb.w, t)));
+}
+
+//--- ナインスライス(9-slice scaling)で画像を矩形に貼る。
+//    画像を縦横3x3に切り、四隅は「同じ倍率」のまま、辺は片方向だけ、中央は両方向に伸ばす。
+//    → 飾り枠の四隅の模様が、縦長/横長どちらのパネルでも歪まない(UI の定番手法)。
+//    さらに上辺/下辺の真ん中に飾りがある画像向けに、辺の中央 srcCenter(px) だけは伸ばさず隅と同じ倍率で描き、
+//    その左右の線だけを伸ばす(=上辺中央の飾りも潰れない。0 なら普通の9分割)。
+//    srcBorder = 元画像で「隅」とみなす大きさ(px) / scale = 隅を画面に描く倍率。
+static void DrawNineSlice(ImDrawList* dl, Texture* tex, ImVec2 a, ImVec2 b, float srcBorder, float scale,
+                          ImU32 tint, float srcCenter = 0.0f)
+{
+	if (!tex || !tex->GetResource()) return;
+	const float tw = (float)tex->GetWidth(), th = (float)tex->GetHeight();
+	const float d  = srcBorder * scale;					// 画面上の隅の大きさ
+	const float xs[4] = { a.x, a.x + d, b.x - d, b.x };	// 画面の切れ目
+	const float ys[4] = { a.y, a.y + d, b.y - d, b.y };
+	const float us[4] = { 0.0f, srcBorder / tw, 1.0f - srcBorder / tw, 1.0f };	// 画像(UV)の切れ目
+	const float vs[4] = { 0.0f, srcBorder / th, 1.0f - srcBorder / th, 1.0f };
+	ImTextureID id = (ImTextureID)tex->GetResource();
+	for (int j = 0; j < 3; ++j)
+		for (int i = 0; i < 3; ++i)
+		{
+			const bool edgeMid = (i == 1 && j != 1);	// 上辺/下辺の真ん中
+			const float cw = srcCenter * scale;			// 画面上の「伸ばさない中央」の幅
+			if (!edgeMid || srcCenter <= 0.0f || cw >= xs[2] - xs[1])
+			{
+				dl->AddImage(id, ImVec2(xs[i], ys[j]), ImVec2(xs[i + 1], ys[j + 1]),
+				             ImVec2(us[i], vs[j]), ImVec2(us[i + 1], vs[j + 1]), tint);
+				continue;
+			}
+			// 左の線(伸ばす) | 中央の飾り(そのままの倍率) | 右の線(伸ばす)
+			const float mx = (xs[1] + xs[2]) * 0.5f, mu = 0.5f, cu = srcCenter / tw * 0.5f;
+			const float px[4] = { xs[1], mx - cw * 0.5f, mx + cw * 0.5f, xs[2] };
+			const float pu[4] = { us[1], mu - cu,        mu + cu,        us[2] };
+			for (int k = 0; k < 3; ++k)
+				dl->AddImage(id, ImVec2(px[k], ys[j]), ImVec2(px[k + 1], ys[j + 1]),
+				             ImVec2(pu[k], vs[j]), ImVec2(pu[k + 1], vs[j + 1]), tint);
+		}
+}
+
+//--- 操作説明を1行に並べる: [アイコン…] 一言 　[アイコン…] 一言 …(画面中央揃え)。
+//    アイコンは Kenney Input Prompts(CC0)の白い画像。TextureCache で一度だけ読み、以後は使い回す。
+//    明るい炉の前でも沈まない様に、黒く染めた同じ画像を少しずらして下に敷く(影)。
+void SceneForge::DrawKeyHints(const KeyHint* hints, int count, float yRatio, float alpha)
+{
+	const std::string ICON_DIR = "Assets/UI/Keyboard & Mouse/Double/";	// 128px 版(大画面でも縁がぼけない)
+	const float ICON_RATIO      = 0.042f;	// アイコンの大きさ(画面高さ比)
+	const float ICON_GAP_RATIO  = 0.002f;	// 1つの説明の中のアイコン同士の間
+	const float LABEL_GAP_RATIO = 0.004f;	// アイコンと一言の間
+	const float HINT_GAP_RATIO  = 0.030f;	// 説明と説明の間
+	const float TEXT_RATIO      = 0.024f;	// 一言の文字の高さ
+	const float SHADOW_PX       = 2.0f;		// 影のずれ(px)
+	ImVec2 disp = ImGui::GetIO().DisplaySize;
+	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImFont* jp = DebugUI::FontJP();
+	const float icon = disp.y * ICON_RATIO, px = disp.y * TEXT_RATIO;
+	const int   a = (int)(255 * alpha);
+
+	// 1) 全体の幅を測って中央揃えの開始位置を決める
+	float total = 0.0f;
+	for (int h = 0; h < count; ++h)
+	{
+		int ni = 0;
+		while (ni < KeyHint::MAX_ICONS && hints[h].icons[ni]) ++ni;
+		total += icon * ni + disp.y * ICON_GAP_RATIO * (ni - 1) + disp.y * LABEL_GAP_RATIO;
+		total += jp->CalcTextSizeA(px, FLT_MAX, 0.0f, hints[h].label).x;
+		if (h + 1 < count) total += disp.y * HINT_GAP_RATIO;
+	}
+	float x = (disp.x - total) * 0.5f;
+	const float cy = disp.y * yRatio;
+
+	// 2) 描く
+	for (int h = 0; h < count; ++h)
+	{
+		for (int k = 0; k < KeyHint::MAX_ICONS && hints[h].icons[k]; ++k)
+		{
+			if (k > 0) x += disp.y * ICON_GAP_RATIO;
+			std::shared_ptr<Texture> tex = TextureCache::Get((ICON_DIR + hints[h].icons[k] + ".png").c_str());
+			if (tex && tex->GetResource())
+			{
+				ImTextureID id = (ImTextureID)tex->GetResource();
+				ImVec2 p0(x, cy - icon * 0.5f), p1(x + icon, cy + icon * 0.5f);
+				dl->AddImage(id, ImVec2(p0.x + SHADOW_PX, p0.y + SHADOW_PX), ImVec2(p1.x + SHADOW_PX, p1.y + SHADOW_PX),
+				             ImVec2(0, 0), ImVec2(1, 1), IM_COL32(0, 0, 0, (int)(a * 0.7f)));	// 影
+				dl->AddImage(id, p0, p1, ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, a));
+			}
+			x += icon;
+		}
+		x += disp.y * LABEL_GAP_RATIO;
+		ImVec2 ts = jp->CalcTextSizeA(px, FLT_MAX, 0.0f, hints[h].label);
+		ImVec2 tp(x, cy - ts.y * 0.5f);
+		dl->AddText(jp, px, ImVec2(tp.x + SHADOW_PX, tp.y + SHADOW_PX), IM_COL32(0, 0, 0, (int)(a * 0.7f)), hints[h].label);
+		dl->AddText(jp, px, tp, IM_COL32(245, 235, 215, a), hints[h].label);
+		x += ts.x + disp.y * HINT_GAP_RATIO;
+	}
 }
 
 //--- 羊皮紙パネルを画面中央に敷く(結果/失敗画面の下地)。yCenter/height は画面比。
@@ -163,22 +267,67 @@ void SceneForge::DrawPlayUI()
 	// 終幕(黒帯が入り始めたら)は HUD を全部消して、映像だけを見せる。
 	if (m_letterbox > 0.0f) { DrawLetterbox(); return; }
 
+	ImFont* jp = DebugUI::FontJP();	// 指引 UI の日本語(游明朝)
+
 	// 温度ゲージ
 	DrawHeatGauge();
 
-	// 現在の工程の指示文(宏観チュートリアル=「今この工程で何をするか」)。工程が進むと自動で変わる。
-	//   文言は配方(GameData/WeaponRecipe)が持つ=換武器で自動的に差し替わる(コードにベタ書きしない)。
-	CenterText(CurrentStep().instruction, 0.12f, 1.3f, IM_COL32(255, 240, 200, 255));
+	// 工程リスト(左)と、走動中に次に向かう点の目印(3D の上)
+	DrawStepTracker();
+	DrawObjectiveMarker();
+
+	// 案内文(宏観チュートリアル=「今何をするか」)。工程と状況で変わる(UpdateGuide)。
+	//   基本の文言は配方(GameData/WeaponRecipe)が持つ=換武器で自動的に差し替わる。
+	//   文が変わった瞬間は淡入+少し下から浮かせる=「変わった」ことに気付かせる(読み落とし防止)。
+	{
+		const char* text = (m_guideText && m_guideText[0]) ? m_guideText : CurrentStep().instruction;
+		const float FADE_IN_SEC   = 0.6f;	// 淡入にかける秒
+		const float RISE_RATIO    = 0.015f;	// 淡入中に浮き上がる量(画面高さ比)
+		const float TEXT_Y        = 0.10f;	// 文の縦位置(画面高さ比)
+		const float TEXT_SCALE    = 1.0f;	// 游明朝の焼き寸(30px)に対する倍率
+		const float BAND_H_RATIO  = 0.075f;	// 文の後ろに敷く暗い帯の高さ(明るい炉の前でも読める様に)
+		const float BAND_W_RATIO  = 0.36f;	// 帯の半幅(画面幅比)。両端は透明へ溶かす
+		const int   BAND_ALPHA    = 150;
+		float t = fminf((m_time - m_guideChangedAt) / FADE_IN_SEC, 1.0f);
+		if (t < 0.0f) t = 0.0f;
+		ImVec2 disp = ImGui::GetIO().DisplaySize;
+		ImDrawList* bg = ImGui::GetForegroundDrawList();
+		float cy = disp.y * TEXT_Y, bh = disp.y * BAND_H_RATIO * 0.5f, bw = disp.x * BAND_W_RATIO;
+		ImU32 dark  = IM_COL32(0, 0, 0, (int)(BAND_ALPHA * t));
+		ImU32 clear = IM_COL32(0, 0, 0, 0);
+		bg->AddRectFilledMultiColor(ImVec2(disp.x * 0.5f - bw, cy - bh), ImVec2(disp.x * 0.5f, cy + bh), clear, dark, dark, clear);
+		bg->AddRectFilledMultiColor(ImVec2(disp.x * 0.5f, cy - bh), ImVec2(disp.x * 0.5f + bw, cy + bh), dark, clear, clear, dark);
+		float y = TEXT_Y + RISE_RATIO * (1.0f - t);
+		CenterText(text, y, TEXT_SCALE, IM_COL32(255, 236, 196, (int)(255 * t)), jp);
+	}
 
 	// 翻面の子状態ごとの操作ヒント(宏観チュートリアル)。運鏡ビート中は状況説明、
 	// 操作待ちの Ready/Flipping では「何のキーで何が起きるか」を明示する。
+	const ImU32 BEAT_COL  = IM_COL32(255, 230, 180, 220);	// 運鏡中の状況説明(少し淡く)
+	const float FLIP_Y = 0.24f, FLIP_SCALE = 0.85f;
 	switch (m_flipPhase)
 	{
-	case FlipPhase::TongsOut: CenterText("Reaching for the tongs...", 0.24f, 1.1f, IM_COL32(255, 230, 180, 220)); break;
-	case FlipPhase::Ready:    CenterText("Tongs ready --  LMB: grip the blade    F: put tongs back", 0.24f, 1.1f, IM_COL32(255, 240, 200, 255)); break;
-	case FlipPhase::Gripping: CenterText("Gripping the blade...", 0.24f, 1.1f, IM_COL32(255, 230, 180, 220)); break;
-	case FlipPhase::Flipping: CenterText("Move the mouse to turn the blade    LMB: set this face", 0.24f, 1.1f, IM_COL32(255, 240, 200, 255)); break;
-	case FlipPhase::PutBack:  CenterText("Setting the tongs back...", 0.24f, 1.1f, IM_COL32(255, 230, 180, 220)); break;
+	case FlipPhase::TongsOut: CenterText((const char*)u8"火ばさみを手に取る…",                          FLIP_Y, FLIP_SCALE, BEAT_COL,  jp); break;
+	case FlipPhase::Ready:
+	{
+		static const KeyHint READY_HINTS[] = {
+			{ { "mouse_left" }, (const char*)u8"刃を掴む" },
+			{ { "keyboard_f" }, (const char*)u8"火ばさみを戻す" },
+		};
+		DrawKeyHints(READY_HINTS, _countof(READY_HINTS), FLIP_Y);
+		break;
+	}
+	case FlipPhase::Gripping: CenterText((const char*)u8"刃を掴んでいる…",                                FLIP_Y, FLIP_SCALE, BEAT_COL,  jp); break;
+	case FlipPhase::Flipping:
+	{
+		static const KeyHint FLIP_HINTS[] = {
+			{ { "mouse_move" }, (const char*)u8"刃を回す" },
+			{ { "mouse_left" }, (const char*)u8"この面に決める" },
+		};
+		DrawKeyHints(FLIP_HINTS, _countof(FLIP_HINTS), FLIP_Y);
+		break;
+	}
+	case FlipPhase::PutBack:  CenterText((const char*)u8"火ばさみを戻している…",                        FLIP_Y, FLIP_SCALE, BEAT_COL,  jp); break;
 	default: break;
 	}
 
@@ -189,7 +338,7 @@ void SceneForge::DrawPlayUI()
 	if (m_forging.Heat() > OVERHEAT)
 	{
 		float p = 0.5f + 0.5f * sinf(m_time * 12.0f);
-		CenterText("!!  OVERHEAT  !!", 0.20f, 1.6f, IM_COL32(255, 70, 50, (int)(150 + p * 105)));
+		CenterText((const char*)u8"！！　過熱　！！", 0.20f, 1.3f, IM_COL32(255, 70, 50, (int)(150 + p * 105)), jp);
 	}
 
 	// 打撃フィードバックのポップアップ(鉄条の上でフェード)
@@ -198,19 +347,21 @@ void SceneForge::DrawPlayUI()
 		float a = m_popupLife / POPUP_LIFE;
 		if (a > 1.0f) a = 1.0f;
 		unsigned int c = (m_popupCol & 0x00FFFFFF) | ((unsigned int)(a * 255) << 24);
-		CenterText(m_popupText, 0.36f, 2.0f, c);
+		CenterText(m_popupText, 0.36f, 1.15f, c, jp);	// 主人公の独白も指引 UI と同じ游明朝(旧: メイリオ17pxを2倍=ぼやけた)
 	}
 
-	// スコアと形状一致度(左上)
-	ImDrawList* dl = ImGui::GetForegroundDrawList();
-	char sb[48];
-	sprintf_s(sb, sizeof(sb), "SCORE  %d", m_score);
-	dl->AddText(ImVec2(40, 40), IM_COL32(255, 235, 200, 255), sb);
-	sprintf_s(sb, sizeof(sb), "SHAPE MATCH  %d%%", (int)(m_match * 100));
-	dl->AddText(ImVec2(40, 60), IM_COL32(150, 220, 255, 255), sb);
-
-	// 一致度バー(上部中央)
+	// スコアと形状一致度(左上)+一致度バー。プレイ中の情報を「今やること」に絞る為、F1(デバッグ)の時だけ出す。
+	//   成果は結果画面(DrawResultUI)で見せる。
+	if (DebugUI::IsVisible())
 	{
+		ImDrawList* dl = ImGui::GetForegroundDrawList();
+		char sb[48];
+		sprintf_s(sb, sizeof(sb), "SCORE  %d", m_score);
+		dl->AddText(ImVec2(40, 40), IM_COL32(255, 235, 200, 255), sb);
+		sprintf_s(sb, sizeof(sb), "SHAPE MATCH  %d%%", (int)(m_match * 100));
+		dl->AddText(ImVec2(40, 60), IM_COL32(150, 220, 255, 255), sb);
+
+		// 一致度バー(上部中央)
 		ImVec2 disp = ImGui::GetIO().DisplaySize;
 		float bx0 = disp.x * 0.30f, bx1 = disp.x * 0.70f, by = 30.0f, bh = 14.0f;
 		dl->AddRectFilled(ImVec2(bx0, by), ImVec2(bx1, by + bh), IM_COL32(30, 30, 34, 220), 3.0f);
@@ -225,21 +376,423 @@ void SceneForge::DrawPlayUI()
 		CenterText("[DEBUG] aim highlight ON (P to toggle)", 0.10f, 0.9f, IM_COL32(120, 220, 160, 180));
 
 	// 操作ガイド(宏観: 今いる場所で使えるキー)。「どこを叩け」等の微観の指示は出さない。
-	const char* guide = "WASD : Walk    Mouse : Look    E : Use";
+	//   キーはアイコン(Kenney Input Prompts)で見せる=文字の「左クリック」を読むより一目で分かる。
+	//   場所ごとの表(データ)。キー割り当てを変えたらここの表だけ直す。
+	static const KeyHint WALK_HINTS[] = {
+		{ { "keyboard_w", "keyboard_a", "keyboard_s", "keyboard_d" }, (const char*)u8"移動" },
+		{ { "mouse_move" },  (const char*)u8"見回す" },
+		{ { "keyboard_e" },  (const char*)u8"使う" },
+	};
+	static const KeyHint ANVIL_HINTS[] = {
+		{ { "mouse_move" },  (const char*)u8"狙う" },
+		{ { "mouse_left" },  (const char*)u8"長押し：ハンマー" },
+		{ { "keyboard_f" },  (const char*)u8"裏返す" },
+		{ { "keyboard_e" },  (const char*)u8"離れる" },
+	};
+	static const KeyHint HEARTH_HINTS[] = {
+		{ { "keyboard_r" },  (const char*)u8"長押し：ふいごで風を送る" },
+		{ { "keyboard_e" },  (const char*)u8"炉から出す" },
+	};
+	static const KeyHint GRIND_HINTS[] = {
+		{ { "mouse_right", "keyboard_space" }, (const char*)u8"連打：ペダル" },
+		{ { "mouse_left" },  (const char*)u8"長押し：刃を当てる" },
+		{ { "mouse_move" },  (const char*)u8"滑らせる" },
+		{ { "keyboard_e" },  (const char*)u8"離れる" },
+	};
+	static const KeyHint TROUGH_HINTS[] = {
+		{ { "mouse_left" },  (const char*)u8"水に沈める" },
+		{ { "keyboard_e" },  (const char*)u8"離れる" },
+	};
+	const KeyHint* hints = WALK_HINTS; int nHints = _countof(WALK_HINTS);
 	if (!m_walkMode && !Transitioning())
 	{
 		switch (m_station)
 		{
-		case Station::Anvil:      guide = "Mouse : Aim    Hold L-MOUSE : Hammer    F : Flip    E : Leave"; break;
-		case Station::Hearth:     guide = "Hold R : Pump the bellows    E : Take it out of the fire"; break;
-		case Station::Grindstone: guide = "Tap R-MOUSE / SPACE : Pedal    Hold L-MOUSE : Press the blade    Mouse : Slide    E : Leave"; break;
-		case Station::Trough:     guide = "L-MOUSE : Plunge into the water    E : Leave"; break;
+		case Station::Anvil:      hints = ANVIL_HINTS;  nHints = _countof(ANVIL_HINTS);  break;
+		case Station::Hearth:     hints = HEARTH_HINTS; nHints = _countof(HEARTH_HINTS); break;
+		case Station::Grindstone: hints = GRIND_HINTS;  nHints = _countof(GRIND_HINTS);  break;
+		case Station::Trough:     hints = TROUGH_HINTS; nHints = _countof(TROUGH_HINTS); break;
 		}
 	}
-	CenterText(guide, 0.93f, 1.0f, IM_COL32(255, 255, 255, 170));
+	const float GUIDE_Y = 0.93f;		// 操作ガイドの縦位置(画面高さ比)
+	DrawKeyHints(hints, nHints, GUIDE_Y);
 
 	// 互動提示(走動中、範囲内で物件を見ている時だけ「E」を物件の上に出す)
 	DrawInteractPrompt();
+}
+
+//--- 工程リスト(クエストトラッカー)。画面左の羊皮紙に配方の工程を縦に並べ、済/今/未 を見分けさせる。
+//    「全部で何工程・今どこか」が分かる=迷子にならない(UX)。工程名は配方の label(データ)。
+//    見た目は KCD の「紙にインクで書いた」調: 飾り枠の羊皮紙(ナインスライス)+焦茶のインク、今の工程だけ朱。
+//    済の工程は取り消し線(クエストログの定番の表し方)。
+void SceneForge::DrawStepTracker()
+{
+	if (!m_recipe) return;
+	ImVec2 disp = ImGui::GetIO().DisplaySize;		// 寸法はすべて画面比(解像度非依存)
+	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImFont* jp = DebugUI::FontJP();
+
+	// --- 羊皮紙パネル ---
+	const float PANEL_X_RATIO   = 0.015f;	// パネルの左端(画面幅比)
+	const float PANEL_Y_RATIO   = 0.22f;	// パネルの上端(画面高さ比)
+	const float PANEL_W_RATIO   = 0.22f;	// パネルの幅(画面幅比)。狭すぎると上辺中央の飾りが横に潰れる
+	// parchment_frame.jpg(ChatGPT 生成版)の寸法を「画像に対する比」で持つ=保存解像度が変わっても合う
+	const float FRAME_CORNER_SRC_RATIO = 0.27f;	// 四隅の飾りが収まる大きさ(画像の高さ比)
+	const float FRAME_CENTER_SRC_RATIO = 0.17f;	// 上辺中央の飾りの幅(画像の幅比)。ここは伸ばさない
+	const float FRAME_SRC_CORNER = m_uiFrame ? m_uiFrame->GetHeight() * FRAME_CORNER_SRC_RATIO : 1.0f;
+	const float FRAME_SRC_CENTER = m_uiFrame ? m_uiFrame->GetWidth()  * FRAME_CENTER_SRC_RATIO : 0.0f;
+	const float FRAME_CORNER_RATIO = 0.085f;	// 画面上の隅の大きさ(画面高さ比)
+	const float INSET_TOP       = 0.95f;	// 中身の上端=上辺の飾りの下(隅の大きさに対する比)
+	const float INSET_BOTTOM    = 0.75f;	// 中身の下端から下辺まで(同)
+	const float INSET_SIDE      = 0.60f;	// 中身の左右の余白(同)。枠の二重線の内側
+	const ImU32 PAPER_TINT      = IM_COL32(255, 255, 255, 235);	// 背景がほんの少し透ける
+
+	// --- 行 ---
+	const float ROW_RATIO     = 0.050f;	// 行の間隔
+	const float TEXT_RATIO    = 0.030f;	// 工程名の文字の高さ
+	const float HEAD_RATIO    = 0.026f;	// 見出し「工程」の文字の高さ
+	const float HEAD_GAP      = 1.1f;	// 見出しから1行目までの間隔(行単位)
+	const float DOT_RATIO     = 0.0065f;	// 丸印の半径
+	const float TEXT_GAP_RATIO= 0.012f;	// 丸と工程名の間(画面高さ比)
+	const float NOW_DOT_SCALE = 1.3f;	// 「今」の丸は少し大きく
+	const float LINE_W        = 1.5f;	// 輪・取り消し線の太さ(px)
+	const float PULSE_SEC     = 1.2f;	// 工程が変わった直後、今の工程を明滅させる長さ
+	const float PULSE_FREQ    = 10.0f;	// その明滅の速さ(rad/秒)
+	const float PULSE_MIN     = 0.3f;	// 明滅の一番淡い時の濃さ(0..1)
+	const ImU32 INK_HEAD    = IM_COL32( 60,  38,  22, 255);	// 見出し: 一番濃い焦茶
+	const ImU32 INK_DONE    = IM_COL32(110,  88,  64, 170);	// 済: 薄れたインク+取り消し線
+	const ImU32 INK_NOW     = IM_COL32(150,  32,  18, 255);	// 今: 朱(KCD の赤い印章の色)=一番目立つ
+	const ImU32 INK_PENDING = IM_COL32( 60,  42,  28, 220);	// 未: 普通のインク
+
+	// --- 今の工程の下の進捗バー(工程の中の進み具合=「止まって見えない」様に) ---
+	//   鍛造=表/裏の2本(今上の面を濃く) / 研ぎ=刃の1本。どこを叩け等は出さない(面全体の割合だけ)。
+	const float SUB_ROW_RATIO  = 0.030f;	// 進捗バー1本分の行の高さ
+	const float SUB_TEXT_RATIO = 0.022f;	// 「表/裏/刃」の文字の高さ
+	const float BAR_W_RATIO    = 0.085f;	// バーの長さ(画面幅比)
+	const float BAR_H_RATIO    = 0.007f;	// バーの太さ(画面高さ比)
+	const float BAR_GAP_RATIO  = 0.012f;	// 文字とバーの間(画面高さ比)
+	const ImU32 BAR_BG_COL     = IM_COL32(60, 42, 28, 50);	// 紙に薄く引いた溝
+	struct SubBar { const char* name; float prog; bool active; };
+	SubBar subs[ForgingSim::NSIDES];
+	int nSub = 0;
+	const StepName nowType = CurrentStep().type;
+	if (nowType == StepName::Forge)
+	{
+		subs[nSub++] = { (const char*)u8"表", m_forging.SideProgress(0), m_forging.Side() == 0 };
+		subs[nSub++] = { (const char*)u8"裏", m_forging.SideProgress(1), m_forging.Side() == 1 };
+	}
+	else if (nowType == StepName::Grind)
+		subs[nSub++] = { (const char*)u8"刃", m_forging.SharpProgress(), true };
+
+	const int   n      = (int)m_recipe->steps.size();
+	const float row    = disp.y * ROW_RATIO;
+	const float subRow = disp.y * SUB_ROW_RATIO;
+	const float r      = disp.y * DOT_RATIO;
+	const float corner = disp.y * FRAME_CORNER_RATIO;
+
+	// パネルの大きさは中身から決める(工程数・進捗バーの本数が変わっても枠が合う)
+	const float contentH = row * HEAD_GAP + row * n + subRow * nSub;
+	ImVec2 pa(disp.x * PANEL_X_RATIO, disp.y * PANEL_Y_RATIO);
+	ImVec2 pb(pa.x + disp.x * PANEL_W_RATIO, pa.y + corner * INSET_TOP + contentH + corner * INSET_BOTTOM);
+	if (m_uiFrame) DrawNineSlice(dl, m_uiFrame.get(), pa, pb, FRAME_SRC_CORNER, corner / FRAME_SRC_CORNER, PAPER_TINT, FRAME_SRC_CENTER);
+
+	const float x  = pa.x + corner * INSET_SIDE;
+	float       cy = pa.y + corner * INSET_TOP;
+	dl->AddText(jp, disp.y * HEAD_RATIO, ImVec2(x, cy), INK_HEAD, (const char*)u8"工程");
+	cy += row * HEAD_GAP;
+
+	// 取り消し線のアニメ: 済になった瞬間から左→右へ引き、済でなくなった瞬間から右→左へ消す。
+	const float STRIKE_ANIM_SEC = 0.80f;	// 線を引き切る/消し切るまでの秒(SE_PENCIL/SE_ERASER の長さと揃える)
+	const float STRIKE_Y        = 0.55f;	// 線の高さ(文字の高さに対する比。中ほど)
+	const float STRIKE_W        = 2.0f;		// 線の太さ(px)。ペンで引いた様に輪郭より少し太く
+	const float sinceChange = m_time - m_stepChangedAt;
+	for (int i = 0; i < n; ++i, cy += row)
+	{
+		const bool now = i == m_stepIdx;
+		const TrackerRow rowState = (i < (int)m_trackerRows.size()) ? m_trackerRows[i] : TrackerRow{};
+		// 線の長さ 0..1: 切り替わってからの経過 p を ease-out(最初速く最後ゆっくり=ペンの勢い)で曲げる
+		float p = fminf((m_time - rowState.changedAt) / STRIKE_ANIM_SEC, 1.0f);
+		p = 1.0f - (1.0f - p) * (1.0f - p);
+		const float strike = rowState.completed ? p : 1.0f - p;
+
+		// 色も線の進み具合に合わせて「未」のインク→「済」の薄れたインクへ
+		ImU32 col = now ? INK_NOW : LerpColor(INK_PENDING, INK_DONE, strike);
+		const float px = disp.y * TEXT_RATIO;
+		ImVec2 dot(x + r, cy + px * 0.5f);
+
+		if (now)
+		{
+			float pulse = 1.0f;
+			if (sinceChange < PULSE_SEC) pulse = Lerp::Linear(PULSE_MIN, 1.0f, 0.5f + 0.5f * cosf(sinceChange * PULSE_FREQ));	// 変わった直後だけ明滅
+			col = (col & 0x00FFFFFF) | ((ImU32)(255 * pulse) << IM_COL32_A_SHIFT);
+			dl->AddCircleFilled(dot, r * NOW_DOT_SCALE, col);
+		}
+		else if (strike > 0.5f) dl->AddCircleFilled(dot, r, col);			// 済=塗り
+		else                    dl->AddCircle(dot, r, col, 0, LINE_W);		// 未=輪だけ
+
+		const char* label = m_recipe->steps[i].label;
+		ImVec2 tp(x + r * 2.0f * NOW_DOT_SCALE + disp.y * TEXT_GAP_RATIO, cy);
+		dl->AddText(jp, px, tp, col, label);
+		if (!now && strike > 0.0f)	// 取り消し線(左から strike の割合だけ)
+		{
+			ImVec2 ts = jp->CalcTextSizeA(px, FLT_MAX, 0.0f, label);
+			float ly = tp.y + ts.y * STRIKE_Y;
+			dl->AddLine(ImVec2(tp.x, ly), ImVec2(tp.x + ts.x * strike, ly), INK_DONE, STRIKE_W);
+		}
+
+		if (!now) continue;
+		// 今の工程の下に進捗バー(表/裏 or 刃)。後ろの工程はその分だけ下へずらす
+		for (int k = 0; k < nSub; ++k)
+		{
+			cy += subRow;
+			float spx = disp.y * SUB_TEXT_RATIO;
+			ImVec2 sp(tp.x, cy + (row - subRow));
+			ImU32  sc = subs[k].active ? INK_NOW : INK_DONE;
+			dl->AddText(jp, spx, sp, sc, subs[k].name);
+			float bx0 = sp.x + spx + disp.y * BAR_GAP_RATIO, bx1 = bx0 + disp.x * BAR_W_RATIO;
+			float bh  = disp.y * BAR_H_RATIO, by = sp.y + (spx - bh) * 0.5f;
+			dl->AddRectFilled(ImVec2(bx0, by), ImVec2(bx1, by + bh), BAR_BG_COL);
+			dl->AddRectFilled(ImVec2(bx0, by), ImVec2(bx0 + (bx1 - bx0) * subs[k].prog, by + bh), sc);
+		}
+	}
+}
+
+//--- 状況から「今何をするか」と「どこへ向かうか」を決める(コンテキストヒント)。
+//    工程(配方)は大きな段階しか持たない: 鍛造の工程は両面が仕上がるまで続き、その間に
+//    「冷めたので炉へ→熱くなったら金床へ戻る」「片面が終わったので裏返す」が何度も起きる。
+//    それらは工程を増やさず(配方=データは不変)、ここで温度/鉄の在り処/面の進捗を見て言い分ける。
+//    上から順に、より緊急な状況を先に見る(冷えて叩けない > 裏返し > 工程の基本文)。
+//    閾値は既存の物(COLD_LIMIT=冷打になる温度 / IDEAL_MIN=適温帯の下限 / QUENCH_MIN_TEMP)を使う=判定とズレない。
+const char* SceneForge::GuideFor(Station& goal) const
+{
+	const StepSetting& st = CurrentStep();
+	const float heat = m_forging.Heat();
+	const bool  inFire = !m_carrying && m_workAt == Station::Hearth;	// 鉄が炉の中に置いてある
+	goal = StepStation(st.type);
+
+	// 温度の閾値は工程リスト(RowCompleted)と同じ ReadyTemp/MinWorkTemp を使う=案内文と取り消し線が食い違わない。
+	switch (st.type)
+	{
+	case StepName::Forge:
+		if (inFire)
+		{
+			if (heat < ReadyTemp(st.type)) { goal = Station::Hearth; return (const char*)u8"炉で、赤くなるまで熱する"; }
+			goal = Station::Anvil;
+			return (const char*)u8"十分に熱くなった。金床へ運ぶ";
+		}
+		if (heat < MinWorkTemp(st.type)) { goal = Station::Hearth; return (const char*)u8"鉄が冷めた。炉で熱し直す"; }
+		if (m_forging.SideDone(m_forging.Side()) && !m_forging.BothSidesDone())
+			return (const char*)u8"この面は仕上がった。F で裏返す";
+		return st.instruction;
+
+	case StepName::Quench:
+		if (inFire)
+		{
+			if (heat < ReadyTemp(st.type)) { goal = Station::Hearth; return (const char*)u8"炉で、火花が散るまで熱する"; }
+			goal = Station::Trough;
+			return (const char*)u8"十分に熱くなった。水槽へ運ぶ";
+		}
+		if (heat < MinWorkTemp(st.type)) { goal = Station::Hearth; return (const char*)u8"刃が冷めた。炉で熱し直してから水へ"; }
+		return st.instruction;
+
+	default:
+		return st.instruction;
+	}
+}
+
+//--- 毎フレーム: 案内文と行き先を更新。文が変わった時だけ時刻を記録(淡入のきっかけ)。
+//    文言は文字列リテラル(静的)なのでポインタ比較で「変わったか」が分かる。
+void SceneForge::UpdateGuide()
+{
+	Station goal;
+	const char* text = GuideFor(goal);
+	m_guideGoal = goal;
+	if (text != m_guideText) { m_guideText = text; m_guideChangedAt = m_time; }
+	UpdateTracker();
+}
+
+//--- 加熱が「済」になる温度 = 次の工程を始めるのに十分な熱さ。
+//    鍛造: 温度ゲージの緑帯(適温)に入った所 / 焼入れ: 火花が散る(=加熱工程の完了条件と同じ)。
+float SceneForge::ReadyTemp(StepName next) const
+{
+	switch (next)
+	{
+	case StepName::Forge:  return IDEAL_MIN;
+	case StepName::Quench: return ForgingSim::BURN_TEMP;
+	default:               return ForgingSim::BURN_TEMP;
+	}
+}
+
+//--- 加熱が「済」でなくなる温度 = 次の工程がもうできない冷たさ。
+//    鍛造: 冷打になる温度(COLD_LIMIT) / 焼入れ: 焼きが入らない温度(QUENCH_MIN_TEMP)。
+//    ReadyTemp より低い=「済になる温度」と「済でなくなる温度」の間に幅がある(ヒステリシス)。
+//    1つの閾値だと、その前後で温度が揺れた時に取り消し線が毎フレーム付いたり消えたりしてしまう。
+float SceneForge::MinWorkTemp(StepName next) const
+{
+	switch (next)
+	{
+	case StepName::Forge:  return COLD_LIMIT;
+	case StepName::Quench: return QUENCH_MIN_TEMP;
+	default:               return 0.0f;
+	}
+}
+
+//--- i 行目は今「済」か。
+//    今の工程/まだの工程 → 済でない。過ぎた工程 → 済(形や刃は戻らない)。
+//    ただし「加熱」の行で、その加熱が準備した工程(=すぐ次の行)が今進行中なら、温度で生きている:
+//      済だった → MinWorkTemp を下回ったら済でなくなる / 済でなかった → ReadyTemp に達したら済。
+//    次の工程が終われば温度はもう関係ないので、以後は普通に済のまま(例: 研ぎは冷えていてよい)。
+bool SceneForge::RowCompleted(int i, bool wasCompleted) const
+{
+	if (!m_recipe || i >= m_stepIdx) return false;
+	const std::vector<StepSetting>& steps = m_recipe->steps;
+	if (steps[i].type == StepName::Heat && i + 1 == m_stepIdx)
+	{
+		const StepName next = steps[i + 1].type;
+		const float heat = m_forging.Heat();
+		return wasCompleted ? heat >= MinWorkTemp(next) : heat >= ReadyTemp(next);
+	}
+	return true;
+}
+
+//--- 各行の completed を判定し、前フレームと違えば(エッジ検出)切り替わった時刻を記録する。
+//    描画側(DrawStepTracker)はこの時刻からの経過で取り消し線を伸ばす/縮める。
+void SceneForge::UpdateTracker()
+{
+	if (!m_recipe) return;
+	const int n = (int)m_recipe->steps.size();
+	if ((int)m_trackerRows.size() != n) m_trackerRows.assign(n, TrackerRow{});
+	// 同じフレームで複数の行が切り替わる事がある(工程が進んだ瞬間など)。音は種類ごとに1回だけ鳴らす。
+	bool struck = false, erased = false;
+	for (int i = 0; i < n; ++i)
+	{
+		TrackerRow& row = m_trackerRows[i];
+		const bool now = RowCompleted(i, row.completed);
+		if (now != row.completed)
+		{
+			row.completed = now;
+			row.changedAt = m_time;
+			(now ? struck : erased) = true;
+		}
+	}
+	const float PENCIL_VOLUME = 0.8f;	// 線を引く音
+	const float ERASER_VOLUME = 1.0f;	// 線を消す音(素材の平均音量が鉛筆より約7dB小さいので最大に)
+	if (struck) Audio::Play(Audio::SE_PENCIL, PENCIL_VOLUME);
+	if (erased) Audio::Play(Audio::SE_ERASER, ERASER_VOLUME);
+}
+
+//--- 走動中に「次に向かう点」を決める。鉄は瞬間移動しない設計なので、行き先は鉄の在り処で変わる:
+//      鉄を手に持っている / 鉄が既に行き先の工位にある → 行き先の工位へ
+//      鉄が別の所に置いてある                          → まず鉄を取りに行く
+//    行き先は UpdateGuide が状況で決めた物(例: 鍛造中でも冷めていれば炉)。
+//    工位で作業中(走動でない)/視点の移動中は出さない。
+bool SceneForge::GuideTarget(XMFLOAT3& pos, const char*& label)
+{
+	if (m_state != GAME_PLAY || !m_walkMode || Transitioning()) return false;
+	const Station goal = m_guideGoal;
+	if (!m_carrying && m_workAt != goal)
+	{
+		pos   = StationBase(m_workAt);
+		label = (const char*)u8"鉄を取る";
+		return true;
+	}
+	pos = StationBase(goal);
+	switch (goal)
+	{
+	case Station::Anvil:      label = (const char*)u8"金床"; break;
+	case Station::Hearth:     label = (const char*)u8"炉";   break;
+	case Station::Grindstone: label = (const char*)u8"砥石"; break;
+	case Station::Trough:     label = (const char*)u8"水槽"; break;
+	}
+	return true;
+}
+
+//--- 目印(オブジェクティブマーカー)。行き先が画面内なら真上に▼、画面外(後ろ含む)なら画面端に矢印。
+//    「E」提示が出ている間は目印を薄くする(同じ物に2つ重ねない)。
+//    CPU 側の投影は転置しない行列(GetView(false)/GetProj(false))=DrawInteractPrompt と同じ規約。
+void SceneForge::DrawObjectiveMarker()
+{
+	XMFLOAT3 target; const char* label = "";
+	if (!GuideTarget(target, label)) return;
+	CameraBase* cam = GetObj<CameraBase>("Camera");
+	if (!cam) return;
+
+	const float LIFT        = 0.35f;	// 作業点からどれだけ上に出すか(ワールド単位)。物に重ならない様に
+	const float BOB_AMP     = 0.008f;	// 上下にゆっくり揺らす振幅(画面高さ比)=目に留まる
+	const float BOB_FREQ    = 3.0f;		// 揺れの速さ(rad/秒)
+	const float SIZE_RATIO  = 0.016f;	// ▼/矢印の大きさ(画面高さ比)
+	const float LABEL_RATIO = 0.026f;	// 行き先名の文字の高さ
+	const float EDGE_RATIO  = 0.07f;	// 画面外の時、画面端からどれだけ内側に置くか
+	const float NEAR_Z      = 0.05f;	// これより手前(カメラ側)は「画面外」扱い
+	const float TRI_H       = 1.2f;		// ▼の高さ(大きさ s の何倍)
+	const float LABEL_GAP   = 0.004f;	// ▼と行き先名の間(画面高さ比)
+	const float ARROW_TIP   = 1.4f;		// 画面端の矢印: 先端までの長さ(s の何倍)
+	const float ARROW_BACK  = 0.6f;		// 同: 根元までの長さ(s の何倍)
+	const float ARROW_LABEL = 2.5f;		// 同: 文字を矢印から内側へずらす量(s の何倍)
+	const float alpha = 1.0f - m_promptAlpha;	// E 提示と入れ替わりに消える
+	if (alpha < 0.01f) return;
+	const int   a   = (int)(255 * alpha);
+	const ImU32 col = IM_COL32(255, 200, 110, a);			// 炉の火の色(工程リストの「今」と同じ=同じ意味)
+	const ImU32 shd = IM_COL32(0, 0, 0, (int)(160 * alpha));
+
+	XMFLOAT4X4 v4 = cam->GetView(false), p4 = cam->GetProj(false);
+	XMVECTOR vp = XMVector3TransformCoord(XMVectorSet(target.x, target.y + LIFT, target.z, 1.0f), XMLoadFloat4x4(&v4));
+	XMFLOAT3 v; XMStoreFloat3(&v, vp);		// ビュー空間(+Z=前, +X=右, +Y=上)
+
+	ImVec2 disp = ImGui::GetIO().DisplaySize;
+	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImFont* jp = DebugUI::FontJP();
+	const float s = disp.y * SIZE_RATIO;
+	const float edge = disp.y * EDGE_RATIO;
+
+	bool onScreen = false;
+	float sx = 0, sy = 0;
+	if (v.z > NEAR_Z)
+	{
+		XMVECTOR clip = XMVector4Transform(XMVectorSet(v.x, v.y, v.z, 1.0f), XMLoadFloat4x4(&p4));
+		float w = XMVectorGetW(clip);
+		sx = ( XMVectorGetX(clip) / w * 0.5f + 0.5f) * disp.x;
+		sy = (-XMVectorGetY(clip) / w * 0.5f + 0.5f) * disp.y;
+		onScreen = sx > edge && sx < disp.x - edge && sy > edge && sy < disp.y - edge;
+	}
+
+	if (onScreen)
+	{
+		sy += sinf(m_time * BOB_FREQ) * disp.y * BOB_AMP;
+		// ▼(先端が行き先を指す)
+		ImVec2 p0(sx - s, sy - s * TRI_H), p1(sx + s, sy - s * TRI_H), p2(sx, sy);
+		dl->AddTriangleFilled(ImVec2(p0.x + 1, p0.y + 1), ImVec2(p1.x + 1, p1.y + 1), ImVec2(p2.x + 1, p2.y + 1), shd);
+		dl->AddTriangleFilled(p0, p1, p2, col);
+		float px = disp.y * LABEL_RATIO;
+		ImVec2 ls = jp->CalcTextSizeA(px, FLT_MAX, 0.0f, label);
+		ImVec2 lp(sx - ls.x * 0.5f, sy - s * TRI_H - ls.y - disp.y * LABEL_GAP);
+		dl->AddText(jp, px, ImVec2(lp.x + 1, lp.y + 1), shd, label);
+		dl->AddText(jp, px, lp, col, label);
+		return;
+	}
+
+	// 画面外: ビュー空間の (x, y) の向き=画面上の向き。後ろにある時もこの向きで「どちらへ振り向けばよいか」が分かる。
+	//   真後ろで向きが決まらない時は下向き(=振り返れ)にする。
+	float dx = v.x, dy = -v.y;					// 画面座標は y が下向き
+	float len = sqrtf(dx * dx + dy * dy);
+	if (len < 1e-4f) { dx = 0.0f; dy = 1.0f; len = 1.0f; }
+	dx /= len; dy /= len;
+	// 画面中心から (dx,dy) 方向へ伸ばし、内側の矩形(端から edge)にぶつかる所に置く
+	float hw = disp.x * 0.5f - edge, hh = disp.y * 0.5f - edge;
+	float t = fminf(fabsf(dx) > 1e-4f ? hw / fabsf(dx) : FLT_MAX, fabsf(dy) > 1e-4f ? hh / fabsf(dy) : FLT_MAX);
+	ImVec2 c(disp.x * 0.5f + dx * t, disp.y * 0.5f + dy * t);
+	// 矢印(先端が行き先の方向)
+	ImVec2 n(-dy, dx);	// 向きに直交
+	ImVec2 tip (c.x + dx * s * ARROW_TIP, c.y + dy * s * ARROW_TIP);
+	ImVec2 b0  (c.x - dx * s * ARROW_BACK + n.x * s, c.y - dy * s * ARROW_BACK + n.y * s);
+	ImVec2 b1  (c.x - dx * s * ARROW_BACK - n.x * s, c.y - dy * s * ARROW_BACK - n.y * s);
+	dl->AddTriangleFilled(tip, b0, b1, col);
+	float px = disp.y * LABEL_RATIO;
+	ImVec2 ls = jp->CalcTextSizeA(px, FLT_MAX, 0.0f, label);
+	// 文字は矢印の内側(画面中心寄り)に置く=画面からはみ出さない
+	ImVec2 lp(c.x - dx * s * ARROW_LABEL - ls.x * 0.5f, c.y - dy * s * ARROW_LABEL - ls.y * 0.5f);
+	dl->AddText(jp, px, ImVec2(lp.x + 1, lp.y + 1), shd, label);
+	dl->AddText(jp, px, lp, col, label);
 }
 
 //--- 出来栄え 0..1: 形の一致度と打撃品質の平均を重み合成する。

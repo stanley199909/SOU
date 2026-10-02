@@ -130,6 +130,7 @@ private:
 	std::shared_ptr<MeshBuffer> m_mesh;
 	std::shared_ptr<Texture>    m_glow;
 	std::shared_ptr<Texture>    m_uiParchment;	// UI: 羊皮紙パネル(結果/失敗画面の下地。抠いた透明PNG)
+	std::shared_ptr<Texture>    m_uiFrame;		// UI: 飾り枠付き羊皮紙(工程リストの下地。ナインスライスで描く)
 
 	float m_time      = 0.0f;
 	float m_autoTimer = 0.0f;	// タイトルの雰囲気用に自動で火花を出す間隔
@@ -709,6 +710,42 @@ private:
 	void  UpdateTitleHammer(float tick);			// タイトル: 鎚が一定間隔で振りかぶって打つ(火花+金床音)
 	void  UpdateHammerFollow(float tick);			// 鎚の横位置(XZ)を照準点へ平滑追従(タイトル/鍛造で共用)
 	void  DrawTitleLogo(float alpha);				// ロゴ「FORGE」(左上。alpha で淡出)
+
+	//--- 指引 UI(宏観チュートリアル, HUD.cpp)。「今どの工程か / 次にどこへ行くか」だけを示す。
+	//    「どこを叩け」等の微観の指示は出さない(KCD式: 誤りだけ主人公の独白で知らせる)。
+	//    文言・工程名は配方(WeaponRecipe)が持つ=換武器で自動的に変わる。
+	float m_stepChangedAt = -1000.0f;				// 工程が変わった時刻(m_time)。工程リストの強調に使う
+	//    案内文は「工程」だけでなく「今の状況」で変わる(コンテキストヒント): 鍛造中に鉄が冷めた→炉へ、
+	//    片面が仕上がった→裏返せ、炉で熱くなった→金床へ…。工程(配方)より細かい「今やること」を示す。
+	const char* m_guideText = "";					// 今の案内文(UpdateGuide が決める)
+	Station     m_guideGoal = Station::Anvil;		// 今向かうべき工位(目印の行き先)
+	float       m_guideChangedAt = -1000.0f;		// 案内文が変わった時刻(m_time)。淡入に使う
+	void  UpdateGuide();							// 状況から m_guideText / m_guideGoal を決める(毎フレーム, Update)
+	const char* GuideFor(Station& goal) const;		// その判定本体(優先度の高い状況から順に見る)
+	void  DrawStepTracker();						// 画面左: 工程リスト(済=●/今=強調/未=○)。クエストトラッカー
+	//    工程リストの各行の「済」状態。済は一度きりではなく「今も成り立っているか」で毎フレーム判定する
+	//    (例: 鍛造中に鉄が冷めた → 「加熱」の行は済でなくなる)。
+	//    前フレームと比べて切り替わった瞬間(エッジ検出)の時刻を覚え、取り消し線を引く/消すアニメに使う。
+	struct TrackerRow
+	{
+		bool  completed = false;		// 今この行は済か
+		float changedAt = -1000.0f;		// completed が切り替わった時刻(m_time)。アニメの起点
+	};
+	std::vector<TrackerRow> m_trackerRows;			// 配方の工程と同じ数(UpdateTracker が合わせる)
+	void  UpdateTracker();							// 各行の completed を判定し、切り替わりを検出(毎フレーム)
+	bool  RowCompleted(int i, bool wasCompleted) const;	// i 行目は今「済」か(加熱の行は温度で生きている)
+	float ReadyTemp(StepName next) const;			// その工程を始めるのに十分な温度(加熱の行が「済」になる)
+	float MinWorkTemp(StepName next) const;		// その工程ができる最低温度(下回ると加熱の行が「済」でなくなる)
+	//    操作説明=キーアイコン(Kenney Input Prompts, CC0)+一言。アイコン名は表(データ)で持つ。
+	struct KeyHint
+	{
+		static const int MAX_ICONS = 4;			// 1つの説明に並べるアイコンの最大数(WASD=4)
+		const char* icons[MAX_ICONS];			// アイコンのファイル名(拡張子なし, 例 "mouse_left")。nullptr で終わり
+		const char* label;						// 何が起きるか(UTF-8)
+	};
+	void  DrawKeyHints(const KeyHint* hints, int count, float yRatio, float alpha = 1.0f);	// 中央揃えで1行に並べる
+	bool  GuideTarget(DirectX::XMFLOAT3& pos, const char*& label);	// 走動中に次に向かう点(鉄 or 工位)。無ければ false
+	void  DrawObjectiveMarker();					// 向かう点の上に目印。画面外なら画面端に矢印(オフスクリーンインジケーター)
 
 	//--- 温度パラメータ(加熱速度は上の COAL_HEAT_RATE / BELLOWS_HEAT_RATE)
 	// 打撃CDは調整しやすいようメンバー変数(m_strikeCDMax)。自然冷却速度は m_forging.coolRate

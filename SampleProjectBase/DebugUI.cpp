@@ -8,8 +8,10 @@ void DebugUI::Toggle()    { s_debugVisible = !s_debugVisible; }
 //--- ゲームHUD用の追加フォント。Init で読み込み、ここに保持する
 static ImFont* s_fontTitle = nullptr;
 static ImFont* s_fontBody  = nullptr;
+static ImFont* s_fontJP    = nullptr;
 ImFont* DebugUI::FontTitle() { return s_fontTitle; }
 ImFont* DebugUI::FontBody()  { return s_fontBody; }
+ImFont* DebugUI::FontJP()    { return s_fontJP ? s_fontJP : ImGui::GetFont(); }	// 無ければ既定(メイリオ)
 
 void DebugUI::Init(HWND hWnd, ID3D11Device* device, ID3D11DeviceContext* context)
 {
@@ -36,6 +38,35 @@ void DebugUI::Init(HWND hWnd, ID3D11Device* device, ID3D11DeviceContext* context
 	latin.OversampleV = 2;
 	s_fontTitle = io.Fonts->AddFontFromFileTTF("Assets/Font/Cinzel-Black.ttf",       64.0f, &latin);
 	s_fontBody  = io.Fonts->AddFontFromFileTTF("Assets/Font/EBGaramond-Medium.ttf",  32.0f, &latin);
+
+	// ゲームHUD用の日本語フォント(工程の案内/操作説明/互動の一言)。
+	//   明朝体(游明朝 Demibold)=筆の入り抜きがあり、中世の羊皮紙の雰囲気に合う(メイリオはゴシック=現代的)。
+	//   漢字を含むので字数が多い → OversampleH=1 で貼图(フォントアトラス)を小さく保つ。
+	//   ファイルが無いと imgui は assert するので、先に存在を確かめてから読む。無ければメイリオ太字→既定。
+	const float JP_BAKE_PX = 30.0f;	// 焼く実寸(HUD の文字の高さに近い値=拡大ボケが少ない)
+	ImFontConfig jp;
+	jp.OversampleH = 1;
+	jp.OversampleV = 1;
+	// 字形範囲: imgui の日本語範囲は「常用漢字+人名用漢字」(約3000字)だけ。それ以外の漢字は豆腐(?)になる。
+	//   → ImFontGlyphRangesBuilder で日本語範囲に「HUD で使う範囲外の漢字」を足す。
+	//   新しい文言で ? が出たら、その漢字を JP_EXTRA_CHARS に足すだけでよい。
+	//   (全CJK範囲を焼くと2万字超=アトラスが数十MBになるので、必要な字だけ足す)
+	const char* JP_EXTRA_CHARS = (const char*)u8"叩掴";
+	static ImVector<ImWchar> s_jpRanges;	// フォントアトラスを Build するまで生きている必要がある=static
+	{
+		ImFontGlyphRangesBuilder rb;
+		rb.AddRanges(io.Fonts->GetGlyphRangesJapanese());
+		rb.AddText(JP_EXTRA_CHARS);
+		s_jpRanges.clear();
+		rb.BuildRanges(&s_jpRanges);
+	}
+	const char* JP_FONTS[] = { "C:\\Windows\\Fonts\\yumindb.ttf", "C:\\Windows\\Fonts\\meiryob.ttc" };
+	for (const char* path : JP_FONTS)
+	{
+		if (GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES) continue;
+		s_fontJP = io.Fonts->AddFontFromFileTTF(path, JP_BAKE_PX, &jp, s_jpRanges.Data);
+		if (s_fontJP) break;
+	}
 
 	io.Fonts->Build();
 

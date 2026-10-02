@@ -81,6 +81,9 @@ public:
     float Start()              const { return m_hStart; }
     bool  SegDone(int s)       const { return m_segProg[m_side][s] >= SEG_DONE; }
     bool  BothSidesDone()      const; // every segment of BOTH faces is shaped (ends the Forge step)
+    bool  SideDone(int side)   const; // every segment of ONE face is shaped (HUD: "flip it now")
+    float SideProgress(int side) const; // 0..1 shaping progress of one face (HUD progress bar)
+    float SharpProgress()      const; // 0..1 grinding progress of the edge (HUD progress bar)
     float SegAverage()         const; // mean segment progress of the up face (display / morph preview)
 
 private:

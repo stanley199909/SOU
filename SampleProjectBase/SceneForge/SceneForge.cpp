@@ -299,6 +299,8 @@ void SceneForge::Init()
 
 	// UI: 羊皮紙パネル(結果/失敗画面の下地)。透明PNGを読み、ImGuiのAddImageで貼る。
 	m_uiParchment = TextureCache::Get("Assets/Ui/parchment.png");
+	// UI: 飾り枠付きの羊皮紙(工程リストの下地)。ナインスライスで縦長に伸ばしても四隅の飾りは歪まない。
+	m_uiFrame = TextureCache::Get("Assets/UI/parchment_frame.jpg");
 
 	// --- シーン装飾: 編集シーン(StageEditor)と同じ道具一式・同じキー(St...)で読み込む ---
 	//   キーを St... に統一したので Assets/stage_layout.txt を両シーンで共有できる。
@@ -493,6 +495,8 @@ void SceneForge::StartGame()
 	// 工程(step)状態機を最初の工程から開始する。
 	//   遷移先の名前は「配方(m_recipe)の順序」から取る=データ駆動(chase は名前を状態に直書きだった)。
 	m_stepIdx = 0;
+	m_stepChangedAt = m_time;	// 指引 UI: 最初の案内文も淡入させる
+	m_trackerRows.clear();		// 工程リストの済状態を作り直す(UpdateTracker が配方の工程数で用意する)
 	m_stepMachine.ChangeState(StepKey(m_recipe->steps[0].type));
 }
 
@@ -514,6 +518,7 @@ void SceneForge::SetupSteps()
 void SceneForge::AdvanceStep()
 {
 	++m_stepIdx;
+	m_stepChangedAt = m_time;	// 指引 UI: 新しい案内文を淡入+工程リストで強調
 	if (!m_recipe || m_stepIdx >= (int)m_recipe->steps.size()) { FinishGame(); return; }
 	m_stepMachine.ChangeState(StepKey(m_recipe->steps[m_stepIdx].type));
 }
@@ -1100,6 +1105,7 @@ void SceneForge::Update(float tick)
 	{
 		// 互動の注視判定(①範囲 ②視線)。走動中以外(工位/移動アニメ中)は対象なし=提示がフェードアウト。
 		UpdateInteract(tick);
+		UpdateGuide();		// 指引 UI: 今の状況から案内文と行き先を決める(HUD.cpp)
 
 		if (Transitioning())
 		{

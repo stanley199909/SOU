@@ -191,13 +191,36 @@ void ForgingSim::BurnAll(float amount)
     }
 }
 
+bool ForgingSim::SideDone(int side) const
+{
+    const int s = side ? 1 : 0;
+    for (int k = 0; k < NSEG; ++k) if (m_segProg[s][k] < SEG_DONE) return false;
+    return true;
+}
+
+float ForgingSim::SideProgress(int side) const
+{
+    // Mean of the face's segments, each capped at "done" so a finished face reads 1.0.
+    const int s = side ? 1 : 0;
+    float sum = 0.0f;
+    for (int k = 0; k < NSEG; ++k) sum += fminf(m_segProg[s][k] / SEG_DONE, 1.0f);
+    return sum / NSEG;
+}
+
 bool ForgingSim::BothSidesDone() const
 {
     // The Forge step ends only when every segment of BOTH faces is shaped. The
     // player flips the piece at will during forging; this is what "finished" means.
-    for (int s = 0; s < NSIDES; ++s)
-    for (int k = 0; k < NSEG; ++k) if (m_segProg[s][k] < SEG_DONE) return false;
+    for (int s = 0; s < NSIDES; ++s) if (!SideDone(s)) return false;
     return true;
+}
+
+float ForgingSim::SharpProgress() const
+{
+    // Mean edge sharpness, each segment capped at "done" (HUD progress bar).
+    float sum = 0.0f;
+    for (int k = 0; k < NSEG; ++k) sum += fminf(m_sharp[k] / SHARP_DONE, 1.0f);
+    return sum / NSEG;
 }
 
 float ForgingSim::SegAverage() const

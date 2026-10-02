@@ -35,7 +35,8 @@ enum class Station
 struct StepSetting
 {
     StepName    type;        // which kind of step
-    const char* instruction; // macro tutorial line shown on the HUD this step
+    const char* label;       // short step name for the HUD step tracker (UTF-8)
+    const char* instruction; // macro tutorial line shown on the HUD this step (UTF-8)
 };
 
 // A weapon = an ordered list of steps. Pure data.

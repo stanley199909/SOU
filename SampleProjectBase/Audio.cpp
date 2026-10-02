@@ -317,6 +317,57 @@ namespace
 			}
 			break;
 		}
+		case Audio::SE_PENCIL:
+		{
+			// 鉛筆が紙を一息に走る「シャーッ」: 高域のノイズ(黒鉛が紙の繊維に引っかかる音)に、
+			// 細かい不規則な粒(紙のざらつき)で振幅を揺らす。速く立ち上がり、線の終わりで抜ける。
+			// 長さは工程リストの線アニメ(HUD.cpp の STRIKE_ANIM_SEC)と同じくらいにしておく。
+			const float DUR        = 0.80f;	// 長さ(秒)
+			const float HP_COEF    = 0.92f;	// 一次ハイパス(大=シャリッとした高域だけ残る)
+			const float GRAIN_LP   = 0.02f;	// 粒の揺らぎの滑らかさ(小=ゆっくり揺れる)
+			const float GRAIN_DEPTH= 0.6f;	// 粒による振幅の揺れの深さ
+			const float RISE       = 80.0f;	// 書き始めの立ち上がり
+			const float FADE_START = 0.75f;	// 長さのこの割合から抜け始める
+			const float LEVEL      = 0.30f;
+			int n = (int)(sr * DUR);
+			w.resize(n);
+			float prev = 0.0f, hp = 0.0f, grain = 0.0f;
+			for (int i = 0; i < n; ++i)
+			{
+				float t = (float)i / sr, prog = t / DUR;
+				float x = noise();
+				hp = HP_COEF * (hp + x - prev);	prev = x;		// 一次ハイパス
+				grain += GRAIN_LP * (fabsf(noise()) - grain);		// 不規則に揺れる 0..1 の包絡
+				float env = (1.0f - expf(-t * RISE));
+				if (prog > FADE_START) env *= 1.0f - (prog - FADE_START) / (1.0f - FADE_START);
+				w[i] = hp * env * (1.0f - GRAIN_DEPTH + GRAIN_DEPTH * grain) * LEVEL;
+			}
+			break;
+		}
+		case Audio::SE_ERASER:
+		{
+			// 消しゴムの「ゴシゴシ」: 鉛筆より低くこもったノイズ(ゴムが紙を擦る)を、
+			// 往復の周期で強弱させる(押して擦る→戻す、を数回)。
+			const float DUR     = 0.80f;	// 長さ(秒)。線アニメと同じくらい
+			const float LP_COEF = 0.25f;	// 一次ローパス(小=こもった擦れ音)
+			const float RUB_HZ  = 7.0f;		// 往復の速さ(回/秒)
+			const float RUB_SHARP = 3.0f;	// 往復の山の鋭さ(大=1回ずつ区切れて聞こえる)
+			const float RISE    = 40.0f;
+			const float DECAY   = 1.5f;
+			const float LEVEL   = 0.45f;
+			int n = (int)(sr * DUR);
+			w.resize(n);
+			float lp = 0.0f;
+			for (int i = 0; i < n; ++i)
+			{
+				float t = (float)i / sr;
+				lp += LP_COEF * (noise() - lp);
+				float rub = powf(0.5f + 0.5f * sinf(6.2832f * RUB_HZ * t), RUB_SHARP);	// 往復ごとの山
+				float env = (1.0f - expf(-t * RISE)) * expf(-t * DECAY);
+				w[i] = lp * rub * env * LEVEL;
+			}
+			break;
+		}
 		default: break;
 		}
 		ToPCM16(w, s.data);
@@ -365,6 +416,8 @@ namespace Audio
 			"Assets/Sound/SE/grind_loop.wav",	// SE_GRIND_LOOP(無ければ合成音)
 			"Assets/Sound/SE/steam.wav",		// SE_STEAM(無ければ合成音)
 			"Assets/Sound/SE/title_fade.wav",	// SE_TITLE_FADE(ロゴ淡出。無ければ無音)
+			"Assets/Sound/SE/pencil.wav",		// SE_PENCIL(取り消し線を引く。無ければ合成音)
+			"Assets/Sound/SE/eraser.wav",		// SE_ERASER(取り消し線を消す。無ければ合成音)
 			"Assets/Sound/BGM/title_bgm.wav",	// BGM_TITLE(工場環境音。無ければ無音)
 			"Assets/Sound/BGM/play_bgm.wav",	// BGM_PLAY(medieval。無ければ無音)
 			"Assets/Sound/BGM/result_bgm.wav",	// BGM_RESULT(無ければ無音)
