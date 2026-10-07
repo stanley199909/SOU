@@ -19,10 +19,22 @@ public:
         float life;
         float maxLife;
         float size;
+        int   gen;     // burn sparks: 0 = first spark (will fork), 1 = a branch (dies normally)
     };
 
     // Spawn a burst of sparks at a strike point. count = number, power/scale set energy.
     void SpawnSparks(const DirectX::XMFLOAT3& origin, int count, float power, float scale);
+
+    // Spawn sparks thrown in one direction (a grinding wheel throws them off along its
+    // rim, tangent to the turn). dir = unit direction, spread = cone half-angle (rad),
+    // speed range in m/s. Same motion/look as hammer sparks afterwards.
+    // Burning steel (overheated): carbon in the steel burns as tiny WHITE sparks that, halfway
+    // through their short life, burst into a few branches (the forking used by the 'spark test'
+    // to judge carbon content). Visually distinct from the orange scale flakes thrown by a strike.
+    void SpawnBurnSpark(const DirectX::XMFLOAT3& origin);
+
+    void SpawnSparksDir(const DirectX::XMFLOAT3& origin, const DirectX::XMFLOAT3& dir, float spread,
+                        int count, float speedMin, float speedMax);
 
     // Emit embers this frame from an emitter box (centre + XZ radius) at `rate`
     // per second with upward speed `rise`. Fractional counts carry between frames.
@@ -48,11 +60,13 @@ public:
     void Clear();
 
     const std::vector<Particle>& Sparks() const { return m_sparks; }
+    const std::vector<Particle>& BurnSparks() const { return m_burn; }
     const std::vector<Particle>& Embers() const { return m_embers; }
     const std::vector<Particle>& Steam()  const { return m_steam; }
     const std::vector<Particle>& Splash() const { return m_splash; }
 
     static const int MAX_SPARKS = 3000;
+    static const int MAX_BURN   = 600;
     static const int MAX_EMBERS = 500;
     static const int MAX_STEAM  = 800;
     static const int MAX_SPLASH = 400;
@@ -88,6 +102,15 @@ public:
         float steamBuoyancy = 0.6f;       // upward accel (hot vapour)
         float steamDrag     = 1.4f;       // air drag rate (1/s): puffs slow down and hang
         float steamGrowth   = 0.35f;      // radius growth (/s): puffs expand as they cool
+        // -- burning sparks (SpawnBurnSpark / Update) --
+        float burnSpeedMin  = 0.4f, burnSpeedMax = 1.2f;   // a fizz off the surface, mostly upward
+        float burnLifeMin   = 0.20f, burnLifeMax = 0.40f;  // the first spark (forks at half life)
+        float burnSizeMin   = 0.035f, burnSizeMax = 0.06f;
+        int   burnForkMin   = 3, burnForkMax = 5;          // branches per burst
+        float forkSpeedMin  = 0.8f, forkSpeedMax = 1.8f;   // branches fly out in all directions
+        float forkLifeMin   = 0.10f, forkLifeMax = 0.22f;
+        float forkSizeScale = 0.6f;                        // a branch is smaller than its parent
+        float burnGravity   = 2.0f;                        // light: they are glowing specks, not heavy flakes
         // -- splash droplets (SpawnSplash / Update) --
         float splashLifeMax  = 1.2f;       // safety cap; normally they die on falling back into the water
         float splashSizeMin  = 0.010f, splashSizeMax = 0.022f;
@@ -101,6 +124,8 @@ private:
     std::vector<Particle> m_sparks;
     std::vector<Particle> m_embers;
     std::vector<Particle> m_steam;
+    std::vector<Particle> m_burn;
+    std::vector<Particle> m_burnBranches; // scratch: branches born this frame (kept to reuse its memory)
     std::vector<Particle> m_splash;
     float m_splashSurfaceY = 0.0f; // droplets below this (falling) have landed back in the water
     float m_emberSpawn = 0.0f; // fractional ember count carried to the next frame

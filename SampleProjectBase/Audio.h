@@ -8,7 +8,7 @@ namespace Audio
 {
 	enum SoundId
 	{
-		SE_WHISTLE,	// 口笛=鍛造で面(表/裏)が仕上がった瞬間の合図(リズムの合図ではない。2026-10-04 変更)
+		SE_FACE_DONE,	// 「完成した」の合図=鍛造/研ぎで面(表/裏)が仕上がった瞬間(2026-10-07: 口笛 → 上がっていく打音。Assets/Sound/SE/face_done.wav があればそれを使う)
 		SE_HAMMER,	// 打撃の「カン」(合成音フォールバック)
 		SE_COLD,	// 冷打の鈍い「ドン」
 		SE_SIZZLE,	// 過熱の「ジュー」

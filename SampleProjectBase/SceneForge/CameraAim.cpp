@@ -313,6 +313,7 @@ void SceneForge::SetupStationView(Station s)
 	{
 		m_stationViewDir = GrindViewDir();	// 近づいた側に関係なく固定(刃の位置が毎回同じになる)
 		m_grindU = 0.5f;					// 刃の中央から研ぎ始める
+		m_grindAngle = m_grindAngleTarget = 0.0f;	// 平らに寝た状態から(角度は玩家が付ける)
 	}
 }
 
@@ -880,6 +881,7 @@ void SceneForge::SaveTuning()
 	fprintf(fp, "forgework %.5f\n", m_forging.workNeeded);
 	fprintf(fp, "grindview %.5f\n", m_grindViewYaw);
 	fprintf(fp, "stationfront %d %d\n", m_hearthFrontFlip ? 1 : 0, m_troughFrontFlip ? 1 : 0);
+	fprintf(fp, "hintafter %d\n", m_hintAfterMistakes);
 	fprintf(fp, "seqfeel %.5f %.5f %.5f %.5f\n", m_seqHandLag, m_seqArcLift, m_seqTimeJitter, m_seqArcJitter);
 	fprintf(fp, "carryavoid %.5f %.5f %.5f %.5f\n", m_carryAvoidMaxRaise, m_carryAvoidMargin, m_carryAvoidLambda, m_carryAvoidMaxPull);
 	fprintf(fp, "hearthlay %.5f %.5f %.5f\n", m_hearthYaw, m_hearthTipSide, m_hearthTipDepth);
@@ -1032,6 +1034,7 @@ void SceneForge::LoadTuning()
 		else if (strcmp(key, "carryavoid") == 0) sscanf_s(v, "%f %f %f %f", &m_carryAvoidMaxRaise, &m_carryAvoidMargin, &m_carryAvoidLambda, &m_carryAvoidMaxPull);	// 旧ファイル(3つ)は引き寄せが既定のまま
 		else if (strcmp(key, "seqfeel")    == 0) sscanf_s(v, "%f %f %f %f", &m_seqHandLag, &m_seqArcLift, &m_seqTimeJitter, &m_seqArcJitter);
 		else if (strcmp(key, "hearthlay")  == 0) sscanf_s(v, "%f %f %f", &m_hearthYaw, &m_hearthTipSide, &m_hearthTipDepth);
+		else if (strcmp(key, "hintafter")  == 0) { sscanf_s(v, "%d", &m_hintAfterMistakes); if (m_hintAfterMistakes < 1) m_hintAfterMistakes = 1; }	// 0 だと最初から出続ける
 		else if (strcmp(key, "stationfront") == 0) { int h = 0, t = 0; sscanf_s(v, "%d %d", &h, &t); m_hearthFrontFlip = (h != 0); m_troughFrontFlip = (t != 0); }
 		else if (strcmp(key, "hotsteel")   == 0) sscanf_s(v, "%f %f %f %f", &m_wpHotShade, &m_wpRimK, &m_wpRimPow, &m_wpHotGain);
 		else if (strcmp(key, "forgescale") == 0) sscanf_s(v, "%f %f %f %f %f %f", &m_scaleTiling, &m_scaleSoft, &m_scaleOpacity, &m_scaleGlow, &m_scaleStart, &m_scaleHoldMax);	// 足りない旧ファイルは残りが既定のまま

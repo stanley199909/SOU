@@ -183,7 +183,8 @@ private:
 	float m_hearthTipSide  = 0.80f; 					// 炉: 先端が炭床の中心から長辺方向へずれる距離(m)
 	float m_hearthTipDepth = 0.28f;					// 炉: 先端が炭床の中心から奥へ入る距離(m)
 	DirectX::XMFLOAT3 HearthDir() const;			// 炉に寝かせた鉄の長軸(水平。+側=奥の先端)
-	float m_grindLift   = 0.02f;					// 砥石: プロップ上端から刃を置く高さ
+	float m_grindLift   = 0.0f;						// 砥石: 刃の一番低い点と砥石の上端の隙間(m)。刃の高さ自体は BladeDepthBelowCentre で自動
+	float BladeDepthBelowCentre() const;			// 刃の中心から一番低い点までの深さ(今の回転で。砥石に食い込まない高さを出す)
 	float m_troughHover = 0.30f;					// 水槽: 水面の上に刃を構える高さ
 	DirectX::XMFLOAT3 StationBase(Station s);		// 工位の作業点(刃を置く点。砥石の滑り/淬火の沈みは含まない)
 	DirectX::XMFLOAT3 StationRight() const;			// 工位カメラから見た右方向(刃の長軸をこれに揃える。炉だけは奥へ向ける)
@@ -214,16 +215,31 @@ private:
 	float m_burnSparkAcc = 0.0f;					// 端数の火花数を次フレームへ持ち越す
 	bool  m_burnSndOn    = false;					// 燃焼ループ音が鳴っているか
 	static constexpr float BURN_SPARK_RATE  = 30.0f;	// 1秒あたりの火花数
-	static constexpr float BURN_SPARK_POWER = 0.30f;	// 火花の勢い(打撃の火花より弱い=表面から弾ける程度)
-	static constexpr float BURN_SPARK_SCALE = 0.45f;
 	void  UpdateBurnFx(float tick);					// 燃焼の火花+音
 	DirectX::XMFLOAT3 RandomBladePoint() const;		// 刃の上のランダムな点(ワールド。火花の発生点)
 
 	//--- 研磨(砥石)。右クリックを「点按」=足踏み1回。左長押し=刃を押し当てる。マウス左右=刃を滑らす。
 	GrindWheel m_wheel;								// 足踏み砥石の回転物理(力積+指数減衰)
 	float m_grindU      = 0.5f;						// 砥石に当たっている刃の長手位置 0..1(区域 = U*NSEG)
-	float m_grindPress  = 0.0f;						// 押し当ての見た目 0..1(Damp)
 	float m_grindSens   = 0.0012f;					// マウス1pxあたりの滑り量(長手の割合)
+	//--- 研ぎ角(bevel angle。ユーザー同意 2026-10-07): マウスの上下で刃を長軸まわりに傾ける。
+	//    実際の刃付け: 刃は決まった角度で砥石に当てる。寝かせすぎ = 刃でなく平らな面を削る / 立てすぎ = 刃先が丸まる。
+	//    角度が正しいほど速く研げ、火花も多い(正しい角度は画面に出さない。火花・研げ具合・独白で分かる)。
+	//    研ぐ面は F で裏返して選ぶ(鍛造の F と同じ操作。ユーザー指定 2026-10-07)。両方研ぎ上がって研磨完了。
+	float m_grindAngle       = 0.0f;				// 今の傾き(rad, 0..MAX)。0 = 平らに寝ている
+	int   m_grindFace        = 0;					// 今研いでいる面(0 = 表 / 1 = 裏)。F で切り替え
+	float m_grindFlipRoll    = 0.0f;				// 裏返しの見た目の回転(rad。m_grindFace × π へ追従)
+	static constexpr float GRIND_FLIP_LAMBDA = 10.0f;	// 裏返しの速さ(Damp率, 1/秒)
+	float m_grindAngleTarget = 0.0f;				// マウスで決めた傾きの目標(刃は少し遅れて追う)
+	static constexpr float GRIND_ANGLE_SENS   = 0.004f;	// マウス 1px → 傾き(rad)
+	static constexpr float GRIND_ANGLE_MAX    = 0.80f;	// 傾けられる限界(rad, 約46°)
+	static constexpr float GRIND_ANGLE_FOLLOW = 14.0f;	// 刃が目標を追う速さ(Damp率, 1/秒)
+	static constexpr float GRIND_IDEAL_ANGLE  = 0.35f;	// 正しい研ぎ角(rad, 約20°)
+	static constexpr float GRIND_ANGLE_TOL    = 0.20f;	// 正しい角からこれだけ外れると研げなくなる(rad, 約11°)
+	float GrindAngleEfficiency() const;				// 研ぎの効率 0..1(正しい角で 1、TOL 外れで 0)
+	int   GrindSide() const;							// 今研いでいる刃の面(0 = 表 / 1 = 裏)= 砥石へ向いている面(WeaponRender.cpp)
+	bool  PlusIsFront() const;						// モデルの厚み軸の + 側の面が表か
+	static constexpr float SHARP_HOLD_MAX = 0.55f;	// 研ぎ上がるまでの刃の見た目の上限(0..1)。仕上がった瞬間に 1 へ跳ぶ=区域の完成が見える
 	float m_grindSparkAcc = 0.0f;
 	bool  m_grindSndOn  = false;						// 研磨ループが流れているか(砥石の工位にいる間は流しっぱなし)
 	float m_grindVol    = 0.0f;						// 研磨音の現在の大きさ 0..1(Damp で目標へ)
@@ -234,11 +250,17 @@ private:
 	static constexpr float GRIND_SND_LAMBDA = 10.0f;	// 音量の追従の速さ(Damp率。大=機敏)
 	static constexpr float GRIND_SND_OFF    = 0.01f;	// これ未満まで消えたらループを止めてよい
 	static constexpr float GRIND_RATE         = 0.35f;	// 全速で押し当てた時の研ぎ進み(/秒)
-	static constexpr float GRIND_PRESS_DROP   = 0.02f;	// 押し当てで刃が砥石へ沈む量
-	static constexpr float GRIND_PRESS_LAMBDA = 14.0f;	// 押し当ての追従の速さ(Damp率)
+	float m_grindPress = 0.0f;						// 押し当て 0..1(Damp)。0 = 砥石の少し上に構える / 1 = 砥石に当てる
+	static constexpr float GRIND_HOVER        = 0.03f;	// 押し当てていない時、刃の一番低い点を砥石から浮かせる高さ(m)
+	static constexpr float GRIND_PRESS_LAMBDA = 14.0f;	// 押し当て/持ち上げの速さ(Damp率, 1/秒)
 	static constexpr float GRIND_SPARK_RATE   = 90.0f;	// 全速時の研ぎ火花(個/秒)
-	static constexpr float GRIND_SPARK_POWER  = 0.55f;
-	static constexpr float GRIND_SPARK_SCALE  = 0.35f;
+	static constexpr float GRIND_DONE_SPARK_FACTOR = 0.15f;	// 研ぎ上がった所を研ぐと火花はこの割合まで細る(削る金属がもう無い)
+	static constexpr float GRIND_DONE_VOL_MUL      = 0.5f;	// 〃 研ぐ音の大きさの倍率(手応えが無い)
+	static constexpr float GRIND_DONE_PITCH_MUL    = 1.3f;	// 〃 研ぐ音の高さの倍率(上滑りする軽い音)
+	static constexpr float GRIND_SPARK_DIP       = -0.25f;	// 火花の向きの下向き成分(接線の少し下へ。砥石の縁に沿って落ちる)
+	static constexpr float GRIND_SPARK_SPREAD    = 0.30f;	// 火花が広がる円錐の半角(rad)
+	static constexpr float GRIND_SPARK_SPEED_MIN = 2.0f;	// 火花の速さ(m/秒)
+	static constexpr float GRIND_SPARK_SPEED_MAX = 4.5f;
 	void  UpdateGrind(float tick, bool inputOn);	// 研磨の入力・物理・火花・音
 
 	//--- 淬火と終幕(QuenchStep が進みを渡し、ここが見た目/音を担当)
@@ -692,7 +714,8 @@ private:
 	float m_scaleGlow    = 0.10f;				// 熱い時、黒皮が暗い赤でどれだけ光るか(温度の明るさに対する比。皮は断熱層で地金より暗い)
 	float m_scaleStart   = 0.35f;				// 叩く前から剥がれている薄い皮(マスク灰度)。大=開局から地金が多く見える=斑な黒皮
 	float m_scaleHoldMax = 0.70f;				// 区域が完成するまでの剥がれ具合の上限(0..1)。小=未完成の区域に皮が多く残る=見分けやすい
-	static constexpr float FACE_DONE_WHISTLE_VOLUME = 0.8f;	// 面(表/裏)が仕上がった瞬間の口笛の音量(口笛はこの合図専用)
+	static constexpr float FACE_DONE_VOLUME      = 0.8f;	// 面(表/裏)が仕上がった瞬間の「完成」の合図(SE_FACE_DONE)の音量
+	static constexpr float FACE_DONE_FINAL_PITCH = 1.12f;	// 両面とも済んだ(工程の完了)時は一段高く鳴らす(連続撃破音の様に上がっていく)
 	static constexpr float GROOVE_RING_PITCH = 1.12f;		// リズムに乗った打撃の金床音の音程倍率(少し高い=澄んだ「キン」)
 	float m_wpHotGain    = 0.85f;				// 熱い鋼の発光全体の明るさ(白飛びで黒皮や形が消えるのを防ぐ)
 	int   m_wpN = 0;							// 1段の頂点数
@@ -961,6 +984,21 @@ private:
 	//    蒸気の膜を破るまで(=操作を覚えるまで)だけ出し、破れたら淡出する。小さな操作ガイド(画面下)は残る。
 	float m_stirPromptAlpha = 0.0f;
 	void  DrawStirPrompt();
+	enum class MouseAxis { Vertical, Horizontal };
+	void  DrawMousePrompt(MouseAxis axis, int towards, float alpha);	// 動くマウスの案内(towards: 0 往復 / −1 上・左 / +1 下・右)
+	//--- 研ぎの自適応の案内(ユーザー要望 2026-10-07): 同じ誤りを m_hintAfterMistakes 回くり返したら直し方を見せる。
+	//    上手な人には出ない=邪魔をしない。正しくできた(研げた)瞬間に消え、回数も 0 に戻る。
+	enum class GrindHint { None, TiltUp, TiltDown, Slide };
+	GrindHint m_grindHint      = GrindHint::None;	// 今出す案内
+	GrindHint m_grindHintShown = GrindHint::None;	// 淡出中も描く為に、最後に出した案内を覚えておく
+	float m_grindHintAlpha     = 0.0f;
+	int   m_grindFlatMistakes  = 0;					// 「寝かせすぎ」をくり返した回数
+	int   m_grindSteepMistakes = 0;					// 「立てすぎ」〃
+	int   m_grindDoneMistakes  = 0;					// 「研ぎ上がった所を研ぐ」〃
+	int   m_hintAfterMistakes  = 2;					// 何回くり返したら案内を出すか(F1 Stations。tuning キー hintafter)
+	void  DrawGrindHint();
+	void  CountGrindMistake(int& count, GrindHint hint);	// 誤りを1回数え、規定回数に達したら案内を出す
+	void  ClearGrindHint();							// 正しくできた: 案内を消し、回数を 0 に戻す
 	bool  GuideTarget(DirectX::XMFLOAT3& pos, const char*& label);	// 走動中に次に向かう点(鉄 or 工位)。無ければ false
 	void  DrawObjectiveMarker();					// 向かう点の上に目印。画面外なら画面端に矢印(オフスクリーンインジケーター)
 

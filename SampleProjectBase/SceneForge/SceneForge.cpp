@@ -223,6 +223,10 @@ void SceneForge::Init()
 	PixelShader* ps = CreateObj<PixelShader>("PS_Forge");
 	if (FAILED(ps->Load("Assets/Shader/PS_Particle.cso")))
 		MessageBox(nullptr, "PS_Particle.cso", "Shader Error", MB_OK);
+	// 火花の線は貼图でなく式で描く(PS_Spark)=どの大きさでもぼやけない。余燼/蒸気の丸い粒は PS_Particle のまま。
+	PixelShader* sps = CreateObj<PixelShader>("PS_Spark");
+	if (FAILED(sps->Load("Assets/Shader/PS_Spark.cso")))
+		MessageBox(nullptr, "PS_Spark.cso", "Shader Error", MB_OK);
 
 	// 光の粒テクスチャ(中心が明るい)
 	const int S = 64;
@@ -461,6 +465,7 @@ void SceneForge::Uninit()
 	m_grassMap.Uninit();	// 草の踏み跡の貼图(ブレンドステートを解放)
 	DestroyObj("VS_Forge");
 	DestroyObj("PS_Forge");
+	DestroyObj("PS_Spark");
 	DestroyObj("VS_ForgeObj");
 	DestroyObj("PS_ForgeObj");
 	DestroyObj("VS_Bar");
@@ -496,7 +501,9 @@ void SceneForge::Strike(float scale)
 {
 	// 1回叩くと火花をまとめて発生(バースト)。量と勢いの物理は Particles が持つ。
 	const int N = (int)(m_burst * scale);
-	XMFLOAT3 origin = XMFLOAT3(0.0f, 1.0f, 0.0f);	// 金床の位置(カメラ注視点の高さ)
+	// 出る所 = 叩いた所: ハンマーの真下(照準点 m_aimWorld の水平位置)の、刃の上面
+	//   (旧: (0,1,0) のベタ書き=金床がどこにあっても同じ所から出ていた)。上面 = 刃の中心 + 中心→表面の深さ。
+	XMFLOAT3 origin(m_aimWorld.x, WorkAnchor().y + BladeDepthBelowCentre(), m_aimWorld.z);
 	m_particles.SpawnSparks(origin, N, m_power, scale);
 }
 
@@ -533,7 +540,8 @@ void SceneForge::StartGame()
 	m_overheatWarned = false;
 	m_burnSparkAcc = 0.0f;
 	m_wheel.Reset();						// 砥石は止まっている
-	m_grindU = 0.5f; m_grindPress = 0.0f; m_grindSparkAcc = 0.0f; m_grindVol = 0.0f;
+	ClearGrindHint(); m_grindPress = 0.0f;
+	m_grindU = 0.5f; m_grindFace = 0; m_grindFlipRoll = 0.0f; m_grindSparkAcc = 0.0f; m_grindVol = 0.0f; m_grindAngle = m_grindAngleTarget = 0.0f;
 	m_plunge = 0.0f; m_quenchTurn = 0.0f; m_agitate = 0.0f; m_quenchContact = false; m_clearDecided = false; m_letterbox = 0.0f; m_boil = 0.0f; m_boilStage = BoilStage::None; m_waterSim.Reset(); m_prevAgitate = 0.0f; m_bubbleAcc = 0.0f;
 	m_stirTarget = 0.0f; m_filmBreak = 0.0f; m_filmTime = 0.0f; m_stir01 = 0.0f; m_quenchStartHeat = 0.0f;	// 淬火/終幕の演出も解除
 	if (m_burnSndOn)  { Audio::Stop(Audio::SE_BURN_LOOP);  m_burnSndOn  = false; }
@@ -1051,8 +1059,8 @@ void SceneForge::DoStrike()
 		else if (power > POWER_GOOD)    { label = "GOOD";     col = IM_COL32(180, 255, 150, 255); quality = QUALITY_GOOD; }
 		else                            { label = "WEAK";     col = IM_COL32(200, 200, 200, 255); quality = QUALITY_WEAK; }
 		if (inGroove) quality += GROOVE_QUALITY_BONUS;
-		// 口笛 = 面が仕上がった瞬間の合図だけ(リズムの手応えは上の金床音の音程で返す)。
-		if (faceJustDone) Audio::Play(Audio::SE_WHISTLE, FACE_DONE_WHISTLE_VOLUME);
+		// 完成の合図 = 面が仕上がった瞬間だけ(リズムの手応えは上の金床音の音程で返す)。両面とも済んだ(工程の完了)なら一段高く。
+		if (faceJustDone) Audio::Play(Audio::SE_FACE_DONE, FACE_DONE_VOLUME, m_forging.BothSidesDone() ? FACE_DONE_FINAL_PITCH : 1.0f);
 		m_qualitySum += quality;
 		m_score += (int)(quality * SCORE_PER_QUALITY);
 		break;
@@ -1097,7 +1105,7 @@ void SceneForge::UpdateBurnFx(float tick)
 		int n = (int)m_burnSparkAcc;
 		m_burnSparkAcc -= n;
 		for (int i = 0; i < n; ++i)
-			m_particles.SpawnSparks(RandomBladePoint(), 1, BURN_SPARK_POWER, BURN_SPARK_SCALE);
+			m_particles.SpawnBurnSpark(RandomBladePoint());	// 白く枝分かれする燃焼の火花(打撃の橙の火花と見分けがつく)
 	}
 	else m_burnSparkAcc = 0.0f;
 
@@ -1120,28 +1128,68 @@ void SceneForge::UpdateGrind(float tick, bool inputOn)
 		m_grindU -= dx * m_grindSens * (m_restFlip ? -1.0f : 1.0f);
 		if (m_grindU < 0.0f) m_grindU = 0.0f;
 		if (m_grindU > 1.0f) m_grindU = 1.0f;
+		// 上下 = 研ぎ角(マウスを上へ = 立てる)。刃は少し遅れて追う(手で角度を保つ重さ)。0 = 平らに寝ている
+		m_grindAngleTarget = fminf(fmaxf(m_grindAngleTarget - dy * GRIND_ANGLE_SENS, 0.0f), GRIND_ANGLE_MAX);
+		// F = 刃を裏返してもう片方の刃を研ぐ(鍛造の F と同じ操作。ユーザー指定 2026-10-07)
+		if (IsKeyTrigger('F')) m_grindFace ^= 1;
 		if (IsKeyTrigger(VK_RBUTTON) || IsKeyTrigger(VK_SPACE)) m_wheel.Pedal();	// 点按=足で一回踏む(右クリック/Space。速すぎる連打は GrindWheel が無視)
 		pressing = IsKeyPress(VK_LBUTTON);
 	}
 	m_wheel.Update(tick, pressing);			// 足を止めれば摩擦で止まる。押し当て中は余計に減速
-	m_grindPress = Lerp::Damp(m_grindPress, pressing ? 1.0f : 0.0f, GRIND_PRESS_LAMBDA, tick);
+	m_grindFlipRoll = Lerp::Damp(m_grindFlipRoll, m_grindFace * XM_PI, GRIND_FLIP_LAMBDA, tick);	// 裏返しは半回転を滑らかに
+	m_grindPress    = Lerp::Damp(m_grindPress, pressing ? 1.0f : 0.0f, GRIND_PRESS_LAMBDA, tick);	// 押し当て=浮いた所から砥石へ下ろす
+	m_grindAngle = Lerp::Damp(m_grindAngle, m_grindAngleTarget, GRIND_ANGLE_FOLLOW, tick);
 
 	const float speed = m_wheel.Speed01();
 	constexpr float MIN_GRIND_SPEED = 0.02f;	// これ未満=砥石がほぼ止まっている(研げない・火花も出ない)
 	const bool grinding = pressing && speed > MIN_GRIND_SPEED;
+	bool onDoneSpot = false;	// 研ぎ上がった所を研いでいる(火花が細り、音が軽く高くなる=もう削る物が無い)
 	if (grinding)
 	{
 		int seg = (int)(m_grindU * NSEG);
 		if (seg >= NSEG) seg = NSEG - 1;
-		if (m_forging.ApplyGrind(seg, GRIND_RATE * speed * tick) == ForgingSim::GrindOutcome::AlreadySharp
-			&& m_popupLife <= 0.0f)
-			Say((const char*)u8"そこはもう十分だ", IM_COL32(255, 200, 90, 255));	// 研ぎ上がった所を削る=誤り
+		const float eff = GrindAngleEfficiency();	// 角度が正しいほど速く研げ、火花も多い
+		const int  side = GrindSide();	// 砥石へ向いている刃の面
+		onDoneSpot = m_forging.SharpDoneOf(side, seg);
+		const bool faceWasDone = m_forging.SharpProgress(side) >= 1.0f;
+		// 誤りは独白で知らせ(1回の独白 = 1回の誤り)、同じ誤りをくり返したら直し方の案内を出す(DrawGrindHint)。
+		if (eff > 0.0f)
+		{
+			if (m_forging.ApplyGrind(side, seg, GRIND_RATE * speed * eff * tick) == ForgingSim::GrindOutcome::AlreadySharp)
+			{
+				if (m_popupLife <= 0.0f)
+				{
+					Say((const char*)u8"そこはもう十分だ", IM_COL32(255, 200, 90, 255));	// 研ぎ上がった所を削る=誤り
+					CountGrindMistake(m_grindDoneMistakes, GrindHint::Slide);
+				}
+			}
+			else ClearGrindHint();	// 正しく研げた
+		}
+		else if (m_popupLife <= 0.0f)
+		{
+			// 角度が外れて研げていない: どちらに外れたかだけ独白で言う(正しい角度そのものは教えない=KCD式の負向フィードバック)
+			const bool tooFlat = fabsf(m_grindAngle) < GRIND_IDEAL_ANGLE;
+			Say(tooFlat ? (const char*)u8"寝かせすぎだ…刃に当たっていない" : (const char*)u8"立てすぎだ…刃先が丸まる",
+			    IM_COL32(255, 200, 90, 255));
+			if (tooFlat) CountGrindMistake(m_grindFlatMistakes,  GrindHint::TiltUp);
+			else         CountGrindMistake(m_grindSteepMistakes, GrindHint::TiltDown);
+		}
 
-		// 研ぎ火花: 砥石と刃の接点から、回転が速いほど多く
-		m_grindSparkAcc += GRIND_SPARK_RATE * speed * tick;
+		// この面の刃が全部研ぎ上がった瞬間: 「完成」の合図(鍛造の面の完成と同じ音。両面とも済めば一段高く)
+		if (!faceWasDone && m_forging.SharpProgress(side) >= 1.0f)
+			Audio::Play(Audio::SE_FACE_DONE, FACE_DONE_VOLUME, m_forging.AllSharp() ? FACE_DONE_FINAL_PITCH : 1.0f);
+
+		// 研ぎ火花: 砥石と刃の接点から、回転が速いほど・角度が正しいほど多く。研ぎ上がった所ではまばらに
+		m_grindSparkAcc += GRIND_SPARK_RATE * speed * eff * (onDoneSpot ? GRIND_DONE_SPARK_FACTOR : 1.0f) * tick;
 		int n = (int)m_grindSparkAcc;
 		m_grindSparkAcc -= n;
-		if (n > 0) m_particles.SpawnSparks(StationBase(Station::Grindstone), n, GRIND_SPARK_POWER, GRIND_SPARK_SCALE);
+		// 出る所 = 刃と砥石の接点(砥石の上端。刃はそこへ滑らせて当てている)。
+		// 向き = 砥石の縁が動く向き(接線)= 車軸に直交する水平方向へ、奥へ向けて飛ばす(手前へ飛ぶと画面を覆う)。
+		if (n > 0)
+		{
+			const XMFLOAT3 away(-m_stationViewDir.x, GRIND_SPARK_DIP, -m_stationViewDir.z);
+			m_particles.SpawnSparksDir(StationBase(Station::Grindstone), away, GRIND_SPARK_SPREAD, n, GRIND_SPARK_SPEED_MIN, GRIND_SPARK_SPEED_MAX);
+		}
 	}
 	else m_grindSparkAcc = 0.0f;
 
@@ -1151,12 +1199,13 @@ void SceneForge::UpdateGrind(float tick, bool inputOn)
 	//   目標音量 = (押し当てていれば)回転速度、音程 = 回転速度で補間。Damp で滑らかに(プツッと鳴らない)。
 	const bool atGrind = (m_state == GAME_PLAY) && !m_walkMode && m_station == Station::Grindstone;
 	// 押し当てて砥石が回っていれば、遅くても最低 GRIND_SND_MIN_LEVEL は聞こえる(速いほど大きい)。
-	const float target = grinding ? GRIND_SND_MIN_LEVEL + (1.0f - GRIND_SND_MIN_LEVEL) * speed : 0.0f;
+	float target = grinding ? GRIND_SND_MIN_LEVEL + (1.0f - GRIND_SND_MIN_LEVEL) * speed : 0.0f;
+	if (onDoneSpot) target *= GRIND_DONE_VOL_MUL;	// 研ぎ上がった所: 削る手応えが無く、音が軽い
 	m_grindVol = Lerp::Damp(m_grindVol, target, GRIND_SND_LAMBDA, tick);
 	if (atGrind && !m_grindSndOn) { Audio::PlayLoop(Audio::SE_GRIND_LOOP, 0.0f); m_grindSndOn = true; }	// 無音で開始
 	if (m_grindSndOn)
 	{
-		const float pitch = GRIND_PITCH_MIN + (GRIND_PITCH_MAX - GRIND_PITCH_MIN) * speed;
+		const float pitch = (GRIND_PITCH_MIN + (GRIND_PITCH_MAX - GRIND_PITCH_MIN) * speed) * (onDoneSpot ? GRIND_DONE_PITCH_MUL : 1.0f);
 		Audio::SetLoop(Audio::SE_GRIND_LOOP, m_grindVol * GRIND_SND_VOLUME, pitch);
 		if (!atGrind && m_grindVol < GRIND_SND_OFF)	// 工位を離れ、音が消えきってから止める
 		{
@@ -1164,6 +1213,25 @@ void SceneForge::UpdateGrind(float tick, bool inputOn)
 			m_grindSndOn = false;
 		}
 	}
+}
+
+void SceneForge::CountGrindMistake(int& count, GrindHint hint)
+{
+	if (++count >= m_hintAfterMistakes) m_grindHint = hint;
+}
+
+void SceneForge::ClearGrindHint()
+{
+	m_grindHint = GrindHint::None;
+	m_grindFlatMistakes = m_grindSteepMistakes = m_grindDoneMistakes = 0;
+}
+
+//--- 研ぎの効率: 正しい研ぎ角からのずれ e に対して 1 − (e/TOL)²(正しい角で 1、TOL ずれで 0。山なりに落ちる)。
+//    傾けた向き(符号)は面を選ぶだけなので、角度の大きさ |θ| で測る。
+float SceneForge::GrindAngleEfficiency() const
+{
+	const float e = (fabsf(m_grindAngle) - GRIND_IDEAL_ANGLE) / GRIND_ANGLE_TOL;
+	return fmaxf(1.0f - e * e, 0.0f);
 }
 
 //--- 淬火を試みる(QuenchStep が水槽で左クリックされた時に呼ぶ)。
@@ -1542,7 +1610,7 @@ void SceneForge::Draw()
 
 	CameraBase* pCamera = GetObj<CameraBase>("Camera");
 	VertexShader* vs = GetObj<VertexShader>("VS_Forge");
-	PixelShader*  ps = GetObj<PixelShader>("PS_Forge");
+	PixelShader*  ps = GetObj<PixelShader>("PS_Spark");	// 線は式で描く(ぼやけない)
 	if (!pCamera || !vs || !ps || !m_mesh) return;
 
 	XMFLOAT3 camPos = pCamera->GetPos();
@@ -1553,48 +1621,59 @@ void SceneForge::Draw()
 	cam[1] = pCamera->GetProj();
 	vs->WriteBuffer(0, cam);
 
-	// 速度方向に伸びたストリーク(火花の線)を作る
+	// 速度方向に伸びたストリーク(火花の線)。uv.x = 横(0..1) / uv.y = 長手(0 = 頭=進む先, 1 = 尾)。PS_Spark がこれで線を描く。
+	const float STREAK_BASE_LEN  = 0.6f;	// 止まっている時の半長(大きさに対する比)
+	const float STREAK_SPEED_LEN = 0.12f;	// 速さ 1m/秒あたり伸びる半長(〃)=速いほど長い線
+	const float STREAK_HALF_W    = 0.5f;	// 半幅(〃)。芯は細く PS が描くので、光の裾が入る幅を取る
+	const float STILL_SPEED      = 0.001f;	// これ未満は向きが決まらない=上向きとみなす
 	int v = 0;
-	for (const Particles::Particle& s : m_particles.Sparks())
+	auto addStreak = [&](const Particles::Particle& s, const XMFLOAT4& col) -> bool
 	{
-		float t = s.life / s.maxLife;			// 1→0
-
-		// 色：白黄 → 橙 → 赤、消えるほど暗く
-		XMFLOAT4 col;
-		float br = t * t;
-		if (t > 0.5f) col = XMFLOAT4(1.0f, 0.9f * br + 0.1f, 0.5f * br, 1.0f);
-		else          col = XMFLOAT4(1.0f * br, 0.35f * br, 0.05f * br, 1.0f);
-
+		if (v + 6 > (int)m_vtx.size()) return false;
 		XMVECTOR c = XMLoadFloat3(&s.pos);
 		XMVECTOR vel = XMLoadFloat3(&s.vel);
 		float speed = XMVectorGetX(XMVector3Length(vel));
-
-		XMVECTOR dir = (speed > 0.001f) ? XMVector3Normalize(vel) : XMVectorSet(0, 1, 0, 0);
+		XMVECTOR dir = (speed > STILL_SPEED) ? XMVector3Normalize(vel) : XMVectorSet(0, 1, 0, 0);
 		XMVECTOR toCam = XMVector3Normalize(XMVectorSubtract(vcam, c));	// カメラへ向く
 		XMVECTOR side = XMVector3Cross(dir, toCam);
-		if (XMVectorGetX(XMVector3Length(side)) < 0.001f) side = XMVectorSet(1, 0, 0, 0);
+		if (XMVectorGetX(XMVector3Length(side)) < STILL_SPEED) side = XMVectorSet(1, 0, 0, 0);
 		side = XMVector3Normalize(side);
+		XMVECTOR L = XMVectorScale(dir,  s.size * (STREAK_BASE_LEN + speed * STREAK_SPEED_LEN));
+		XMVECTOR W = XMVectorScale(side, s.size * STREAK_HALF_W);
 
-		float halfLen = s.size * (0.6f + speed * 0.12f);	// 速いほど長い線に
-		float halfWid = s.size * 0.35f;
-		XMVECTOR L = XMVectorScale(dir, halfLen);
-		XMVECTOR W = XMVectorScale(side, halfWid);
-
-		XMFLOAT3 tl, tr, bl, br3;
-		XMStoreFloat3(&tl,  XMVectorSubtract(XMVectorAdd(c, L), W));
-		XMStoreFloat3(&tr,  XMVectorAdd(XMVectorAdd(c, L), W));
-		XMStoreFloat3(&bl,  XMVectorSubtract(XMVectorSubtract(c, L), W));
-		XMStoreFloat3(&br3, XMVectorAdd(XMVectorSubtract(c, L), W));
-
+		XMFLOAT3 tl, tr, bl, br;
+		XMStoreFloat3(&tl, XMVectorSubtract(XMVectorAdd(c, L), W));
+		XMStoreFloat3(&tr, XMVectorAdd(XMVectorAdd(c, L), W));
+		XMStoreFloat3(&bl, XMVectorSubtract(XMVectorSubtract(c, L), W));
+		XMStoreFloat3(&br, XMVectorAdd(XMVectorSubtract(c, L), W));
 		Vertex* q = &m_vtx[v];
-		q[0] = { tl,  XMFLOAT2(0,0), col };
-		q[1] = { tr,  XMFLOAT2(1,0), col };
-		q[2] = { bl,  XMFLOAT2(0,1), col };
-		q[3] = { bl,  XMFLOAT2(0,1), col };
-		q[4] = { tr,  XMFLOAT2(1,0), col };
-		q[5] = { br3, XMFLOAT2(1,1), col };
+		q[0] = { tl, XMFLOAT2(0,0), col };
+		q[1] = { tr, XMFLOAT2(1,0), col };
+		q[2] = { bl, XMFLOAT2(0,1), col };
+		q[3] = { bl, XMFLOAT2(0,1), col };
+		q[4] = { tr, XMFLOAT2(1,0), col };
+		q[5] = { br, XMFLOAT2(1,1), col };
 		v += 6;
-		if (v + 6 > (int)m_vtx.size()) break;
+		return true;
+	};
+
+	// 打撃/研ぎの火花 = 飛び散る酸化スケールの破片: 白黄 → 橙 → 赤、消えるほど暗く
+	const float COOL_DOWN_AT = 0.5f;	// 寿命の残りがこの割合を切ると橙→赤へ冷える
+	for (const Particles::Particle& s : m_particles.Sparks())
+	{
+		const float t = s.life / s.maxLife;		// 1→0
+		const float br = t * t;
+		const XMFLOAT4 col = (t > COOL_DOWN_AT) ? XMFLOAT4(1.0f, 0.9f * br + 0.1f, 0.5f * br, 1.0f)
+		                                        : XMFLOAT4(1.0f * br, 0.35f * br, 0.05f * br, 1.0f);
+		if (!addStreak(s, col)) break;
+	}
+	// 燃える鋼の火花 = 鋼の中の炭素が燃える: 白く(橙にならない)、短く、途中で枝分かれする(Particles)。
+	//   色で打撃の火花と見分けられる様にする(ユーザー要望 2026-10-07: 過熱と打撃の火花が区別できない)。
+	const XMFLOAT3 BURN_COLOR(1.0f, 0.97f, 0.88f);	// ほぼ白(わずかに暖色)
+	for (const Particles::Particle& s : m_particles.BurnSparks())
+	{
+		const float t = s.life / s.maxLife;
+		if (!addStreak(s, XMFLOAT4(BURN_COLOR.x * t, BURN_COLOR.y * t, BURN_COLOR.z * t, 1.0f))) break;
 	}
 
 	if (v == 0) return;
@@ -1602,7 +1681,6 @@ void SceneForge::Draw()
 	// 加算合成・深度書き込みなしで描画
 	SetBlendMode(BLEND_ADD);
 	SetDepthTest(DEPTH_ENABLE_TEST);
-	ps->SetTexture(0, m_glow.get());
 	m_mesh->Write(m_vtx.data());
 	vs->Bind();
 	ps->Bind();

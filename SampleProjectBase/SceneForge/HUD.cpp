@@ -103,60 +103,104 @@ static void DrawNineSlice(ImDrawList* dl, Texture* tex, ImVec2 a, ImVec2 b, floa
 		}
 }
 
-//--- 淬火の「揺する」の動く案内。静止したアイコンより「何をすれば良いか」が一目で分かる(動きそのものを見せる)。
+//--- 動くマウスの案内(動画型の操作案内)。静止したアイコンより「何をすれば良いか」が一目で分かる(動きそのものを見せる)。
 //    マウスの絵 = Kenney の mouse.png。矢印は三角形を描く(光り方を動きの向きに合わせて変える為)。
-void SceneForge::DrawStirPrompt()
+//    axis = 上下 / 左右。towards = 0: 往復(両方の矢印が動きに合わせて光る) / -1: 上(左)へだけ / +1: 下(右)へだけ。
+//    片方向の時は「中央からその向きへ動いて消え、また中央から」を繰り返し、その向きの矢印だけを明るくする。
+void SceneForge::DrawMousePrompt(MouseAxis axis, int towards, float alpha)
 {
-	const float FADE_LAMBDA   = 6.0f;		// 出る/消える速さ(Damp率, 1/秒)
-	const bool  show = QuenchStirring() && m_boilStage == BoilStage::Film;	// 膜を破るまで
-	m_stirPromptAlpha = Lerp::Damp(m_stirPromptAlpha, show ? 1.0f : 0.0f, FADE_LAMBDA, ImGui::GetIO().DeltaTime);
 	const float VISIBLE_EPS = 0.01f;
-	if (m_stirPromptAlpha < VISIBLE_EPS) return;
+	if (alpha < VISIBLE_EPS) return;
 
 	const std::string ICON = "Assets/UI/Keyboard & Mouse/Default/mouse.png";
 	const float CENTER_Y_RATIO = 0.60f;		// 画面の縦位置(刃の少し下)
 	const float ICON_RATIO     = 0.085f;	// マウスの絵の大きさ(画面高さ比)
-	const float SWING_RATIO    = 0.35f;		// 上下に動く幅(絵の大きさに対する比。片側)
-	const float SWING_FREQ     = 1.2f;		// 1秒に何往復(実際に揺すって欲しい速さの目安)
+	const float SWING_RATIO    = 0.35f;		// 動く幅(絵の大きさに対する比。片側)
+	const float SWING_FREQ     = 1.2f;		// 1秒に何往復(実際に動かして欲しい速さの目安)
 	const float ARROW_GAP      = 0.95f;		// 中心から矢印までの距離(絵の大きさに対する比)
 	const float ARROW_HALF_W   = 0.22f;		// 矢印の三角形の半幅(〃)
 	const float ARROW_H        = 0.18f;		// 矢印の高さ(〃)
 	const float ARROW_DIM      = 0.30f;		// 動いていない向きの矢印の明るさ(0..1)
+	const float ONE_WAY_FADE   = 0.75f;		// 片方向: 動きの終わりのこの割合から淡出して中央へ戻る
 	const float SHADOW_PX      = 2.0f;
 
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
 	ImDrawList* dl = ImGui::GetForegroundDrawList();
 	const float icon = disp.y * ICON_RATIO;
 	const float cx = disp.x * 0.5f, cy = disp.y * CENTER_Y_RATIO;
-	const float phase = m_time * SWING_FREQ * XM_2PI;
-	const float y = cy - sinf(phase) * icon * SWING_RATIO;	// 画面の y は下向き: sin が正 = 上へ
-	const float goingUp = cosf(phase);						// 動きの向き(+ = 上へ動いている)
-	const int   a = (int)(255 * m_stirPromptAlpha);
+	const ImVec2 axisDir = (axis == MouseAxis::Vertical) ? ImVec2(0.0f, 1.0f) : ImVec2(1.0f, 0.0f);	// +側 = 下 / 右
+
+	// 動き: offset = 軸方向のずれ(+ = 下/右)。moving = 動いている向き(+ / −)の強さ
+	float offset, movePlus, iconAlpha = 1.0f;
+	if (towards == 0)
+	{
+		const float phase = m_time * SWING_FREQ * XM_2PI;
+		offset   = sinf(phase) * icon * SWING_RATIO;
+		movePlus = cosf(phase);
+	}
+	else
+	{
+		const float t = m_time * SWING_FREQ - floorf(m_time * SWING_FREQ);	// 0..1 を繰り返す
+		offset   = (float)towards * t * icon * SWING_RATIO * 2.0f;
+		movePlus = (float)towards;
+		if (t > ONE_WAY_FADE) iconAlpha = 1.0f - (t - ONE_WAY_FADE) / (1.0f - ONE_WAY_FADE);
+	}
+	const int a = (int)(255 * alpha);
+	const ImVec2 c(cx + axisDir.x * offset, cy + axisDir.y * offset);
 
 	// マウスの絵(影 → 本体)
 	if (std::shared_ptr<Texture> tex = TextureCache::Get(ICON.c_str()); tex && tex->GetResource())
 	{
 		ImTextureID id = (ImTextureID)tex->GetResource();
-		ImVec2 p0(cx - icon * 0.5f, y - icon * 0.5f), p1(cx + icon * 0.5f, y + icon * 0.5f);
+		const int ia = (int)(a * iconAlpha);
+		ImVec2 p0(c.x - icon * 0.5f, c.y - icon * 0.5f), p1(c.x + icon * 0.5f, c.y + icon * 0.5f);
 		dl->AddImage(id, ImVec2(p0.x + SHADOW_PX, p0.y + SHADOW_PX), ImVec2(p1.x + SHADOW_PX, p1.y + SHADOW_PX),
-		             ImVec2(0, 0), ImVec2(1, 1), IM_COL32(0, 0, 0, (int)(a * 0.7f)));
-		dl->AddImage(id, p0, p1, ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, a));
+		             ImVec2(0, 0), ImVec2(1, 1), IM_COL32(0, 0, 0, (int)(ia * 0.7f)));
+		dl->AddImage(id, p0, p1, ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, ia));
 	}
 
-	// 上下の矢印: 今動いている向きの矢印が明るく、反対は暗い
-	auto arrow = [&](float dir, float bright01)	// dir = -1 上 / +1 下
+	// 矢印: 今動いている向きの矢印が明るく、反対は暗い(軸に沿って ± 両側)
+	auto arrow = [&](float dir, float bright01)	// dir = −1(上/左) / +1(下/右)
 	{
-		const float tipY  = cy + dir * icon * (ARROW_GAP + ARROW_H);
-		const float baseY = cy + dir * icon * ARROW_GAP;
+		const ImVec2 n(axisDir.x * dir, axisDir.y * dir);		// 矢印の向き
+		const ImVec2 perp(n.y, -n.x);							// 矢印の幅の向き
 		const float hw = icon * ARROW_HALF_W;
-		const int   aa = (int)(a * (ARROW_DIM + (1.0f - ARROW_DIM) * bright01));
-		const ImVec2 t(cx, tipY), l(cx - hw, baseY), r(cx + hw, baseY);
+		const ImVec2 base(cx + n.x * icon * ARROW_GAP, cy + n.y * icon * ARROW_GAP);
+		const ImVec2 t(base.x + n.x * icon * ARROW_H, base.y + n.y * icon * ARROW_H);
+		const ImVec2 l(base.x - perp.x * hw, base.y - perp.y * hw), r(base.x + perp.x * hw, base.y + perp.y * hw);
+		const int aa = (int)(a * (ARROW_DIM + (1.0f - ARROW_DIM) * bright01));
 		dl->AddTriangleFilled(ImVec2(t.x + SHADOW_PX, t.y + SHADOW_PX), ImVec2(l.x + SHADOW_PX, l.y + SHADOW_PX),
 		                      ImVec2(r.x + SHADOW_PX, r.y + SHADOW_PX), IM_COL32(0, 0, 0, (int)(aa * 0.7f)));
 		dl->AddTriangleFilled(t, l, r, IM_COL32(245, 235, 215, aa));
 	};
-	arrow(-1.0f, fmaxf(goingUp, 0.0f));
-	arrow(+1.0f, fmaxf(-goingUp, 0.0f));
+	arrow(-1.0f, fmaxf(-movePlus, 0.0f));
+	arrow(+1.0f, fmaxf( movePlus, 0.0f));
+}
+
+//--- 淬火の「揺する」: 膜を破るまで(=操作を覚えるまで)上下の往復を見せる。
+void SceneForge::DrawStirPrompt()
+{
+	const float FADE_LAMBDA = 6.0f;		// 出る/消える速さ(Damp率, 1/秒)
+	const bool  show = QuenchStirring() && m_boilStage == BoilStage::Film;
+	m_stirPromptAlpha = Lerp::Damp(m_stirPromptAlpha, show ? 1.0f : 0.0f, FADE_LAMBDA, ImGui::GetIO().DeltaTime);
+	DrawMousePrompt(MouseAxis::Vertical, 0, m_stirPromptAlpha);
+}
+
+//--- 研ぎ: 同じ誤りを m_hintAfterMistakes 回くり返した時だけ、直し方を動くマウスで見せる(自適応の案内)。
+//    寝かせすぎ → 上へ(立てる) / 立てすぎ → 下へ(寝かせる) / 研ぎ上がった所を研ぐ → 左右へ(別の所へ滑らせる)。
+void SceneForge::DrawGrindHint()
+{
+	const float FADE_LAMBDA = 6.0f;
+	const bool show = (m_grindHint != GrindHint::None) && AtStation(Station::Grindstone);
+	m_grindHintAlpha = Lerp::Damp(m_grindHintAlpha, show ? 1.0f : 0.0f, FADE_LAMBDA, ImGui::GetIO().DeltaTime);
+	switch (m_grindHintShown)	// 淡出中も直前の案内のまま描く
+	{
+	case GrindHint::TiltUp:   DrawMousePrompt(MouseAxis::Vertical,   -1, m_grindHintAlpha); break;
+	case GrindHint::TiltDown: DrawMousePrompt(MouseAxis::Vertical,   +1, m_grindHintAlpha); break;
+	case GrindHint::Slide:    DrawMousePrompt(MouseAxis::Horizontal,  0, m_grindHintAlpha); break;
+	default: break;
+	}
+	if (m_grindHint != GrindHint::None) m_grindHintShown = m_grindHint;
 }
 
 //--- 操作説明を1行に並べる: [アイコン…] 一言 　[アイコン…] 一言 …(画面中央揃え)。
@@ -537,7 +581,9 @@ void SceneForge::DrawPlayUI()
 	static const KeyHint GRIND_HINTS[] = {
 		{ { "mouse_right", "keyboard_space" }, (const char*)u8"連打：ペダル" },
 		{ { "mouse_left" },  (const char*)u8"長押し：刃を当てる" },
-		{ { "mouse_move" },  (const char*)u8"滑らせる" },
+		{ { "mouse_horizontal" }, (const char*)u8"左右：滑らせる" },
+		{ { "mouse_vertical" },   (const char*)u8"上下：刃の角度" },
+		{ { "keyboard_f" },  (const char*)u8"裏返す" },
 		{ { "keyboard_e" },  (const char*)u8"離れる" },
 	};
 	static const KeyHint TROUGH_HINTS[] = {
@@ -562,6 +608,7 @@ void SceneForge::DrawPlayUI()
 	const float GUIDE_Y = 0.93f;		// 操作ガイドの縦位置(画面高さ比)
 	DrawKeyHints(hints, nHints, GUIDE_Y);
 	DrawStirPrompt();	// 淬火で揺する時だけ、大きな動く案内(膜を破るまで)
+	DrawGrindHint();	// 研ぎで同じ誤りをくり返した時だけ、直し方の動く案内
 
 	// 互動提示(走動中、範囲内で物件を見ている時だけ「E」を物件の上に出す)
 	DrawInteractPrompt();
@@ -631,7 +678,11 @@ void SceneForge::DrawStepTracker()
 		subs[nSub++] = { (const char*)u8"裏", m_forging.SideProgress(1), m_forging.Side() == 1 };
 	}
 	else if (nowType == StepName::Grind)
-		subs[nSub++] = { (const char*)u8"刃", m_forging.SharpProgress(), true };
+	{
+		// 両側の刃(F で裏返して研ぐ面を変える)。今研いでいる面を濃く
+		subs[nSub++] = { (const char*)u8"表", m_forging.SharpProgress(0), GrindSide() == 0 };
+		subs[nSub++] = { (const char*)u8"裏", m_forging.SharpProgress(1), GrindSide() == 1 };
+	}
 	else if (nowType == StepName::Quench)
 		subs[nSub++] = { (const char*)u8"冷", QuenchProgress(), true };	// 冷え切った(焼きが入った)割合
 
@@ -736,6 +787,18 @@ const char* SceneForge::GuideFor(Station& goal) const
 		if (m_forging.SideDone(m_forging.Side()) && !m_forging.BothSidesDone())
 			return (const char*)u8"この面は仕上がった。F で裏返す";
 		return st.instruction;
+
+	case StepName::Grind:
+	{
+		// 「F で裏返す」は、今研いでいる面が仕上がっていて、もう片方が残っている時だけ(鍛造と同じ判断)。
+		//   裏返した後(今の面がまだ)は普段の案内に戻る=文が変わるので案内は淡出→淡入する(2026-10-07: 裏返しても消えなかった)。
+		const float DONE = 1.0f;
+		const int  side = GrindSide();
+		const bool thisDone  = m_forging.SharpProgress(side)     >= DONE;
+		const bool otherDone = m_forging.SharpProgress(1 - side) >= DONE;
+		if (thisDone && !otherDone) return (const char*)u8"この面の刃は仕上がった。F で裏返す";
+		return st.instruction;
+	}
 
 	case StepName::Quench:
 		// 淬火の動画が始まったら(刃を立て始めた後)、水で冷えていくのは正しい=温度の注意は出さない
@@ -1150,7 +1213,8 @@ void SceneForge::DrawUI()
 			ImGui::SliderAngle("Hearth angle", &m_hearthYaw,    0.0f, 80.0f);			// 炭床の長辺から奥へ振る角(平らに寝かせたまま)
 			ImGui::SliderFloat("Hearth tip side",  &m_hearthTipSide,  -0.8f, 0.8f, "%.2f");	// 先端の位置: 炭床の中心から長辺方向
 			ImGui::SliderFloat("Hearth tip depth", &m_hearthTipDepth, -0.5f, 0.5f, "%.2f");	// 先端の位置: 炭床の中心から奥へ
-			ImGui::SliderFloat("Grind lift",   &m_grindLift,   -0.5f, 0.5f, "%.3f");	// 砥石上端からの高さ
+			ImGui::SliderFloat("Grind gap",    &m_grindLift,   -0.05f, 0.05f, "%.3f");	// 刃の最低点と砥石上端の隙間(高さ自体は自動)
+			ImGui::SliderInt("Hint after mistakes", &m_hintAfterMistakes, 1, 10);	// 研ぎ: 同じ誤りを何回くり返したら動く案内を出すか
 			ImGui::SliderFloat("Trough hover", &m_troughHover,  0.0f, 1.0f, "%.3f");	// 水面の上に構える高さ
 			// 炉/水槽の正面(視点の側)。自動判定が外れた時だけ ON(次に工位へ入った時から反映)
 			ImGui::Checkbox("Hearth front flip", &m_hearthFrontFlip); ImGui::SameLine();
@@ -1165,6 +1229,8 @@ void SceneForge::DrawUI()
 			ImGui::SliderFloat("Blade drag",    &m_wheel.bladeDrag,    0.0f, 3.0f,  "%.2f");	// 押し当ての減速
 			ImGui::SliderFloat("Slide sens",    &m_grindSens,          0.0002f, 0.005f, "%.4f");	// マウス→刃の滑り
 			ImGui::Text("Wheel speed %.2f   Blade U %.2f", m_wheel.Speed01(), m_grindU);
+			ImGui::Text("Bevel angle %.0f deg (ideal %.0f)  efficiency %.2f  side %s", XMConvertToDegrees(m_grindAngle),
+			            XMConvertToDegrees(GRIND_IDEAL_ANGLE), GrindAngleEfficiency(), GrindSide() == 0 ? "front" : "back");	// 研ぎ角の確認(F1 だけ)
 		}
 
 		// --- Hammer: 鎚モデルの姿勢と反冲 ---

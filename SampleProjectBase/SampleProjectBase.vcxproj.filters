@@ -442,6 +442,9 @@
     <FxCompile Include="VS_Object.hlsl">
       <Filter>リソース ファイル\VertexShader</Filter>
     </FxCompile>
+    <FxCompile Include="PS_Spark.hlsl">
+      <Filter>リソース ファイル\PixelShader</Filter>
+    </FxCompile>
     <FxCompile Include="VS_Water.hlsl">
       <Filter>リソース ファイル\VertexShader</Filter>
     </FxCompile>

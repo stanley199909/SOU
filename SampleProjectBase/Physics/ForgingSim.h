@@ -61,12 +61,14 @@ public:
     bool  IsBurning() const { return m_heat >= BURN_TEMP; }
 
     // --- edge sharpness (grinding) ---
-    // One value per length segment (the same segments as shaping). Grinding removes
-    // metal from the edge, so this only ever goes up. Both faces share one edge.
+    // One value per length segment (the same segments as shaping) and per bevel: the edge
+    // is ground from both faces (each face gets its own bevel, so each side is tracked).
+    // Grinding removes metal from the edge, so this only ever goes up.
     enum class GrindOutcome { Sharpened, AlreadySharp };
-    GrindOutcome ApplyGrind(int seg, float amount); // grind segment `seg` by `amount` (0..1 scale)
-    float Sharpness(int s) const { return m_sharp[s]; }
-    bool  AllSharp() const;                         // every segment ground (ends the Grind step)
+    GrindOutcome ApplyGrind(int side, int seg, float amount); // grind bevel `side` of segment `seg` by `amount` (0..1 scale)
+    bool  SharpDoneOf(int side, int s) const { return m_sharp[side ? 1 : 0][s] >= SHARP_DONE; } // one bevel of one segment ground
+    float SharpRatioOf(int side, int s) const { float r = m_sharp[side ? 1 : 0][s] / SHARP_DONE; return r < 1.0f ? r : 1.0f; } // 0..1 toward "done"
+    bool  AllSharp() const;                         // every segment of both bevels ground (ends the Grind step)
 
     // Debug step jump (F1): put the piece into the state "this step was already done".
     void  CompleteForging();  // both faces shaped to the target, no damage
@@ -92,7 +94,7 @@ public:
     bool  BothSidesDone()      const; // every segment of BOTH faces is shaped (ends the Forge step)
     bool  SideDone(int side)   const; // every segment of ONE face is shaped (HUD: "flip it now")
     float SideProgress(int side) const; // 0..1 shaping progress of one face (HUD progress bar)
-    float SharpProgress()      const; // 0..1 grinding progress of the edge (HUD progress bar)
+    float SharpProgress(int side) const; // 0..1 grinding progress of one bevel (HUD progress bar)
     float SegAverage()         const; // mean segment progress of the up face (display / morph preview)
 
 private:
@@ -111,5 +113,5 @@ private:
     float m_hTgt[NL][NW];             // target (finished weapon) height field (same shape for both faces)
     float m_dmgF[NSIDES][NL][NW];     // per-cell damage 0..1 (cold crack / overheat scorch), per face
     float m_segProg[NSIDES][NSEG] = {}; // per-segment shaping progress 0..1, per face
-    float m_sharp[NSEG] = {};           // per-segment edge sharpness 0..1 (0 = as forged)
+    float m_sharp[NSIDES][NSEG] = {};   // per-segment edge sharpness 0..1 (0 = as forged), per bevel
 };

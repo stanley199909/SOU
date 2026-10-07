@@ -12,7 +12,7 @@ void ForgingSim::Reset()
         for (int j = 0; j < NW; ++j) { m_h[s][i][j] = m_hStart; m_dmgF[s][i][j] = 0.0f; }
         for (int k = 0; k < NSEG; ++k) m_segProg[s][k] = 0.0f;
     }
-    for (int k = 0; k < NSEG; ++k) m_sharp[k] = 0.0f;   // edge not ground yet
+    for (int s = 0; s < NSIDES; ++s) for (int k = 0; k < NSEG; ++k) m_sharp[s][k] = 0.0f;   // edge not ground yet
     BuildTarget();
 }
 
@@ -217,11 +217,11 @@ bool ForgingSim::BothSidesDone() const
     return true;
 }
 
-float ForgingSim::SharpProgress() const
+float ForgingSim::SharpProgress(int side) const
 {
     // Mean edge sharpness, each segment capped at "done" (HUD progress bar).
     float sum = 0.0f;
-    for (int k = 0; k < NSEG; ++k) sum += fminf(m_sharp[k] / SHARP_DONE, 1.0f);
+    for (int k = 0; k < NSEG; ++k) sum += fminf(m_sharp[side ? 1 : 0][k] / SHARP_DONE, 1.0f);
     return sum / NSEG;
 }
 
@@ -232,20 +232,21 @@ float ForgingSim::SegAverage() const
     return sum / NSEG;
 }
 
-ForgingSim::GrindOutcome ForgingSim::ApplyGrind(int seg, float amount)
+ForgingSim::GrindOutcome ForgingSim::ApplyGrind(int side, int seg, float amount)
 {
     if (seg < 0 || seg >= NSEG) return GrindOutcome::AlreadySharp;
     // Grinding an edge that is already finished only wastes metal: report it so the
     // scene can react (a line from the smith), but do not change the state.
-    if (m_sharp[seg] >= SHARP_DONE) return GrindOutcome::AlreadySharp;
-    m_sharp[seg] += amount;
-    if (m_sharp[seg] > 1.0f) m_sharp[seg] = 1.0f;
+    float& sharp = m_sharp[side ? 1 : 0][seg];
+    if (sharp >= SHARP_DONE) return GrindOutcome::AlreadySharp;
+    sharp += amount;
+    if (sharp > 1.0f) sharp = 1.0f;
     return GrindOutcome::Sharpened;
 }
 
 bool ForgingSim::AllSharp() const
 {
-    for (int k = 0; k < NSEG; ++k) if (m_sharp[k] < SHARP_DONE) return false;
+    for (int s = 0; s < NSIDES; ++s) for (int k = 0; k < NSEG; ++k) if (m_sharp[s][k] < SHARP_DONE) return false;
     return true;
 }
 
@@ -261,5 +262,5 @@ void ForgingSim::CompleteForging()
 
 void ForgingSim::CompleteGrinding()
 {
-    for (int k = 0; k < NSEG; ++k) m_sharp[k] = 1.0f;
+    for (int s = 0; s < NSIDES; ++s) for (int k = 0; k < NSEG; ++k) m_sharp[s][k] = 1.0f;
 }

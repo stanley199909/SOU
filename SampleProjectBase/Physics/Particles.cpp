@@ -52,6 +52,30 @@ void Particles::EmitEmbers(const XMFLOAT3& centre, float areaX, float areaZ,
     }
 }
 
+void Particles::SpawnSparksDir(const XMFLOAT3& origin, const XMFLOAT3& dir, float spread,
+    int count, float speedMin, float speedMax)
+{
+    // Two unit vectors perpendicular to dir, to tilt each spark randomly inside the cone.
+    const XMVECTOR d  = XMVector3Normalize(XMLoadFloat3(&dir));
+    const float NEARLY_VERTICAL = 0.9f;   // |dir.y| above this: world up is too close to dir to build a basis from
+    const XMVECTOR up = (fabsf(XMVectorGetY(d)) > NEARLY_VERTICAL) ? XMVectorSet(1, 0, 0, 0) : XMVectorSet(0, 1, 0, 0);
+    const XMVECTOR p1 = XMVector3Normalize(XMVector3Cross(d, up));
+    const XMVECTOR p2 = XMVector3Cross(d, p1);
+    for (int i = 0; i < count; ++i)
+    {
+        if ((int)m_sparks.size() >= MAX_SPARKS) break;
+        const float a = rnd(0.0f, 6.2832f), tilt = rnd(0.0f, spread);
+        const XMVECTOR v = (d * cosf(tilt) + (p1 * cosf(a) + p2 * sinf(a)) * sinf(tilt)) * rnd(speedMin, speedMax);
+        Particle s = {};
+        s.pos = origin;
+        XMStoreFloat3(&s.vel, v);
+        s.maxLife = rnd(tune.sparkLifeMin, tune.sparkLifeMax);
+        s.life    = s.maxLife;
+        s.size    = rnd(tune.sparkSizeMin, tune.sparkSizeMax);
+        m_sparks.push_back(s);
+    }
+}
+
 // Random point on the segment a..b, pushed sideways (x/z) by up to `spread`.
 static XMFLOAT3 PointNearLine(const XMFLOAT3& a, const XMFLOAT3& b, float spread)
 {
@@ -99,8 +123,60 @@ void Particles::SpawnSplash(const XMFLOAT3& a, const XMFLOAT3& b, int count, flo
     }
 }
 
+void Particles::SpawnBurnSpark(const XMFLOAT3& origin)
+{
+    if ((int)m_burn.size() >= MAX_BURN) return;
+    Particle b = {};
+    b.pos = origin;
+    const float a = rnd(0.0f, 6.2832f), speed = rnd(tune.burnSpeedMin, tune.burnSpeedMax);
+    const float UPWARD = 0.8f;   // share of the launch that goes straight up (hot surface, rising air)
+    b.vel = XMFLOAT3(cosf(a) * speed * (1.0f - UPWARD), speed * UPWARD, sinf(a) * speed * (1.0f - UPWARD));
+    b.maxLife = rnd(tune.burnLifeMin, tune.burnLifeMax);
+    b.life    = b.maxLife;
+    b.size    = rnd(tune.burnSizeMin, tune.burnSizeMax);
+    b.gen     = 0;
+    m_burn.push_back(b);
+}
+
 void Particles::Update(float dt, float time)
 {
+    // Burning sparks: a first spark flies a short way, then at half its life bursts into a few
+    // branches flying out in all directions (the parent dies). Branches just fly and fade.
+    // Branches made this frame go into a separate list and are added after the loop
+    // (adding to m_burn while walking it would move elements under the loop).
+    m_burnBranches.clear();
+    for (size_t i = 0; i < m_burn.size(); )
+    {
+        Particle& b = m_burn[i];
+        b.life -= dt;
+        b.vel.y -= tune.burnGravity * dt;
+        b.pos.x += b.vel.x * dt; b.pos.y += b.vel.y * dt; b.pos.z += b.vel.z * dt;
+        const float FORK_AT = 0.5f;   // a first spark bursts when this share of its life is left (= halfway)
+        const bool burst = (b.gen == 0 && b.life <= b.maxLife * FORK_AT);
+        if (burst)
+        {
+            const int n = tune.burnForkMin + (int)(rnd() * (tune.burnForkMax - tune.burnForkMin + 1));
+            for (int k = 0; k < n; ++k)
+            {
+                Particle c = {};
+                c.pos = b.pos;
+                // uniform direction on a sphere: y uniform in -1..1, angle uniform around it
+                const float y = rnd(-1.0f, 1.0f), ang = rnd(0.0f, 6.2832f), r = sqrtf(1.0f - y * y);
+                const float sp = rnd(tune.forkSpeedMin, tune.forkSpeedMax);
+                c.vel = XMFLOAT3(cosf(ang) * r * sp, y * sp, sinf(ang) * r * sp);
+                c.maxLife = rnd(tune.forkLifeMin, tune.forkLifeMax);
+                c.life    = c.maxLife;
+                c.size    = b.size * tune.forkSizeScale;
+                c.gen     = 1;
+                m_burnBranches.push_back(c);
+            }
+        }
+        if (burst || b.life <= 0.0f) { b = m_burn.back(); m_burn.pop_back(); continue; }   // the parent ends at the burst
+        ++i;
+    }
+    for (const Particle& c : m_burnBranches)
+        if ((int)m_burn.size() < MAX_BURN) m_burn.push_back(c);
+
     // Splash droplets: plain ballistic flight; gone once they fall back below the surface.
     for (size_t i = 0; i < m_splash.size(); )
     {
@@ -172,6 +248,7 @@ void Particles::Clear()
     m_steam.clear();
     m_steamSpawn = 0.0f;
     m_splash.clear();
+    m_burn.clear();
     m_sparks.clear();
     m_embers.clear();
     m_emberSpawn = 0.0f;

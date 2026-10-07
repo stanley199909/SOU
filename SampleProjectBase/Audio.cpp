@@ -128,18 +128,39 @@ namespace
 
 		switch (id)
 		{
-		case Audio::SE_WHISTLE:
+		case Audio::SE_FACE_DONE:
 		{
-			int n = sr * 32 / 100;	// 0.32s の口笛(少し上がって下がる, ビブラート付き)
-			w.resize(n);
-			for (int i = 0; i < n; ++i)
+			// 「完成した」の合図(ユーザー要望 2026-10-07: 口笛は聞こえにくい。対戦ゲームの連続撃破音の様に
+			//  「バン・バン・バン」と上がっていく、手応えのある音)。3発の打音が音程を上げながら続く。
+			//  1発 = 胸に来る低い「ドン」(音程が下がる正弦=キック) + 金属的な「キン」(非整数倍音の減衰和音)。
+			const int   HITS        = 3;
+			const float GAP         = 0.085f;	// 打音の間隔(秒)
+			const float TAIL        = 0.45f;	// 最後の打音の余韻(秒)
+			const float CHIME[HITS] = { 659.25f, 830.61f, 987.77f };	// E5 → G#5 → B5(上がっていく長三和音)
+			const float PARTIAL[3]  = { 1.0f, 2.76f, 5.40f };		// 金属の非整数倍音(SE_HAMMER と同じ鐘の比)
+			const float PART_AMP[3] = { 1.0f, 0.45f, 0.2f };
+			const float CHIME_DECAY = 9.0f;		// 「キン」の減衰(1/秒)
+			const float KICK_START  = 180.0f, KICK_END = 60.0f;	// 「ドン」の音程(Hz)。始めから終わりへ下がる
+			const float KICK_SWEEP  = 30.0f;	// 音程が下がる速さ(1/秒)
+			const float KICK_DECAY  = 18.0f;	// 「ドン」の減衰
+			const float KICK_LEVEL  = 0.55f, CHIME_LEVEL = 0.30f;
+			const float CLICK_LEVEL = 0.25f, CLICK_DECAY = 400.0f;	// 打った瞬間のアタック
+			const float MASTER      = 0.55f;
+			const int n = (int)(sr * (GAP * (HITS - 1) + TAIL));
+			w.assign(n, 0.0f);
+			for (int h = 0; h < HITS; ++h)
 			{
-				float t = (float)i / sr;
-				float prog = t / 0.32f;
-				float pitch = 900.0f + 220.0f * sinf(prog * 3.1416f);	// 山なりに音程変化
-				float vib   = 1.0f + 0.02f * sinf(6.2832f * 6.0f * t);	// ビブラート
-				float env   = (1.0f - expf(-t * 40.0f)) * expf(-t * 3.5f);
-				w[i] = sinf(6.2832f * pitch * vib * t) * env * 0.30f;
+				const int start = (int)(sr * GAP * h);
+				for (int i = start; i < n; ++i)
+				{
+					const float t = (float)(i - start) / sr;
+					const float kickHz = KICK_END + (KICK_START - KICK_END) * expf(-t * KICK_SWEEP);
+					float v = sinf(6.2832f * kickHz * t) * expf(-t * KICK_DECAY) * KICK_LEVEL;
+					for (int k = 0; k < 3; ++k)
+						v += PART_AMP[k] * sinf(6.2832f * CHIME[h] * PARTIAL[k] * t) * expf(-t * CHIME_DECAY * (1.0f + k)) * CHIME_LEVEL;
+					v += noise() * CLICK_LEVEL * expf(-t * CLICK_DECAY);
+					w[i] += v * MASTER;
+				}
 			}
 			break;
 		}
@@ -402,7 +423,7 @@ namespace Audio
 		if (FAILED(g_xa->CreateMasteringVoice(&g_master))) { g_xa->Release(); g_xa = nullptr; return; }
 
 		static const char* files[SE_MAX] = {
-			"Assets/Sound/whistle.wav",
+			"Assets/Sound/SE/face_done.wav",	// SE_FACE_DONE(無ければ合成音)
 			"Assets/Sound/hammer.wav",
 			"Assets/Sound/cold.wav",
 			"Assets/Sound/sizzle.wav",

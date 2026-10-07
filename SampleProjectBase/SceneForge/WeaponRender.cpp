@@ -288,13 +288,56 @@ XMMATRIX SceneForge::WeaponRot() const
 	}
 	// 淬火で刃を立てる: 今の長軸(ワールド)まわりに回す=平らに寝ていた刃が、刃を下にして縦に立つ
 	// (幅の向きが上下になる。どの軸が長軸かはモデルの箱から決まる=ベタ書き無し)。
-	else if (m_workAt == Station::Trough && m_quenchTurn > 0.0f)
+	// 砥石の研ぎ角も同じ回し方(長軸まわり)。F の裏返しは同じ軸での半回転を足す。
+	else if ((m_workAt == Station::Trough && m_quenchTurn > 0.0f) || (m_workAt == Station::Grindstone && (m_grindAngle != 0.0f || m_grindFlipRoll != 0.0f)))
 	{
+		const float angle = (m_workAt == Station::Trough) ? m_quenchTurn * QUENCH_TURN_ANGLE : m_grindFlipRoll + m_grindAngle;	// 砥石: 裏返し(半回転) + 研ぎ角
 		const int la = AimSystem::LongAxis(m_wpMin, m_wpMax);
 		const XMVECTOR local = XMVectorSet(la == 0 ? 1.0f : 0.0f, la == 1 ? 1.0f : 0.0f, la == 2 ? 1.0f : 0.0f, 0.0f);
-		r = r * XMMatrixRotationAxis(XMVector3TransformNormal(local, r), m_quenchTurn * QUENCH_TURN_ANGLE);
+		r = r * XMMatrixRotationAxis(XMVector3TransformNormal(local, r), angle);
 	}
 	return r;
+}
+
+//--- ローカル厚み軸の「+側の面」が表(面0)か裏(面1)か。翻面回転を除いた向き付けだけで
+//    +軸を回し、上(+Y)を向けば +側=表(面0=角0で上を向く面)。
+bool SceneForge::PlusIsFront() const
+{
+	const int ta = m_wpThickAxis;
+	if (ta < 0) return true;
+	XMVECTOR axis = XMVectorSet(ta == 0 ? 1.0f : 0.0f, ta == 1 ? 1.0f : 0.0f, ta == 2 ? 1.0f : 0.0f, 0.0f);
+	XMVECTOR up = XMVector3TransformNormal(axis, XMMatrixRotationRollPitchYaw(m_wpPitch, m_wpYaw, m_wpRoll));
+	return XMVectorGetY(up) >= 0.0f;
+}
+
+//--- 今研いでいる刃の面 = 砥石へ向いている(下を向いている)面。見た目の向きから決める=研いだ所に光が出る面と必ず一致する。
+//    F の裏返し(m_grindFace)で刃が半回転すると、下を向く面が入れ替わる。
+int SceneForge::GrindSide() const
+{
+	const int ta = m_wpThickAxis;
+	if (ta < 0) return m_grindFace;
+	XMVECTOR axis = XMVectorSet(ta == 0 ? 1.0f : 0.0f, ta == 1 ? 1.0f : 0.0f, ta == 2 ? 1.0f : 0.0f, 0.0f);
+	const bool plusDown = XMVectorGetY(XMVector3TransformNormal(axis, WeaponRot())) < 0.0f;	// +側の面が下(砥石)を向いている
+	const bool frontDown = (plusDown == PlusIsFront());
+	return frontDown ? 0 : 1;
+}
+
+//--- 刃の中心から一番低い点までの深さ(m, 正)。今の回転(WeaponRot = 研ぎ角などを含む)で、モデル箱の8隅を
+//    フィットの大きさで運んだ最小の y。WeaponWorld が箱の中心を原点に寄せてから回す規約と同じ。
+float SceneForge::BladeDepthBelowCentre() const
+{
+	const float ex = m_wpMax.x - m_wpMin.x, ey = m_wpMax.y - m_wpMin.y, ez = m_wpMax.z - m_wpMin.z;
+	const float MIN_EXTENT = 1e-5f;
+	const float fit = (m_barLen / fmaxf(fmaxf(ex, fmaxf(ey, ez)), MIN_EXTENT)) * m_wpScale;
+	const XMMATRIX rot = WeaponRot();
+	float lowest = 0.0f;
+	for (int i = 0; i < 8; ++i)
+	{
+		const XMVECTOR half = XMVectorSet(((i & 1) ? ex : -ex) * 0.5f * fit, ((i & 2) ? ey : -ey) * 0.5f * fit,
+		                                  ((i & 4) ? ez : -ez) * 0.5f * fit, 0.0f);
+		lowest = fminf(lowest, XMVectorGetY(XMVector3TransformNormal(half, rot)));
+	}
+	return -lowest;
 }
 
 //--- 刃を置く点。工位の作業点に、その工位の「動き」を足す:
@@ -330,7 +373,11 @@ XMFLOAT3 SceneForge::WorkAnchor()
 		// 左右反転して置いた(m_restFlip)時はローカルの長手の向きが -StationRight なので、滑らせる向きも逆
 		const float s = -(m_grindU - 0.5f) * len * (m_restFlip ? -1.0f : 1.0f);
 		a.x += r.x * s; a.z += r.z * s;
-		a.y -= m_grindPress * GRIND_PRESS_DROP;
+		// 高さ: 刃の一番低い点が砥石の上端(StationBase)にちょうど触れる様に、中心を「中心→最低点」の分だけ上げる。
+		//   研ぎ角で傾けると最低点が下がるので毎フレーム求め直す=どの角度・どの大きさの刃でも砥石に食い込まない
+		//   (入力を止めるのでなく位置で解決する=押し出し。歩きの衝突と同じ考え方)。
+		//   押し当てていない時は GRIND_HOVER だけ浮かせ、左長押しで砥石へ下ろす(押した/離したが見て分かる。下ろしても食い込まない)。
+		a.y += BladeDepthBelowCentre() + (1.0f - m_grindPress) * GRIND_HOVER;
 		break;
 	}
 	case Station::Trough:
@@ -392,16 +439,8 @@ void SceneForge::BuildWeaponMorph()
 		outNrm = XMVectorLerp(XMLoadFloat3(&A.nrm[i]), XMLoadFloat3(&B.nrm[i]), t);
 	};
 
-	// ローカル厚み軸の「+側の面」が表(面0)か裏(面1)か。翻面回転を除いた向き付けだけで
-	// +軸を回し、上(+Y)を向けば +側=表(面0=角0で上を向く面)。
 	const int ta = m_wpThickAxis;
-	bool plusIsFront = true;
-	if (ta >= 0)
-	{
-		XMVECTOR axis = XMVectorSet(ta == 0 ? 1.0f : 0.0f, ta == 1 ? 1.0f : 0.0f, ta == 2 ? 1.0f : 0.0f, 0.0f);
-		XMVECTOR up = XMVector3TransformNormal(axis, XMMatrixRotationRollPitchYaw(m_wpPitch, m_wpYaw, m_wpRoll));
-		plusIsFront = (XMVectorGetY(up) >= 0.0f);
-	}
+	const bool plusIsFront = PlusIsFront();
 	const float* mn = &m_wpMin.x;	// stage0 AABB を軸番号で引くための別名
 	const float* mx = &m_wpMax.x;
 	// 研ぎ: 幅の軸 = 長軸でも厚み軸でもない残りの軸(軸番号 0+1+2=3 から引く)。刃先はこの軸の両端。
@@ -417,7 +456,7 @@ void SceneForge::BuildWeaponMorph()
 		int   thisSeg;
 		float pFront, pBack;	// この頂点位置での表(面0)/裏(面1)それぞれの進捗
 		float vFront, vBack;	// 同じく、氧化皮の剥がれ具合(未完成の区域は厚い皮が残る=どこが未完成か鉄を見て分かる)
-		float sharp = 0.0f;		// この頂点位置での刃の鋭さ(区域の鋭さを隣とブレンド)
+		float sFront = 0.0f, sBack = 0.0f;	// この頂点位置での表/裏の刃の研ぎ具合(見た目用。区域を隣とブレンド)
 		if (playing)
 		{
 			float sc = AimSystem::SegCoordLocal(a0, m_wpMin, m_wpMax, NSEG);	// 0..NSEG
@@ -439,7 +478,13 @@ void SceneForge::BuildWeaponMorph()
 			};
 			vFront = scaleVis(0, sa) + (scaleVis(0, sb) - scaleVis(0, sa)) * ft;
 			vBack  = scaleVis(1, sa) + (scaleVis(1, sb) - scaleVis(1, sa)) * ft;
-			sharp  = m_forging.Sharpness(sa) + (m_forging.Sharpness(sb) - m_forging.Sharpness(sa)) * ft;
+			// 研ぎの見た目: 研ぎ上がるまでは SHARP_HOLD_MAX で頭打ち(刃先に暗い所が残る)、研ぎ上がった瞬間に 1(=一気に明るく)。
+			//   鍛造の「最後の黒皮が落ちる」と同じ考え方=区域が仕上がった事が見て分かる(ユーザー要望 2026-10-07)。
+			auto sharpVis = [&](int side, int s) {
+				return m_forging.SharpDoneOf(side, s) ? 1.0f : m_forging.SharpRatioOf(side, s) * SHARP_HOLD_MAX;
+			};
+			sFront = sharpVis(0, sa) + (sharpVis(0, sb) - sharpVis(0, sa)) * ft;
+			sBack  = sharpVis(1, sa) + (sharpVis(1, sb) - sharpVis(1, sa)) * ft;
 			thisSeg = (int)sc; if (thisSeg >= NSEG) thisSeg = NSEG - 1;
 		}
 		else { pFront = pBack = m_forgeProg; vFront = vBack = m_forgeProg; thisSeg = -1; }
@@ -449,6 +494,7 @@ void SceneForge::BuildWeaponMorph()
 		const float pOutline = (pFront + pBack) * 0.5f;
 		float pFace = pOutline;
 		float vFace = (vFront + vBack) * 0.5f;	// 氧化皮用(面の重みは下で pFace と同じ物を使う)
+		float sharp = (sFront + sBack) * 0.5f;	// 刃の研ぎ(その頂点が属する面の刃。下で面の重みを付ける)
 		if (ta >= 0)
 		{
 			// 頂点の厚み座標を stage0 の中心面基準で -1..+1 に正規化 → +側の面に属する重み。
@@ -462,6 +508,9 @@ void SceneForge::BuildWeaponMorph()
 			const float vPlus  = plusIsFront ? vFront : vBack;
 			const float vMinus = plusIsFront ? vBack  : vFront;
 			vFace = vMinus + (vPlus - vMinus) * wPlus;
+			const float sPlus  = plusIsFront ? sFront : sBack;	// 研ぐ面 = 刃の表/裏(各面の刃は別々に研ぐ)
+			const float sMinus = plusIsFront ? sBack  : sFront;
+			sharp = sMinus + (sPlus - sMinus) * wPlus;
 		}
 
 		XMVECTOR posO, nrmO, posF, nrmF;

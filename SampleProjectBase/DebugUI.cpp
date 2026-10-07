@@ -74,7 +74,8 @@ void DebugUI::Init(HWND hWnd, ID3D11Device* device, ID3D11DeviceContext* context
 	//   → ImFontGlyphRangesBuilder で日本語範囲に「HUD で使う範囲外の漢字」を足す。
 	//   新しい文言で ? が出たら、その漢字を JP_EXTRA_CHARS に足すだけでよい。
 	//   (全CJK範囲を焼くと2万字超=アトラスが数十MBになるので、必要な字だけ足す)
-	const char* JP_EXTRA_CHARS = (const char*)u8"叩掴";
+	//   記号も同じ: 「…」(U+2026, 一般句読点) は日本語範囲の外 → 独白の「…」が ? になっていた(2026-10-07)。
+	const char* JP_EXTRA_CHARS = (const char*)u8"叩掴…";
 	static ImVector<ImWchar> s_jpRanges;	// フォントアトラスを Build するまで生きている必要がある=static
 	{
 		ImFontGlyphRangesBuilder rb;
