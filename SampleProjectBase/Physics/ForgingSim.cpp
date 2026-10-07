@@ -248,3 +248,18 @@ bool ForgingSim::AllSharp() const
     for (int k = 0; k < NSEG; ++k) if (m_sharp[k] < SHARP_DONE) return false;
     return true;
 }
+
+void ForgingSim::CompleteForging()
+{
+    for (int s = 0; s < NSIDES; ++s)
+    {
+        for (int i = 0; i < NL; ++i)
+        for (int j = 0; j < NW; ++j) { m_h[s][i][j] = m_hTgt[i][j]; m_dmgF[s][i][j] = 0.0f; }
+        for (int k = 0; k < NSEG; ++k) m_segProg[s][k] = 1.0f;
+    }
+}
+
+void ForgingSim::CompleteGrinding()
+{
+    for (int k = 0; k < NSEG; ++k) m_sharp[k] = 1.0f;
+}

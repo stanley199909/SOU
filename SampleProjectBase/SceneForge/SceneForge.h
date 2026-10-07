@@ -13,6 +13,7 @@
 #include "GrindWheel.h"		// Physics: 足踏み砥石の回転(力積+指数減衰)
 #include "ForgingSim.h"		// Physics: 鍛造される鉄の状態と変形(自作物理)
 #include "Particles.h"		// Physics: 火花・余燼の粒子シミュ(自作物理)
+#include "WaterSim.h"		// Physics: 水槽の水面の波(2D 波動方程式。自作物理)
 #include "Player.h"			// 鍛冶場を歩き回るプレイヤ(一人称の走動)
 #include "Collision2D.h"	// Physics: 走動の衝突(上から見た2D。円×凸包/壁線)
 #include "HingedDoor.h"		// GameLogic: 蝶番で開閉する扉(状態と角度)
@@ -47,9 +48,17 @@ public:
 	bool  AllSharp() const { return m_forging.AllSharp(); }	// 刃が全区域研ぎ上がったか(研磨工程の完了条件)
 	bool  AtStation(Station s) const;			// 玩家が今その工位で作業中か(移動アニメ中は false)
 	bool  TryQuench();							// 淬火を試みる。冷めすぎなら独白で断り false。OKなら蒸気+音を出し true
-	void  SetPlunge(float t01);					// 淬火: 刃が水へ沈む進み 0..1(QuenchStep が時間で駆動)
+	void  StirQuench(float dt);					// 淬火: 揺する入力(マウス上下)を読み、刃を動かす(QuenchStep の揺する段階)
+	float QuenchProgress() const;				// 淬火の完成度 0..1 = 入水時の温度から沸騰が止む温度までの冷え具合(100% で終幕)
+	bool  QuenchStirring() const;				// 今、揺する段階か(入水〜100%。マウスを視点でなく揺すりに使う)
+	void  SetQuenchTurn(float t01);				// 淬火: 刃を立てる(刃を下へ)進み 0..1(QuenchStep が時間で駆動)
+	void  SetPlunge(float t01);					// 淬火: 刃が水へ沈む進み 0..1(同上)。刃が水面に触れた瞬間に音と蒸気
+	void  BeginFinale();						// 終幕へ: 今の工程が配方の最後なら m_clearDecided を立てる(QuenchStep が揺すり始めに呼ぶ)
+	bool  m_clearDecided = false;				// クリアが確定した(最後の工程の取り消せない演出に入った)。true の間 HUD を全部消す
 	void  SetLetterbox(float t01);				// 終幕: 上下の黒帯が入る進み 0..1(同上)
 	void  AdvanceStep();						// 次の工程へ進む(配方の順序で遷移。無ければ完成)
+	void  DebugJumpToStep(int idx);				// 【デバッグ】配方の idx 番目の工程から始める(前の工程は済ませた状態で、その工位に立つ。F1 最上段)
+	int   m_debugJumpIdx = 0;					// F1 で選んでいる工程
 	const StepSetting& CurrentStep() const;		// 今実行中の工程設定(HUD が instruction を表示)
 
 private:
@@ -168,18 +177,28 @@ private:
 	float m_stationCamDist   = 1.00f;				// 工位カメラ: 作業点から手前へ離れる水平距離
 	float m_stationCamHeight = 0.75f;				// 工位カメラ: 作業点からの目の高さ
 	float m_stationLookLift  = 0.00f;				// 工位カメラ: 注視点の高さ補正
-	float m_hearthLift  = 0.04f;					// 炉: 炭床の上に刃を置く高さ
+	float m_hearthLift  = 0.04f;					// 炉: 炭床の上に刃を置く高さ(差し込んだ切っ先の高さ)
+	// 炉は炭床に平らに、斜めに寝かせる(先端は炭床の奥、掴んだ端は炉口から斜め手前へはみ出す。ユーザー指定 2026-10-05)。
+	float m_hearthYaw      = 0.27925f;					// 炉: 炭床の長辺から奥へ振る角(rad, 水平面)。F1 Stations
+	float m_hearthTipSide  = 0.80f; 					// 炉: 先端が炭床の中心から長辺方向へずれる距離(m)
+	float m_hearthTipDepth = 0.28f;					// 炉: 先端が炭床の中心から奥へ入る距離(m)
+	DirectX::XMFLOAT3 HearthDir() const;			// 炉に寝かせた鉄の長軸(水平。+側=奥の先端)
 	float m_grindLift   = 0.02f;					// 砥石: プロップ上端から刃を置く高さ
 	float m_troughHover = 0.30f;					// 水槽: 水面の上に刃を構える高さ
 	DirectX::XMFLOAT3 StationBase(Station s);		// 工位の作業点(刃を置く点。砥石の滑り/淬火の沈みは含まない)
-	DirectX::XMFLOAT3 StationRight() const;			// 工位カメラから見た右方向(刃の長軸をこれに揃える)
+	DirectX::XMFLOAT3 StationRight() const;			// 工位カメラから見た右方向(刃の長軸をこれに揃える。炉だけは奥へ向ける)
+	DirectX::XMFLOAT3 StationInto() const { return DirectX::XMFLOAT3(-m_stationViewDir.x, 0.0f, -m_stationViewDir.z); }	// 工位の奥へ向かう水平方向
 	// 砥石だけは「近づいた側」でなく砥石自身の向きから視点を決める(どこから入っても刃の置き方が同じ)。
 	//   視点 = 輪の軸に直交する水平方向 → 刃の長軸(StationRight)は輪の軸に沿う=刃が輪の縁を横切る置き方。
+	bool  m_hearthFrontFlip = false;				// 炉の正面の自動判定(SetupStationView)を逆にする。F1 Stations
+	bool  m_troughFrontFlip = false;				// 水槽の〃(前後対称なら近づいた側。それを逆にする)
+	static constexpr float STATION_FRONT_MIN_OFFSET = 0.05f;	// 道具の中心と作業点がこれ(m)以上ずれていたら「正面がある」とみなす
 	float m_grindViewYaw = 0.0f;					// その視点方向に足す回転(rad)。反対側から見たい時は π。F1 Stations
 	DirectX::XMFLOAT3 GrindViewDir();				// 砥石の固定視点方向(水平単位)
 	float StationAlignYaw() const;					// 刃の長軸を StationRight に揃える追加 yaw(金床では 0)
 	void  StationView(Station s, DirectX::XMFLOAT3& eye, DirectX::XMFLOAT3& target);	// 工位の視点と注視点
 	void  ApplyWorkCamera();						// 金床以外の工位の固定カメラ
+	float ShakeOffsetY() const;						// 衝撃の縦揺れ(m_shake の減衰振動。金床カメラと工位カメラで共用)
 
 	//--- 炉(加熱)。ニュートンの冷却(加熱)則: 鉄の温度は「火の温度」へ指数的に近づく。
 	//      dT/dt = k * (T_fire - T)   →  1フレームの厳密解: T += (T_fire - T) * (1 - exp(-k*dt))
@@ -223,15 +242,88 @@ private:
 	void  UpdateGrind(float tick, bool inputOn);	// 研磨の入力・物理・火花・音
 
 	//--- 淬火と終幕(QuenchStep が進みを渡し、ここが見た目/音を担当)
-	float m_plunge    = 0.0f;						// 刃が水へ沈んだ割合 0..1
+	// 淬火の動き(ユーザー同意 2026-10-06): ①刃を下へ立てる(長軸まわりに90°) ②刃から水へ切り込む ③水中で刃の向きに上下に揺する(左右に振ると刃が曲がる=上下が正しい。2026-10-06 訂正: 長手の前後は槽の両端に当たった)。
+	//   ③の理由: 入った直後の鋼は蒸気の膜に包まれて冷えにくい(蒸気膜段階 / vapor blanket。ライデンフロスト現象)。
+	//   揺すって膜を破ると、泡立って一気に冷える段階(核沸騰)へ早く進み、冷え方が均一になる。
+	float m_quenchTurn = 0.0f;						// 刃を立てた割合 0..1(①)
+	float m_plunge    = 0.0f;						// 刃が水へ沈んだ割合 0..1(②)
+	float m_agitate   = 0.0f;						// 上下の揺すりの今のずれ(m)(③)
+	bool  m_quenchContact = false;					// 刃が水面に触れたか(音/蒸気/急冷はここから)
+	static constexpr float QUENCH_TURN_ANGLE   = DirectX::XM_PIDIV2;	// 立てる角(長軸まわり)。90° = 刃が真下
+	static constexpr float QUENCH_TURN_LIFT    = 0.06f;	// 立てる時に少し持ち上げる高さ(m。予備動作 / anticipation)
+	//--- ③ 揺するのは玩家(ユーザー決定 2026-10-07): マウスの上下 = 刃の上下。持続して揺すると蒸気の膜が破れ核沸騰へ。
+	//    揺すらなくても膜は温度が下がれば自然に破れる=止まらない(失敗の仕組みは作らない)。ただ遅く、評価が少し下がる。
+	float m_stirTarget = 0.0f;						// マウスで動かした刃の高さの目標(m)。m_agitate は水の抵抗でこれを追う
+	float m_filmBreak  = 0.0f;						// 膜沸騰中に刃が動いた道のりの合計(m)。FILM_BREAK_WORK で膜が破れる
+	float m_filmTime   = 0.0f;						// 膜沸騰が続いた秒(評価: 早く破るほど良い)
+	float m_stir01     = 0.0f;						// 今の揺する速さ 0..1(核沸騰の激しさと冷えの速さに効く)
+	float m_quenchStartHeat = 0.0f;					// 入水した時の温度(淬火の完成度 % の起点)
+	static constexpr float QUENCH_STIR_RANGE   = 0.04f;	// 刃を上下できる幅(m。片側)。上げても刃が水から出ない程度
+	static constexpr float QUENCH_STIR_SENS    = 0.0006f;	// マウス 1px → 刃の高さ(m)
+	static constexpr float QUENCH_STIR_FOLLOW  = 12.0f;	// 刃が目標を追う速さ(Damp率, 1/秒。水の抵抗で少し遅れる)
+	static constexpr float QUENCH_STIR_RETURN  = 1.5f;	// 手を止めると目標が中央へ戻る速さ(Damp率, 1/秒)
+	static constexpr float FILM_BREAK_WORK     = 0.25f;	// 膜を破るのに要る刃の道のり(m)
+	static constexpr float STIR_FULL_SPEED     = 0.25f;	// この速さ(m/秒)で揺すると m_stir01 = 1
+	static constexpr float STIR_SPEED_LAMBDA   = 8.0f;	// m_stir01 の追従(Damp率, 1/秒)
+	float QuenchScore() const;						// 淬火の出来 0..1(膜を早く破るほど高い。出来栄えに小さく効く)
+	static constexpr float QUENCH_FILM_TIME_BEST  = 1.0f;	// 膜沸騰がこれ以下で破れたら満点(秒)
+	static constexpr float QUENCH_FILM_TIME_WORST = 6.0f;	// これ以上(=放置で自然に破れた位)なら 0 点(秒)
+	float IronLowestY();							// 今の鉄の一番低い点の高さ(箱の8隅をワールドへ。水面に触れたかの判定)
+	bool  HoldingAtTrough() const;					// 水槽で火钳が鉄を挟んで構えている(水槽の工位、または入る途中)
+	// 水槽での火钳の柄の向き = 口から「上へ RISE・手前へ OUT」の点へ(比 = 傾き。約60°で手前の縁を越える)
+	static constexpr float TROUGH_TONGS_RISE = 0.60f;
+	static constexpr float TROUGH_TONGS_OUT  = 0.35f;
 	float m_letterbox = 0.0f;						// 上下黒帯の入り具合 0..1
-	float m_steamTimer = 0.0f;						// 蒸気の残り時間(秒)
 	static constexpr float QUENCH_MIN_TEMP  = 0.55f;	// これ未満では淬火できない(焼きが入らない)
-	static constexpr float QUENCH_COOL_RATE = 1.2f;		// 水中での急冷(/秒)
 	static constexpr float PLUNGE_DEPTH     = 0.40f;	// 構え位置から沈む深さ(水面の下まで)
-	static constexpr float STEAM_DURATION   = 3.0f;		// 蒸気が出続ける時間(秒。だんだん弱まる)
-	static constexpr float STEAM_RATE       = 140.0f;	// 淬火直後の蒸気の発生数(個/秒)
-	static constexpr float STEAM_RADIUS     = 0.18f;	// 蒸気が湧く水面の円の半径
+
+	//--- 淬火の沸騰(ユーザー要望 2026-10-07:「熱い物を水に入れた爆発感」)。見た目は全部「鉄の温度と沸騰の段階」から出す
+	//    (アニメのフレームに紐付けない=状態駆動の VFX)。実際の焼入れの冷え方の3段階:
+	//      蒸気膜段階(膜沸騰 / film boiling): 入った直後、鋼が蒸気の膜に包まれて冷えにくい(ライデンフロスト現象)。
+	//                                       揺すり始める(膜が破れる)か、温度が LEIDENFROST_TEMP を下回るまで。
+	//      核沸騰(nucleate boiling)          : 膜が破れ、表面で泡が激しく沸く。一番速く冷え、蒸気も一番多い。
+	//      対流(convection)                  : BOIL_END_TEMP を下回ると沸騰が止み、水の流れでゆっくり冷える。
+	enum class BoilStage { None, Film, Nucleate, Convection };
+	BoilStage m_boilStage = BoilStage::None;
+	float m_boil         = 0.0f;					// 沸き立ちの強さ 0..1(蒸気の量・水面の泡立ちが読む)
+	DirectX::XMFLOAT3 m_bladeLineA = { 0, 0, 0 };	// 刃が水面を切る線の両端(蒸気/水しぶき/泡立ちの位置)
+	DirectX::XMFLOAT3 m_bladeLineB = { 0, 0, 0 };
+	static constexpr float LEIDENFROST_TEMP     = 0.45f;	// これを下回ると蒸気の膜が保てない(温度は 0..1 の正規化値)
+	static constexpr float BOIL_END_TEMP        = 0.15f;	// これを下回ると沸騰が止む
+	static constexpr float FILM_COOL_RATE       = 0.04f;	// 膜沸騰中の冷え(/秒。膜が断熱するので遅い)
+	static constexpr float NUCLEATE_COOL_RATE   = 0.08f;	// 核沸騰中の冷え(/秒。揺すらない時)
+	static constexpr float NUCLEATE_STIR_BONUS  = 1.0f;		// 全力で揺すると核沸騰の冷えがこの割合だけ速くなる(新しい冷水が刃に当たる)
+	static constexpr float NUCLEATE_CALM_BOIL   = 0.6f;		// 揺すらない時の核沸騰の激しさ(全力で揺すると 1)
+	static constexpr float CONVECTION_COOL_RATE = 0.05f;	// 対流の冷え(/秒)
+	static constexpr float FILM_BOIL            = 0.35f;	// 膜沸騰の沸き立ち(核沸騰の最大 = 1 に対して。静かに「シュー」)
+	static constexpr float BOIL_FOLLOW_LAMBDA   = 6.0f;		// m_boil が段階の目標へ追従する速さ(Damp率, 1/秒)
+	static constexpr float STEAM_RATE           = 220.0f;	// 沸き立ち 1 の時の蒸気(個/秒)
+	static constexpr float STEAM_SPREAD         = 0.06f;	// 刃の線から蒸気が湧く幅(m)
+	static constexpr int   STEAM_BURST          = 160;		// 入水の瞬間に一度に噴く蒸気(個)
+	static constexpr float STEAM_BURST_SPEED    = 2.2f;		// その噴き出しの速さ(通常の蒸気に対する倍率)
+	static constexpr int   SPLASH_COUNT         = 120;		// 入水の瞬間に跳ねる水しぶき(個)
+	static constexpr float SPLASH_SPEED         = 2.5f;		// 水しぶきの速さ(m/秒)
+	static constexpr float QUENCH_SHAKE         = 0.6f;		// 入水の瞬間のカメラの揺れ(m_shake。打撃と同じ減衰振動)
+	void  UpdateBoil(float tick);					// 段階の遷移・段階ごとの冷え・沸き立ちの追従(UpdatePlay)
+	void  UpdateBladeWaterline();					// 刃の長軸の両端を水面の高さへ(m_bladeLineA/B)
+	void  OnQuenchContact();						// 刃が水面に触れた瞬間: 音・噴き出す蒸気・水しぶき・揺れ・水面の大波
+
+	//--- 水槽の水面 = 2D 波動方程式の高さ場(Physics/WaterSim。ユーザー要望 2026-10-07:「本物の水の波」)。
+	//    刃が入る/揺する/沸騰の泡 が水面を押し、波は自分で広がって槽の壁で跳ね返る。高さは毎フレーム
+	//    小さな貼图(R32_FLOAT)で GPU へ送り、VS_Water が格子の頂点を上下させ、PS_Water が法線を求める。
+	WaterSim m_waterSim;
+	std::unique_ptr<Texture> m_waterHeightTex;		// その高さ(WaterSim::NX × NZ)
+	float m_bubbleAcc    = 0.0f;					// 沸騰の泡の端数(フレームをまたいで持ち越す)
+	float m_prevAgitate  = 0.0f;					// 前フレームの揺すりのずれ(刃が上下に動いた量で水を押す)
+	static constexpr float WATER_ENTRY_PUSH    = -0.035f;	// 刃が入った瞬間に刃の線で水面を押し下げる量(m)
+	static constexpr float WATER_PUSH_RADIUS   = 0.05f;		// 刃が押す幅(m)
+	static constexpr float WATER_STROKE_PUSH   = 0.8f;		// 揺すり: 刃が上下に動いた量(m) → 水面を押す量(m)の比(刃が下がると周りの水が押し上がる)
+	static constexpr float WATER_BUBBLE_RATE   = 70.0f;		// 沸き立ち 1 の時の泡(個/秒)
+	static constexpr float WATER_BUBBLE_PUSH   = 0.006f;	// 泡1つが水面を持ち上げる量(m)
+	static constexpr float WATER_BUBBLE_RADIUS = 0.025f;	// 泡1つの大きさ(m)
+	static constexpr float WATER_BUBBLE_SPREAD = 0.04f;		// 泡が湧く、刃の線からの幅(m)
+	void  UpdateWaterSim(float tick);				// 刃/泡で水面を押し、波を進める(Update。どの状態でも)
+	void  WorldToWaterLocal(const DirectX::XMFLOAT3& p, float& u, float& v) const;	// ワールド → 水面の板のローカル(-1..1)
 	static constexpr float LETTERBOX_RATIO  = 0.12f;	// 黒帯1本の最大の高さ(画面高さ比)
 	void  DrawSteam();								// 蒸気を柔らかいビルボードで描く
 	void  DrawLetterbox();							// 上下の黒帯(映画的な終幕)
@@ -286,6 +378,8 @@ private:
 	static constexpr float TRANS_MAX_TIME = 2.0f;	// 過渡の最長(秒。遠くても待たせすぎない)
 	bool   Transitioning() const { return m_modeTrans != ModeTrans::None; }
 	void   BeginEnterStation(Station s);	// 走動→工位の過渡を開始(刃もその工位へ置く)
+	static DirectX::XMFLOAT3 BedLongAxis(float yaw, const float size[2]);	// 炭床/水面の四角の長辺の水平方向
+	void   SetupStationView(Station s);		// 工位の視点方向などを玩家の今の位置から決める(置く拍子表が置き場所の向きを先に知る為にも使う)
 	void   BeginExitStation();			// 工位→走動の過渡を開始(玩家を工位の一歩手前へ置き、刃を手に持つ)
 	void   UpdateModeTrans(float tick);	// 計時を進め、終わったら walkMode を切り替える
 	void   ApplyViewCamera();			// 今の状態のカメラを適用(過渡中は補間、他は走動/工位)
@@ -395,6 +489,23 @@ private:
 	static constexpr float BOB_FADE_LAMBDA = 8.0f;	// 揺れの出入りの速さ(Damp率, 1/秒)
 	static constexpr float BOB_MOVE_EPS    = 1e-4f;	// 1フレームにこれ未満しか動いていなければ「止まっている」
 	void  UpdateCarryBob(float tick, float walked);	// 歩いた距離から揺れの位相と強さを進める
+	//--- 手の鉄の「めり込み回避」(FPS の武器の壁めり込み回避 / weapon wall-clipping avoidance と同じ考え方)。
+	//    視線の水平方向へ 2D レイを飛ばし(Collision2D::RayCast = 歩きの衝突と同じ凸包/壁線)、
+	//    鉄の先端がそこへ届かない様に ①まず手元へ引き寄せる(m_carryPull) ②それでも足りなければ上へ起こす(m_carryRaise)。
+	//    (ユーザー選択 2026-10-05: 起こすだけだと歩く度に鉄が上下に揺れた。FPS の「壁際で銃を引く」と同じ順序)
+	//    起こす角は二分探索で求め、どちらも Damp で滑らかに追従。
+	float m_carryPull          = 0.0f;				// 今の引き寄せ量(m。挟む点を鉄の水平方向の逆へ)
+	float m_carryAvoidMaxPull  = 0.35f;				// 引き寄せの上限(m)。これを超える分だけ起こす
+	float m_carryRaise         = 0.0f;				// 今の追加の起こし角(rad。m_carryPitch に足す)
+	float m_carryAvoidMaxRaise = 1.2f;				// 起こす角の上限(rad)。これでも当たる時は諦める(壁に張り付いている時)
+	float m_carryAvoidMargin   = 0.08f;				// 道具/壁の手前に空ける隙間(m)
+	float m_carryAvoidLambda   = 10.0f;				// 追従の速さ(Damp率, 1/秒)
+	static constexpr int CARRY_AVOID_ITERATIONS = 12;	// 二分探索の回数(角度の誤差 = 上限 / 2^回数)
+	DirectX::XMFLOAT2 m_carryAvoidOrigin = { 0, 0 };	// 最後のレイ(デバッグ表示用): 始点 XZ
+	DirectX::XMFLOAT2 m_carryAvoidDir    = { 0, 1 };	//   向き XZ
+	float             m_carryAvoidFree   = 0.0f;	//   当たるまでの距離
+	void  UpdateCarryAvoid(float tick);				// 起こし角の目標を求めて追従(走動中、運んでいる時)
+	float HeldReach(float raise, DirectX::FXMVECTOR eye, const DirectX::XMFLOAT2& dirH);	// その起こし角で鉄の先端が視線の水平方向へ届く距離
 	DirectX::XMVECTOR ViewmodelBob(DirectX::FXMVECTOR right, DirectX::FXMVECTOR up) const;	// 今の揺れ(カメラ基準のずれ)
 	void  DrawViewmodel();							// 手に持った鉄と火钳を、深度範囲を詰めて最後に描く
 	float m_tongsScale    = 1.0f;					// 手/腰の火钳の大きさ(台上のプロップの大きさに対する倍率)
@@ -423,30 +534,55 @@ private:
 	//    拍の始めの姿勢から、拍の目標へイージングで補間する。目標は毎フレーム解決する(カメラが動いても追従)。
 	//    再生中は入力を受けない(移動アニメと同じ)。最後の拍が終わると onEnd の行為(例: 鉄を手に持つ)を実行。
 	//    新しい動作 = 表を1つ足すだけ(Unity の Timeline / UE の Sequencer と同じ考え方の最小版)。
-	enum class SeqLook  { Hip, Iron, Home };		// カメラの注視先: 左腰 / 鉄 / 再生開始時に見ていた方向
-	enum class SeqTongs { Hip, Iron, Held };		// 火钳の行き先: 腰に下げた所 / 鉄を挟む所 / 手元(ビューモデルの位置)
-	enum class SeqIron  { Rest, Held };				// 鉄の行き先: 置いてある所 / 手に持った所
-	enum class SeqEnd   { GripIron };				// 再生し終えた時の行為
+	//    腰は見ない(ユーザー判断 2026-10-04: 腰の物を取る時に人は下を向かない。遊びのテンポを削るだけ)。
+	enum class SeqLook  { Iron, Home };				// カメラの注視先: 鉄の置き場所 / 再生開始時に見ていた方向
+	enum class SeqTongs { Hip, Iron, Held };		// 火钳の行き先: 腰に下げた所 / その拍の鉄を挟む所 / 手元(ビューモデルの位置)
+	enum class SeqIron  { Rest, Approach, Held };	// 鉄の行き先: 目標工位に置いた所 / その手前の中継点(ウェイポイント) / 手に持った所
+	enum class SeqEnd   { GripIron, PutIron };		// 再生し終えた時の行為: 手に持つ / 目標工位に置いてその工位へ入る
+	// 拍の補間曲線(スローイン・スローアウト / slow in & slow out)。動作ごとに速さの付き方を変える。
+	enum class SeqEase  { InOut, Out };				// InOut = 出だしも止まりもゆっくり(smoothstep) / Out = 速く出て、ゆっくり着く(置く・挟む)
 	struct SeqBeat
 	{
 		SeqLook  look;
 		SeqTongs tongs;
 		SeqIron  iron;
-		float    seconds;	// この拍の長さ
+		float    seconds;	// この拍の長さ(再生ごとに m_seqTimeJitter だけ揺らぐ)
+		SeqEase  ease;		// 手(火钳/鉄)の補間曲線
 	};
 	struct Sequence
 	{
 		const SeqBeat* beats;
 		int            count;
 		SeqEnd         onEnd;
+		float          approachBack;	// 中継点(SeqIron::Approach) = 置き場所から玩家側へ水平に戻した距離(m)
+		float          approachUp;		// 〃 置き場所より上へ持ち上げた高さ(m)。金床=真上から下ろす(高い)
+		bool           approachAlongIron;	// true = 中継点を「玩家側へ水平」でなく「鉄の長軸に沿って手元側」へ戻す(炉: 斜めの鉄をそのまま差し込む)
 	};
 	static const SeqBeat  GRIP_IRON_BEATS[];		// その拍の表(Sequence.cpp)
-	static const Sequence SEQ_GRIP_IRON;			// 腰から火钳を抜く → 鉄を見る → 挟む → 持ち上げる
+	static const Sequence SEQ_GRIP_IRON;			// 火钳を抜きつつ鉄を見る → 挟む → 持ち上げる
+	static const SeqBeat  PUT_IRON_BEATS[];			// 置く拍の表(炉/金床/砥石で共通。工位ごとの違いは中継点だけ)
+	static const SeqBeat  HOLD_IRON_BEATS[];		// 水槽: 置かずに火钳で挟んだまま水面の上に構える(淬火は手で持ったまま行う)
+	static const Sequence SEQ_PUT_HEARTH, SEQ_PUT_ANVIL, SEQ_PUT_GRIND, SEQ_PUT_TROUGH;	// 炉/金床/砥石/水槽へ置く
+	static const Sequence& PutIronSequence(Station s);	// 工位 → その工位へ置く拍子表
 	bool  m_heldFlip = false;						// 手に持った鉄の前後を入れ替える(掴んだ端=手元側。掴んだ時に決める)
+	bool  m_restFlip = false;						// 工位に置いた鉄を水平に半回転(掴んだ端=玩家側。置く時に決める。火钳を離さずに置ける向き)
 	struct TongsPose { DirectX::XMFLOAT3 grip, approach, barDir; };	// TongsWorld の3引数(挟む点/柄→口/輪を通る向き)
 	const Sequence* m_seq = nullptr;				// 再生中の拍子表(nullptr=再生していない)
+	Station m_seqStation = Station::Anvil;			// SeqIron::Rest の工位(掴む=今鉄がある工位 / 置く=置き先)
 	int   m_seqBeat  = 0;							// 今の拍
 	float m_seqTimer = 0.0f;						// 今の拍の経過秒
+	float m_seqBeatDur = 0.0f;						// 今の拍の長さ(表の秒数 × 揺らぎ)
+	float m_seqArcK    = 0.0f;						// 今の拍の弧の高さ(水平移動距離に対する比。m_seqArcLift × 揺らぎ)
+	bool  m_seqAttached = false;					// 今の拍で火钳が鉄を挟んだまま(火钳の姿勢を鉄から求める=ずれない)
+	bool  m_seqPrevGrip = false;					// 前の拍の終わりに火钳が鉄を挟んでいたか
+	// 人の動きらしさ(ディズニーの12原則のうち4つ。F1 Carry → Sequence feel)
+	float m_seqHandLag    = 0.18f;	// フォロースルーとオーバーラップ: 目が先、手は拍の長さのこの割合だけ遅れて動き出す
+	float m_seqArcLift    = 0.25f;	// アーク: 手で運ぶ物は弧を描く。中間で水平移動距離のこの割合だけ持ち上がる
+	float m_seqTimeJitter = 0.10f;	// 揺らぎ: 拍の長さが再生ごとに ±この割合ばらつく(毎回同じ機械的な動きにしない)
+	float m_seqArcJitter  = 0.30f;	// 揺らぎ: 弧の高さの ±ばらつき
+	float m_seqBreathW    = 0.0f;	// 再生中だけ走動カメラに手持ちの呼吸を乗せる重み(0..1。急に付いたり消えたりしない様に追従)
+	static constexpr float SEQ_BREATH_FADE_TIME = 0.35f;	// その重みが追従する時定数(秒)
+	void  UpdateSeqBreath(float tick);				// m_seqBreathW を再生中=1 / それ以外=0 へ近づける
 	DirectX::XMFLOAT3 m_seqHomeFwd  = { 0, 0, 1 };	// 再生開始時の視線(SeqLook::Home)
 	DirectX::XMFLOAT3 m_seqBodyFwd  = { 0, 0, 1 };	// 再生中の体の向き(固定)。腰の点は体の向きから決まるので、
 													// 視線で体まで回すと腰が逃げて視線が追い続けてしまう→再生中は首だけ回す
@@ -458,13 +594,16 @@ private:
 	DirectX::XMFLOAT4X4 m_seqIronWorld = {};
 	DirectX::XMFLOAT4X4 m_seqIronRot   = {};
 	bool  SequencePlaying() const { return m_seq != nullptr; }
-	void  PlaySequence(const Sequence& seq);		// 再生開始(走動中に呼ぶ)
+	void  PlaySequence(const Sequence& seq, Station target);	// 再生開始(走動中に呼ぶ)。target = SeqIron::Rest の工位
 	void  UpdateSequence(float tick);				// 拍を進め、カメラ/火钳/鉄を補間する
 	void  StopSequence();							// 途中で打ち切る(状態遷移時の後始末。onEnd は実行しない)
 	void  BeginSeqBeat();							// 拍の開始姿勢を記録
+	void  RunSeqEnd(SeqEnd onEnd, Station target);	// 再生し終えた時の行為を実行
+	void  IronEnds(DirectX::FXMMATRIX world, DirectX::XMVECTOR& gripped, DirectX::XMVECTOR& other) const;	// 鉄の長軸の両端(火钳が掴む端/反対の端)をワールドへ
 	DirectX::XMFLOAT3 SeqLookTarget(SeqLook l);		// 注視先のワールド点
-	TongsPose SeqTongsPose(SeqTongs t);				// 火钳の行き先の姿勢
-	DirectX::XMMATRIX SeqIronWorld(SeqIron i);		// 鉄の行き先のワールド行列(置いてある/手に持った)
+	TongsPose SeqTongsPose(SeqTongs t, SeqIron iron);	// 火钳の行き先の姿勢(Iron = 鉄の行き先 iron の所を挟む)
+	TongsPose TongsOnIron(DirectX::FXMMATRIX ironWorld);	// その姿勢の鉄を、掴んだ端から m_gripAlong の所で挟む火钳
+	DirectX::XMMATRIX SeqIronWorld(SeqIron i);		// 鉄の行き先のワールド行列(置いた所/中継点/手に持った)
 	void  PutIronAt(Station s);						// 手の鉄を工位に置く
 	void  SayWhereIronIs();							// 鉄の在り処を独白で知らせる(鉄の無い工位で E)
 	void  DrawCarry();								// 火钳(手/腰)を描く
@@ -536,13 +675,26 @@ private:
 	// uv は真の鋼テクスチャ採样用。morphでUVは不変なので stage0 の値を全段で使う。
 	// フィールド順は VS_Wp の VIN 宣言順(pos→nrm→uv→col→sharp)と一致させること(入力レイアウトが宣言順で焼かれる)。
 	// sharp = 研いだ刃先の度合い 0..1(=その区域の鋭さ × 刃先への近さ)。PS が研ぎ面の見た目に使う。
-	struct WpVtx { DirectX::XMFLOAT3 pos; DirectX::XMFLOAT3 nrm; DirectX::XMFLOAT2 uv; DirectX::XMFLOAT4 col; float sharp; };
+	// work = この頂点が属する面(表/裏)の鍛造進捗 0..1。PS が氧化皮(黒皮)を「叩いた分だけ」剥がすのに使う。
+	//   ※並びは VS の入力(POSITION/NORMAL/TEXCOORD0..3)と一致させる(入力レイアウトは D3DReflect で順に詰めて作る)。
+	struct WpVtx { DirectX::XMFLOAT3 pos; DirectX::XMFLOAT3 nrm; DirectX::XMFLOAT2 uv; DirectX::XMFLOAT4 col; float sharp; float work; };
 	struct WpStage { std::vector<DirectX::XMFLOAT3> pos, nrm; std::vector<DirectX::XMFLOAT2> uv; };	// 1段分の生頂点(ローカル)
 	std::vector<WpStage>        m_wpStage;		// stage_0 .. stage_final
 	std::vector<unsigned int>   m_wpIdx;		// インデックス(全段共通)
 	std::vector<WpVtx>          m_wpVtx;		// 補間後の頂点(毎フレーム再構築)
 	std::shared_ptr<MeshBuffer> m_wpMesh;
 	std::shared_ptr<Texture>    m_wpTex;		// 真の鋼テクスチャ(BaseColor=冷鋼の地色)。発光は温度(m_forging.Heat())駆動
+	std::shared_ptr<Texture>    m_wpScaleMask;	// 氧化皮(黒皮)の厚みマスク(灰度: 白=厚い / 黒=地金)。無縫で UV に繰り返し貼る
+	//--- 氧化皮(黒皮)。熱い鋼の表面にできる黒い酸化膜。叩いた面ほど剥がれる=表と裏が見て分かる(UI に頼らない)
+	float m_scaleTiling  = 10.0f;				// マスクを UV に何回繰り返すか(大=細かい皮)
+	float m_scaleSoft    = 0.08f;				// 剥がれ際のぼかし幅(マスクの灰度単位)
+	float m_scaleOpacity = 0.9f;				// 黒皮の不透明度(1=地金を完全に隠す)
+	float m_scaleGlow    = 0.10f;				// 熱い時、黒皮が暗い赤でどれだけ光るか(温度の明るさに対する比。皮は断熱層で地金より暗い)
+	float m_scaleStart   = 0.35f;				// 叩く前から剥がれている薄い皮(マスク灰度)。大=開局から地金が多く見える=斑な黒皮
+	float m_scaleHoldMax = 0.70f;				// 区域が完成するまでの剥がれ具合の上限(0..1)。小=未完成の区域に皮が多く残る=見分けやすい
+	static constexpr float FACE_DONE_WHISTLE_VOLUME = 0.8f;	// 面(表/裏)が仕上がった瞬間の口笛の音量(口笛はこの合図専用)
+	static constexpr float GROOVE_RING_PITCH = 1.12f;		// リズムに乗った打撃の金床音の音程倍率(少し高い=澄んだ「キン」)
+	float m_wpHotGain    = 0.85f;				// 熱い鋼の発光全体の明るさ(白飛びで黒皮や形が消えるのを防ぐ)
 	int   m_wpN = 0;							// 1段の頂点数
 	bool  m_wpOk = false;						// 読み込み成功&段間で頂点数一致
 	float m_forgeProg = 0.0f;					// 全体進捗 0..1(=各区域の平均。F1のプレビュー用)
@@ -560,7 +712,7 @@ private:
 	int   m_wpThickAxis = -1;					// 刃の表裏を貫くローカル軸(0=x,1=y,2=z)。Loadで完成形から判定
 	static constexpr float FACE_BLEND_BAND = 1.0f;	// 表/裏の面の混ぜ幅(厚みの正規化座標)。小=境目が急
 	//--- 配置調整(F1スライダ。向き/大きさをここで合わせて焼き込む)
-	float m_wpScale = 1.0f;						// 追加スケール倍率(AABBフィットにさらに掛ける)
+	float m_wpScale = 0.70f;					// 追加スケール倍率(AABBフィットにさらに掛ける)。ユーザーが F1 で決めた値(2026-10-07: 水槽に収まる+短剣らしい長さ)
 	float m_wpYaw = 0.0f, m_wpPitch = 0.0f, m_wpRoll = 0.0f;	// 向き(0=前後/屏幕奥行き。90°で左右横向き)
 	float m_wpOff[3] = { 0.0f, 0.0f, 0.0f };	// 砧面アンカーからの微調整
 	//--- 翻面(裏返し)の見た目: 長軸まわりに 0→180°を回転。
@@ -608,6 +760,10 @@ private:
 	float m_wpSpec    = 0.6f;					// 直接光の高光(鏡面ハイライト)の強さ
 	float m_wpEnv     = 0.5f;					// 擬似環境反射の強さ(金属が「周囲を映す」度合い)
 	float m_wpFresnel = 1.0f;					// 縁の反射増強(菲涅尔)の強さ
+	//--- 熱い鋼の見え方(発光していても形が読める様に。F1「Weapon」→ Hot steel)
+	float m_wpHotShade = 0.35f;					// 光の当たらない面の明るさ(0..1。小=明暗が強い=倒角/表裏がはっきり)
+	float m_wpRimK     = 0.6f;					// 縁(輪郭/稜線)を温度色で明るくする強さ
+	float m_wpRimPow   = 3.0f;					// 縁の明るさがどれだけ縁だけに寄るか(大=細い線)
 	float m_wpSky[3]    = { 0.55f, 0.62f, 0.75f };	// 擬似環境の上方向(空)の色
 	float m_wpGround[3] = { 0.18f, 0.15f, 0.12f };	// 擬似環境の下方向(地面/炉床)の色
 	void  LoadWeaponStages();					// Assets/Model/weapon/stage_*.fbx を読む
@@ -801,6 +957,10 @@ private:
 		const char* label;						// 何が起きるか(UTF-8)
 	};
 	void  DrawKeyHints(const KeyHint* hints, int count, float yRatio, float alpha = 1.0f);	// 中央揃えで1行に並べる
+	//--- 淬火で揺する操作の大きな動く案内: マウスの絵が上下に動き、上下の矢印が動く向きに合わせて光る(動画型の操作案内)。
+	//    蒸気の膜を破るまで(=操作を覚えるまで)だけ出し、破れたら淡出する。小さな操作ガイド(画面下)は残る。
+	float m_stirPromptAlpha = 0.0f;
+	void  DrawStirPrompt();
 	bool  GuideTarget(DirectX::XMFLOAT3& pos, const char*& label);	// 走動中に次に向かう点(鉄 or 工位)。無ければ false
 	void  DrawObjectiveMarker();					// 向かう点の上に目印。画面外なら画面端に矢印(オフスクリーンインジケーター)
 
@@ -849,8 +1009,9 @@ private:
 	//    「注定成形」ゲームなので形は必ず完成に近づく→評価は「どれだけ綺麗に打てたか」を主にする。
 	float GradeScore() const;		// 出来栄え 0..1(=形の一致・打撃品質の合成)
 	char  GradeLetter() const;		// GradeScore を S/A/B/C に量子化
-	static constexpr float GRADE_W_MATCH   = 0.45f;	// 出来栄えに占める「形の一致度」の重み
-	static constexpr float GRADE_W_QUALITY = 0.55f;	// 同「打撃品質の平均」の重み(綺麗な打鉄を主に評価)
+	static constexpr float GRADE_W_MATCH   = 0.40f;	// 出来栄えに占める「形の一致度」の重み
+	static constexpr float GRADE_W_QUALITY = 0.50f;	// 同「打撃品質の平均」の重み(綺麗な打鉄を主に評価)
+	static constexpr float GRADE_W_QUENCH  = 0.10f;	// 同「淬火の出来」の重み(小さく。ユーザー決定 2026-10-07。3つの和 = 1)
 	static constexpr float GRADE_S = 0.90f;	// この出来栄え以上で S
 	static constexpr float GRADE_A = 0.75f;	// 〃 A
 	static constexpr float GRADE_B = 0.55f;	// 〃 B (未満は C)

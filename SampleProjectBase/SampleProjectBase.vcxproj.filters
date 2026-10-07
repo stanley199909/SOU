@@ -219,6 +219,9 @@
     <ClCompile Include="Physics\ForgingSim.cpp">
       <Filter>ソース ファイル\App\Physics</Filter>
     </ClCompile>
+    <ClCompile Include="Physics\WaterSim.cpp">
+      <Filter>ソース ファイル\App\Physics</Filter>
+    </ClCompile>
     <ClCompile Include="Physics\Particles.cpp">
       <Filter>ソース ファイル\App\Physics</Filter>
     </ClCompile>
@@ -380,6 +383,9 @@
     <ClInclude Include="Physics\ForgingSim.h">
       <Filter>ヘッダー ファイル\App\Physics</Filter>
     </ClInclude>
+    <ClInclude Include="Physics\WaterSim.h">
+      <Filter>ヘッダー ファイル\App\Physics</Filter>
+    </ClInclude>
     <ClInclude Include="Physics\Particles.h">
       <Filter>ヘッダー ファイル\App\Physics</Filter>
     </ClInclude>
@@ -434,6 +440,9 @@
       <Filter>リソース ファイル\PixelShader</Filter>
     </FxCompile>
     <FxCompile Include="VS_Object.hlsl">
+      <Filter>リソース ファイル\VertexShader</Filter>
+    </FxCompile>
+    <FxCompile Include="VS_Water.hlsl">
       <Filter>リソース ファイル\VertexShader</Filter>
     </FxCompile>
     <FxCompile Include="VS_Grass.hlsl">

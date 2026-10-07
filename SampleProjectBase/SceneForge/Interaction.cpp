@@ -182,17 +182,17 @@ void SceneForge::DoInteract(const Interactable& it)
 	{
 	case InteractAction::EnterStation:
 		// 鉄は瞬間移動しない:
-		//   手に持っている     → その工位に置いて入る
+		//   手に持っている     → 置く拍子表を演じ(Sequence.cpp)、終わったら置いて入る(RunSeqEnd)
 		//   その工位に置いてある → そのまま入る
 		//   別の所にある       → 入らない。鉄の在り処を言うだけ(玩家が自分で取りに行く。自動では動かない)
-		if (m_carrying)                   { PutIronAt(it.station); BeginEnterStation(it.station); }
+		if (m_carrying)                   PlaySequence(PutIronSequence(it.station), it.station);
 		else if (m_workAt == it.station)  BeginEnterStation(it.station);
 		else                              SayWhereIronIs();
 		break;
 	case InteractAction::GripIron:
-		// 腰の火钳を抜く → 鉄を見る → 挟む → 持ち上げる(拍子表 Sequence.cpp)。終わった時に GripIron が呼ばれ、
+		// 火钳を抜きつつ鉄を見る → 挟む → 持ち上げる(拍子表 Sequence.cpp)。終わった時に GripIron が呼ばれ、
 		// 以後、鉄は手の前に付いて来る(Carry.cpp)
-		PlaySequence(SEQ_GRIP_IRON);
+		PlaySequence(SEQ_GRIP_IRON, m_workAt);
 		break;
 	case InteractAction::ToggleDoor:
 		// 開閉を切り替えるだけ。回転・衝突(扉の凸包)・提示の位置は m_door の角度に全部追従する。

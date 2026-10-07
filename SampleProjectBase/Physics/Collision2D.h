@@ -53,4 +53,9 @@ namespace Collision2D
     // contact normal so they just touch, and return true.
     bool PushCircleOut(DirectX::XMFLOAT2& center, float radius, const Hull& hull);
     bool PushCircleOut(DirectX::XMFLOAT2& center, float radius, const Segment& seg);
+
+    // 2D ray cast: distance from origin along dir (unit) to the first hull edge or wall
+    // segment it crosses, or maxDist if nothing is hit. Used to keep a held object out of
+    // props/walls (first-person weapon wall-clipping avoidance).
+    float RayCast(const World& world, DirectX::XMFLOAT2 origin, DirectX::XMFLOAT2 dir, float maxDist);
 }

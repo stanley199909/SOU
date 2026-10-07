@@ -8,7 +8,7 @@ namespace Audio
 {
 	enum SoundId
 	{
-		SE_WHISTLE,	// 良いリズムのときの口笛(効率アップの合図)
+		SE_WHISTLE,	// 口笛=鍛造で面(表/裏)が仕上がった瞬間の合図(リズムの合図ではない。2026-10-04 変更)
 		SE_HAMMER,	// 打撃の「カン」(合成音フォールバック)
 		SE_COLD,	// 冷打の鈍い「ドン」
 		SE_SIZZLE,	// 過熱の「ジュー」
@@ -33,7 +33,7 @@ namespace Audio
 
 	void Init();
 	void Uninit();
-	void Play(SoundId id, float volume = 1.0f);		// 一回再生(効果音)
+	void Play(SoundId id, float volume = 1.0f, float pitch = 1.0f);	// 一回再生(効果音)。pitch=音程の倍率(1=原音, 2まで)
 	void PlayLoop(SoundId id, float volume = 1.0f);	// 無限ループ再生(BGM/タイトル)
 	void Stop(SoundId id);							// ループ停止
 	void SetLoop(SoundId id, float volume, float pitch);	// 鳴っているループの音量/音程を止めずに変える(物理に追従させる)

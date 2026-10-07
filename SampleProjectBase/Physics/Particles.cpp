@@ -52,7 +52,17 @@ void Particles::EmitEmbers(const XMFLOAT3& centre, float areaX, float areaZ,
     }
 }
 
-void Particles::EmitSteam(const XMFLOAT3& centre, float radius, float rate, float dt)
+// Random point on the segment a..b, pushed sideways (x/z) by up to `spread`.
+static XMFLOAT3 PointNearLine(const XMFLOAT3& a, const XMFLOAT3& b, float spread)
+{
+    const float t = rnd();
+    return XMFLOAT3(a.x + (b.x - a.x) * t + rnd(-spread, spread),
+                    a.y + (b.y - a.y) * t,
+                    a.z + (b.z - a.z) * t + rnd(-spread, spread));
+}
+
+void Particles::EmitSteamLine(const XMFLOAT3& a, const XMFLOAT3& b, float spread,
+    float rate, float dt, float speedMul)
 {
     m_steamSpawn += dt * rate;
     int n = (int)m_steamSpawn;
@@ -60,12 +70,10 @@ void Particles::EmitSteam(const XMFLOAT3& centre, float radius, float rate, floa
     for (int k = 0; k < n && (int)m_steam.size() < MAX_STEAM; ++k)
     {
         Particle p = {};
-        // Uniform point on the disc (sqrt keeps the density even, not bunched at the centre).
-        float a = rnd(0.0f, 6.2832f), r = sqrtf(rnd()) * radius;
-        p.pos     = XMFLOAT3(centre.x + cosf(a) * r, centre.y, centre.z + sinf(a) * r);
-        p.vel     = XMFLOAT3(rnd(-tune.steamDrift, tune.steamDrift),
-                             rnd(tune.steamRiseMin, tune.steamRiseMax),
-                             rnd(-tune.steamDrift, tune.steamDrift));
+        p.pos     = PointNearLine(a, b, spread);
+        p.vel     = XMFLOAT3(rnd(-tune.steamDrift, tune.steamDrift) * speedMul,
+                             rnd(tune.steamRiseMin, tune.steamRiseMax) * speedMul,
+                             rnd(-tune.steamDrift, tune.steamDrift) * speedMul);
         p.maxLife = rnd(tune.steamLifeMin, tune.steamLifeMax);
         p.life    = p.maxLife;
         p.size    = rnd(tune.steamSizeMin, tune.steamSizeMax);
@@ -73,8 +81,39 @@ void Particles::EmitSteam(const XMFLOAT3& centre, float radius, float rate, floa
     }
 }
 
+void Particles::SpawnSplash(const XMFLOAT3& a, const XMFLOAT3& b, int count, float speed, float surfaceY)
+{
+    m_splashSurfaceY = surfaceY;
+    for (int k = 0; k < count && (int)m_splash.size() < MAX_SPLASH; ++k)
+    {
+        Particle d = {};
+        d.pos     = PointNearLine(a, b, 0.0f);
+        d.pos.y   = surfaceY;
+        d.vel     = XMFLOAT3(rnd(-tune.splashSide, tune.splashSide) * speed,
+                             rnd(tune.splashUpMin, tune.splashUpMax) * speed,
+                             rnd(-tune.splashSide, tune.splashSide) * speed);
+        d.maxLife = tune.splashLifeMax;
+        d.life    = d.maxLife;
+        d.size    = rnd(tune.splashSizeMin, tune.splashSizeMax);
+        m_splash.push_back(d);
+    }
+}
+
 void Particles::Update(float dt, float time)
 {
+    // Splash droplets: plain ballistic flight; gone once they fall back below the surface.
+    for (size_t i = 0; i < m_splash.size(); )
+    {
+        Particle& d = m_splash[i];
+        d.life -= dt;
+        d.vel.y -= tune.splashGravity * dt;
+        d.pos.x += d.vel.x * dt;
+        d.pos.y += d.vel.y * dt;
+        d.pos.z += d.vel.z * dt;
+        if (d.life <= 0.0f || (d.vel.y < 0.0f && d.pos.y < m_splashSurfaceY)) { d = m_splash.back(); m_splash.pop_back(); continue; }
+        ++i;
+    }
+
     // Sparks: gravity + bounce on the ground (y = 0).
     for (size_t i = 0; i < m_sparks.size(); )
     {
@@ -132,6 +171,7 @@ void Particles::Clear()
 {
     m_steam.clear();
     m_steamSpawn = 0.0f;
+    m_splash.clear();
     m_sparks.clear();
     m_embers.clear();
     m_emberSpawn = 0.0f;

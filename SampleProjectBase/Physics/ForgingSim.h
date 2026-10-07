@@ -68,6 +68,10 @@ public:
     float Sharpness(int s) const { return m_sharp[s]; }
     bool  AllSharp() const;                         // every segment ground (ends the Grind step)
 
+    // Debug step jump (F1): put the piece into the state "this step was already done".
+    void  CompleteForging();  // both faces shaped to the target, no damage
+    void  CompleteGrinding(); // every edge segment ground
+
     // Turn the workpiece over so the other face is up. The player triggers this in
     // the flip step (tongs); after it, strikes and every read below refer to the
     // newly-up face. State is untouched -- flipping only swaps which side is active.
@@ -84,6 +88,7 @@ public:
     float SegProgOf(int side, int s) const { return m_segProg[side ? 1 : 0][s]; } // a specific face (renderer needs both)
     float Start()              const { return m_hStart; }
     bool  SegDone(int s)       const { return m_segProg[m_side][s] >= SEG_DONE; }
+    bool  SegDoneOf(int side, int s) const { return m_segProg[side ? 1 : 0][s] >= SEG_DONE; } // a specific face (renderer: last scale falls only when done)
     bool  BothSidesDone()      const; // every segment of BOTH faces is shaped (ends the Forge step)
     bool  SideDone(int side)   const; // every segment of ONE face is shaped (HUD: "flip it now")
     float SideProgress(int side) const; // 0..1 shaping progress of one face (HUD progress bar)

@@ -464,7 +464,7 @@ void SceneStageEditor::DrawWater()
 	vs->WriteBuffer(0, mat);
 
 	XMFLOAT4X4 projNT = cam->GetProj(false);
-	XMFLOAT4 cb[4];
+	XMFLOAT4 cb[6];	// must match the PS_Water cbuffer size (UpdateSubresource copies the whole buffer)
 	cb[0] = XMFLOAT4(m_time, (float)refr->GetWidth(), (float)refr->GetHeight(), 1.0f);
 	cb[1] = XMFLOAT4(projNT._33, projNT._43, 0.06f, 0.35f);	// A, B, foam, depthFade
 	// cb[2] = eye + water aspect (PS rounds the ends), cb[3] = indoor ambient (reflection colour)
@@ -473,6 +473,10 @@ void SceneStageEditor::DrawWater()
 	cb[2] = XMFLOAT4(eye.x, eye.y, eye.z, m_waterSize[0] / std::max(m_waterSize[1], MIN_WATER_WIDTH));
 	const auto& lighting = CottageRender::Data();
 	cb[3] = XMFLOAT4(lighting.ambient.x, lighting.ambient.y, lighting.ambient.z, lighting.windowExtra.w);
+	// cb[4..5] = wave simulation (game only). Zero here: no height texture is bound in the
+	// editor, so the shader sees flat water (its divisions are guarded against a zero size).
+	cb[4] = XMFLOAT4(0.0f, 0.0f, 0.0f, 0.0f);
+	cb[5] = XMFLOAT4(0.0f, 0.0f, 0.0f, 0.0f);
 	ps->WriteBuffer(0, cb);
 
 	// Unbind the depth buffer from OM so we can read it as a texture; occlusion is

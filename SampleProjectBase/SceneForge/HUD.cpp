@@ -40,8 +40,9 @@ using namespace DirectX;
 // 画面中央にウィンドウ枠なしのメッセージを出す小道具。
 //   font=nullptr なら既定フォント(メイリオ)。scale は各フォントの実寸への倍率。
 //   読みやすさのため暗い影を1枚下に敷く(3D背景の上でも文字が沈まない)。
+//   shadow=false: 紙の上にインクで書く文字用(黒い影は紙の上では文字を濁らせる)。
 static void CenterText(const char* text, float yRatio, float scale = 1.0f,
-                       ImU32 col = IM_COL32(255, 255, 255, 255), ImFont* font = nullptr)
+                       ImU32 col = IM_COL32(255, 255, 255, 255), ImFont* font = nullptr, bool shadow = true)
 {
 	ImDrawList* dl = ImGui::GetForegroundDrawList();
 	ImVec2 disp = ImGui::GetIO().DisplaySize;	// 実際の画面サイズ(解像度非依存)
@@ -51,9 +52,9 @@ static void CenterText(const char* text, float yRatio, float scale = 1.0f,
 	ImVec2 sz = f->CalcTextSizeA(px, FLT_MAX, 0.0f, text);
 	float x = (disp.x - sz.x) * 0.5f;
 	float y =  disp.y * yRatio - sz.y * 0.5f;
-	ImU32 shadow = IM_COL32(0, 0, 0, (int)(((col >> IM_COL32_A_SHIFT) & 0xFF) * 0.6f));
-	dl->AddText(f, px, ImVec2(x + 2.0f, y + 2.0f), shadow, text);	// 影
-	dl->AddText(f, px, ImVec2(x, y), col, text);					// 本体
+	ImU32 shadowCol = IM_COL32(0, 0, 0, (int)(((col >> IM_COL32_A_SHIFT) & 0xFF) * 0.6f));
+	if (shadow) dl->AddText(f, px, ImVec2(x + 2.0f, y + 2.0f), shadowCol, text);	// 影
+	dl->AddText(f, px, ImVec2(x, y), col, text);									// 本体
 }
 
 //--- 2色を t(0..1) で線形補間(ImU32 の RGBA 各成分ごと)。
@@ -100,6 +101,62 @@ static void DrawNineSlice(ImDrawList* dl, Texture* tex, ImVec2 a, ImVec2 b, floa
 				dl->AddImage(id, ImVec2(px[k], ys[j]), ImVec2(px[k + 1], ys[j + 1]),
 				             ImVec2(pu[k], vs[j]), ImVec2(pu[k + 1], vs[j + 1]), tint);
 		}
+}
+
+//--- 淬火の「揺する」の動く案内。静止したアイコンより「何をすれば良いか」が一目で分かる(動きそのものを見せる)。
+//    マウスの絵 = Kenney の mouse.png。矢印は三角形を描く(光り方を動きの向きに合わせて変える為)。
+void SceneForge::DrawStirPrompt()
+{
+	const float FADE_LAMBDA   = 6.0f;		// 出る/消える速さ(Damp率, 1/秒)
+	const bool  show = QuenchStirring() && m_boilStage == BoilStage::Film;	// 膜を破るまで
+	m_stirPromptAlpha = Lerp::Damp(m_stirPromptAlpha, show ? 1.0f : 0.0f, FADE_LAMBDA, ImGui::GetIO().DeltaTime);
+	const float VISIBLE_EPS = 0.01f;
+	if (m_stirPromptAlpha < VISIBLE_EPS) return;
+
+	const std::string ICON = "Assets/UI/Keyboard & Mouse/Default/mouse.png";
+	const float CENTER_Y_RATIO = 0.60f;		// 画面の縦位置(刃の少し下)
+	const float ICON_RATIO     = 0.085f;	// マウスの絵の大きさ(画面高さ比)
+	const float SWING_RATIO    = 0.35f;		// 上下に動く幅(絵の大きさに対する比。片側)
+	const float SWING_FREQ     = 1.2f;		// 1秒に何往復(実際に揺すって欲しい速さの目安)
+	const float ARROW_GAP      = 0.95f;		// 中心から矢印までの距離(絵の大きさに対する比)
+	const float ARROW_HALF_W   = 0.22f;		// 矢印の三角形の半幅(〃)
+	const float ARROW_H        = 0.18f;		// 矢印の高さ(〃)
+	const float ARROW_DIM      = 0.30f;		// 動いていない向きの矢印の明るさ(0..1)
+	const float SHADOW_PX      = 2.0f;
+
+	ImVec2 disp = ImGui::GetIO().DisplaySize;
+	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	const float icon = disp.y * ICON_RATIO;
+	const float cx = disp.x * 0.5f, cy = disp.y * CENTER_Y_RATIO;
+	const float phase = m_time * SWING_FREQ * XM_2PI;
+	const float y = cy - sinf(phase) * icon * SWING_RATIO;	// 画面の y は下向き: sin が正 = 上へ
+	const float goingUp = cosf(phase);						// 動きの向き(+ = 上へ動いている)
+	const int   a = (int)(255 * m_stirPromptAlpha);
+
+	// マウスの絵(影 → 本体)
+	if (std::shared_ptr<Texture> tex = TextureCache::Get(ICON.c_str()); tex && tex->GetResource())
+	{
+		ImTextureID id = (ImTextureID)tex->GetResource();
+		ImVec2 p0(cx - icon * 0.5f, y - icon * 0.5f), p1(cx + icon * 0.5f, y + icon * 0.5f);
+		dl->AddImage(id, ImVec2(p0.x + SHADOW_PX, p0.y + SHADOW_PX), ImVec2(p1.x + SHADOW_PX, p1.y + SHADOW_PX),
+		             ImVec2(0, 0), ImVec2(1, 1), IM_COL32(0, 0, 0, (int)(a * 0.7f)));
+		dl->AddImage(id, p0, p1, ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, a));
+	}
+
+	// 上下の矢印: 今動いている向きの矢印が明るく、反対は暗い
+	auto arrow = [&](float dir, float bright01)	// dir = -1 上 / +1 下
+	{
+		const float tipY  = cy + dir * icon * (ARROW_GAP + ARROW_H);
+		const float baseY = cy + dir * icon * ARROW_GAP;
+		const float hw = icon * ARROW_HALF_W;
+		const int   aa = (int)(a * (ARROW_DIM + (1.0f - ARROW_DIM) * bright01));
+		const ImVec2 t(cx, tipY), l(cx - hw, baseY), r(cx + hw, baseY);
+		dl->AddTriangleFilled(ImVec2(t.x + SHADOW_PX, t.y + SHADOW_PX), ImVec2(l.x + SHADOW_PX, l.y + SHADOW_PX),
+		                      ImVec2(r.x + SHADOW_PX, r.y + SHADOW_PX), IM_COL32(0, 0, 0, (int)(aa * 0.7f)));
+		dl->AddTriangleFilled(t, l, r, IM_COL32(245, 235, 215, aa));
+	};
+	arrow(-1.0f, fmaxf(goingUp, 0.0f));
+	arrow(+1.0f, fmaxf(-goingUp, 0.0f));
 }
 
 //--- 操作説明を1行に並べる: [アイコン…] 一言 　[アイコン…] 一言 …(画面中央揃え)。
@@ -347,8 +404,9 @@ void SceneForge::DrawPlayUI()
 {
 	// 鉄条とハンマーは3Dで描画するので、2Dの鉄条(DrawBillet/DrawHammer)は使わない
 
-	// 終幕(黒帯が入り始めたら)は HUD を全部消して、映像だけを見せる。
-	if (m_letterbox > 0.0f) { DrawLetterbox(); return; }
+	// 終幕: クリアが確定したら(揺すり始め。黒帯はその少し後から入る) HUD を全部消して、映像だけを見せる。
+	//   黒帯の有無でなく「確定したか」で判断する=まだ続くのに UI が消える事は無い。
+	if (m_clearDecided) { DrawLetterbox(); return; }
 
 	ImFont* jp = DebugUI::FontJP();	// 指引 UI の日本語(游明朝)
 
@@ -486,6 +544,9 @@ void SceneForge::DrawPlayUI()
 		{ { "mouse_left" },  (const char*)u8"水に沈める" },
 		{ { "keyboard_e" },  (const char*)u8"離れる" },
 	};
+	static const KeyHint QUENCH_STIR_HINTS[] = {
+		{ { "mouse_vertical" }, (const char*)u8"上下：刃を揺する" },
+	};
 	const KeyHint* hints = WALK_HINTS; int nHints = _countof(WALK_HINTS);
 	if (!m_walkMode && !Transitioning())
 	{
@@ -496,9 +557,11 @@ void SceneForge::DrawPlayUI()
 		case Station::Grindstone: hints = GRIND_HINTS;  nHints = _countof(GRIND_HINTS);  break;
 		case Station::Trough:     hints = TROUGH_HINTS; nHints = _countof(TROUGH_HINTS); break;
 		}
+		if (QuenchStirring()) { hints = QUENCH_STIR_HINTS; nHints = _countof(QUENCH_STIR_HINTS); }	// 淬火中: 離れられない=揺するだけ
 	}
 	const float GUIDE_Y = 0.93f;		// 操作ガイドの縦位置(画面高さ比)
 	DrawKeyHints(hints, nHints, GUIDE_Y);
+	DrawStirPrompt();	// 淬火で揺する時だけ、大きな動く案内(膜を破るまで)
 
 	// 互動提示(走動中、範囲内で物件を見ている時だけ「E」を物件の上に出す)
 	DrawInteractPrompt();
@@ -552,9 +615,12 @@ void SceneForge::DrawStepTracker()
 	const float SUB_ROW_RATIO  = 0.030f;	// 進捗バー1本分の行の高さ
 	const float SUB_TEXT_RATIO = 0.022f;	// 「表/裏/刃」の文字の高さ
 	const float BAR_W_RATIO    = 0.085f;	// バーの長さ(画面幅比)
-	const float BAR_H_RATIO    = 0.007f;	// バーの太さ(画面高さ比)
+	const float BAR_H_RATIO    = 0.010f;	// バーの太さ(画面高さ比)。細すぎると紙の模様に紛れて見えなかった
 	const float BAR_GAP_RATIO  = 0.012f;	// 文字とバーの間(画面高さ比)
-	const ImU32 BAR_BG_COL     = IM_COL32(60, 42, 28, 50);	// 紙に薄く引いた溝
+	const ImU32 BAR_BG_COL     = IM_COL32(60, 42, 28, 110);	// 紙に引いた溝(空でも「ここにバーがある」と分かる濃さ)
+	const ImU32 BAR_EDGE_COL   = IM_COL32(60, 42, 28, 200);	// 溝の輪郭(インクの線)
+	const ImU32 BAR_IDLE_COL   = INK_PENDING;					// 今は下を向いている面の進み(普通のインク。旧: 薄れたインクで見えにくかった)
+	const float BAR_EDGE_W     = 1.0f;							// 輪郭の太さ(px)
 	struct SubBar { const char* name; float prog; bool active; };
 	SubBar subs[ForgingSim::NSIDES];
 	int nSub = 0;
@@ -566,6 +632,8 @@ void SceneForge::DrawStepTracker()
 	}
 	else if (nowType == StepName::Grind)
 		subs[nSub++] = { (const char*)u8"刃", m_forging.SharpProgress(), true };
+	else if (nowType == StepName::Quench)
+		subs[nSub++] = { (const char*)u8"冷", QuenchProgress(), true };	// 冷え切った(焼きが入った)割合
 
 	const int   n      = (int)m_recipe->steps.size();
 	const float row    = disp.y * ROW_RATIO;
@@ -630,12 +698,13 @@ void SceneForge::DrawStepTracker()
 			cy += subRow;
 			float spx = disp.y * SUB_TEXT_RATIO;
 			ImVec2 sp(tp.x, cy + (row - subRow));
-			ImU32  sc = subs[k].active ? INK_NOW : INK_DONE;
+			ImU32  sc = subs[k].active ? INK_NOW : BAR_IDLE_COL;
 			dl->AddText(JP(spx), spx, sp, sc, subs[k].name);
 			float bx0 = sp.x + spx + disp.y * BAR_GAP_RATIO, bx1 = bx0 + disp.x * BAR_W_RATIO;
 			float bh  = disp.y * BAR_H_RATIO, by = sp.y + (spx - bh) * 0.5f;
 			dl->AddRectFilled(ImVec2(bx0, by), ImVec2(bx1, by + bh), BAR_BG_COL);
 			dl->AddRectFilled(ImVec2(bx0, by), ImVec2(bx0 + (bx1 - bx0) * subs[k].prog, by + bh), sc);
+			dl->AddRect(ImVec2(bx0, by), ImVec2(bx1, by + bh), BAR_EDGE_COL, 0.0f, 0, BAR_EDGE_W);
 		}
 	}
 }
@@ -669,6 +738,9 @@ const char* SceneForge::GuideFor(Station& goal) const
 		return st.instruction;
 
 	case StepName::Quench:
+		// 淬火の動画が始まったら(刃を立て始めた後)、水で冷えていくのは正しい=温度の注意は出さない
+		if (QuenchStirring()) { goal = Station::Trough; return (const char*)u8"刃を上下に揺すって、蒸気の膜を破る"; }	// 揺する段階(マウス上下)
+		if (m_quenchTurn > 0.0f) { goal = Station::Trough; return st.instruction; }
 		if (inFire)
 		{
 			if (heat < ReadyTemp(st.type)) { goal = Station::Hearth; return (const char*)u8"炉で、火花が散るまで熱する"; }
@@ -879,13 +951,13 @@ void SceneForge::DrawObjectiveMarker()
 	dl->AddText(jp, px, lp, col, label);
 }
 
-//--- 出来栄え 0..1: 形の一致度と打撃品質の平均を重み合成する。
+//--- 出来栄え 0..1: 形の一致度・打撃品質の平均・淬火の出来(膜を早く破ったか)を重み合成する。
 //    誤打(冷打/過熱/完成済みを叩く)は品質0の打撃として平均を下げる=罰でなく「腕前」として自然に効く。
 float SceneForge::GradeScore() const
 {
 	// 打撃品質の平均(1打も打たずに淬火した場合は0扱い=除算回避)。
 	float qAvg = (m_strikeCount > 0) ? (m_qualitySum / (float)m_strikeCount) : 0.0f;
-	float s = GRADE_W_MATCH * m_match + GRADE_W_QUALITY * qAvg;
+	float s = GRADE_W_MATCH * m_match + GRADE_W_QUALITY * qAvg + GRADE_W_QUENCH * QuenchScore();
 	if (s < 0.0f) s = 0.0f;
 	if (s > 1.0f) s = 1.0f;
 	return s;
@@ -905,30 +977,40 @@ void SceneForge::DrawResultUI()
 {
 	ImFont* title = DebugUI::FontTitle();
 	ImFont* body  = DebugUI::FontBody();
-	// 羊皮紙を下地に敷き、その上に成果を書く。文字色は羊皮紙に映える濃い焦茶。
+	// 羊皮紙を下地に敷き、その上に成果を書く。
+	//   紙(橙色)の上の文字は「濃いインク・影なし」(黒い影は紙の上で文字を濁らせ、対比を下げていた)。
+	//   文字は全部、紙の破れ縁の内側に収める。操作案内だけは紙の外(暗い背景)に白で出す=紙の文字と役割が違う。
 	DrawParchmentPanel(0.50f, 0.72f);
-	const ImU32 ink = IM_COL32(60, 34, 18, 255);
-	CenterText("FORGED!",              0.30f, 1.30f, IM_COL32(48, 24, 10, 255), title);	// 濃い鉄墨色=紙上で最も重い
+	const ImU32 INK_DARK  = IM_COL32(40, 20,  8, 255);	// 見出し/数値: 一番濃い焦茶(橙の紙との対比を最大に)
+	const ImU32 INK_LABEL = INK_DARK;	// 項目名も一番濃いインク(旧: 少し薄い焦茶+細い書体で、紙の模様に埋もれた)
+	// 縦位置(画面高さ比)。紙の破れ縁の内側 ≒ 0.36〜0.71(DrawParchmentPanel(0.50, 0.72) の時)
+	const float TITLE_Y = 0.375f, GRADE_Y = 0.50f, MATCH_Y = 0.615f, SCORE_Y = 0.665f;
+	const float PROMPT_Y = 0.83f;	// 紙の下の外
+	const float TITLE_SCALE = 1.10f, GRADE_SCALE = 2.2f, PROMPT_SCALE = 0.80f;
+	// 成績の2行は太い見出し書体(Cinzel Black, 64px で焼いてある)を半分の大きさで。
+	//   本文書体(EB Garamond)は線が細く、模様の多い羊皮紙の上では読めなかった。
+	const float STAT_SCALE = 0.50f;
+	CenterText("FORGED!", TITLE_Y, TITLE_SCALE, INK_DARK, title, false);
 
-	// --- 等級(S/A/B/C): 一番大きく、等級ごとに色を変えて主役にする ---
+	// --- 等級(S/A/B/C): 一番大きく、等級ごとに色を変えて主役にする(どれも紙の上で読める濃さ) ---
 	char g = GradeLetter();
 	ImU32 gcol;
 	switch (g)
 	{
-	case 'S': gcol = IM_COL32(212, 160,  40, 255); break;	// 金
-	case 'A': gcol = IM_COL32(150, 110,  60, 255); break;	// 焦茶(紙上で映える)
-	case 'B': gcol = IM_COL32( 90,  70,  45, 255); break;
-	default:  gcol = IM_COL32(110,  60,  40, 255); break;	// C
+	case 'S': gcol = IM_COL32(150,  25,  10, 255); break;	// 朱(印章の色)=特別
+	case 'A': gcol = IM_COL32( 45,  22,   8, 255); break;	// 濃い焦茶
+	case 'B': gcol = IM_COL32( 70,  45,  25, 255); break;
+	default:  gcol = IM_COL32( 90,  65,  45, 255); break;	// C=少し薄いインク
 	}
 	char gbuf[8]; sprintf_s(gbuf, sizeof(gbuf), "%c", g);
-	CenterText(gbuf,                   0.46f, 2.6f, gcol, title);	// 等級=最大サイズ
+	CenterText(gbuf, GRADE_Y, GRADE_SCALE, gcol, title, false);	// 等級=最大サイズ
 
 	char buf[64];
 	sprintf_s(buf, sizeof(buf), "SHAPE MATCH   %d%%", (int)(m_match * 100));
-	CenterText(buf,                    0.62f, 0.85f, ink, body);
+	CenterText(buf, MATCH_Y, STAT_SCALE, INK_LABEL, title, false);
 	sprintf_s(buf, sizeof(buf), "SCORE   %d", m_score);
-	CenterText(buf,                    0.68f, 0.85f, ink, body);
-	CenterText("PRESS  SPACE  TO  RETURN", 0.76f, 0.80f, IM_COL32(90, 55, 30, 255), body);
+	CenterText(buf, SCORE_Y, STAT_SCALE, INK_LABEL, title, false);
+	CenterText("PRESS  SPACE  TO  RETURN", PROMPT_Y, PROMPT_SCALE, IM_COL32(240, 228, 205, 230), body);	// 暗い背景の上=影あり
 }
 
 void SceneForge::DrawUI()
@@ -966,6 +1048,25 @@ void SceneForge::DrawUI()
 		ImGui::Checkbox("Show collision", &m_showCollision);
 		ImGui::SameLine();
 		ImGui::Checkbox("Show grass map", &m_showGrassMap);	// 草の踏み跡の貼图(真上から正射影)を小窓に表示
+		// 【デバッグ】工程へ直接飛ぶ(前の工程は済ませた状態で、その工位から)。名前は英語の状態キー(F1 の字体に日本語が無い)
+		if (m_state == GAME_PLAY && m_recipe)
+		{
+			const int n = (int)m_recipe->steps.size();
+			if (m_debugJumpIdx >= n) m_debugJumpIdx = n - 1;
+			char cur[32]; sprintf_s(cur, "%d: %s", m_debugJumpIdx + 1, StepKey(m_recipe->steps[m_debugJumpIdx].type));
+			ImGui::SetNextItemWidth(140.0f);
+			if (ImGui::BeginCombo("##jumpstep", cur))
+			{
+				for (int i = 0; i < n; ++i)
+				{
+					char item[32]; sprintf_s(item, "%d: %s", i + 1, StepKey(m_recipe->steps[i].type));
+					if (ImGui::Selectable(item, i == m_debugJumpIdx)) m_debugJumpIdx = i;
+				}
+				ImGui::EndCombo();
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Jump to step")) DebugJumpToStep(m_debugJumpIdx);
+		}
 		ImGui::Separator();
 
 		// --- Weapon: 工件モデルを砧面に合わせる(FBXが読めた時だけ) ---
@@ -982,6 +1083,18 @@ void SceneForge::DrawUI()
 			ImGui::SliderFloat("Off X", &m_wpOff[0], -1.0f, 1.0f, "%.3f");
 			ImGui::SliderFloat("Off Y", &m_wpOff[1], -1.0f, 1.0f, "%.3f");
 			ImGui::SliderFloat("Off Z", &m_wpOff[2], -1.0f, 1.0f, "%.3f");
+			ImGui::TextDisabled("-- Hot steel (form must read while glowing) --");
+			ImGui::SliderFloat("Hot shade", &m_wpHotShade, 0.0f, 1.0f, "%.2f");	// 背光面の明るさ(1=旧の平らな発光)
+			ImGui::SliderFloat("Rim",       &m_wpRimK,     0.0f, 2.0f, "%.2f");	// 縁の明るさ
+			ImGui::SliderFloat("Rim power", &m_wpRimPow,   1.0f, 8.0f, "%.1f");	// 縁へ寄る鋭さ
+			ImGui::SliderFloat("Hot gain",  &m_wpHotGain,  0.3f, 1.5f, "%.2f");	// 発光全体の明るさ(白飛び防止)
+			ImGui::TextDisabled("-- Forge scale (black oxide, knocked off by hammering) --");
+			ImGui::SliderFloat("Scale tiling",  &m_scaleTiling,  1.0f, 40.0f, "%.1f");	// 大=細かい皮
+			ImGui::SliderFloat("Scale soft",    &m_scaleSoft,    0.01f, 0.3f, "%.2f");	// 剥がれ際のぼかし
+			ImGui::SliderFloat("Scale opacity", &m_scaleOpacity, 0.0f, 1.0f, "%.2f");	// 黒皮の濃さ
+			ImGui::SliderFloat("Scale glow",    &m_scaleGlow,    0.0f, 1.0f, "%.2f");	// 熱い時の皮の鈍い光
+			ImGui::SliderFloat("Scale start bare", &m_scaleStart, 0.0f, 0.8f, "%.2f");	// 叩く前から地金が見える量(大=斑)
+			ImGui::SliderFloat("Scale hold",       &m_scaleHoldMax, 0.3f, 1.0f, "%.2f");	// 未完成の区域に残す皮(小=多く残る)
 		}
 
 		// --- Camera: 視点・画角・追従・打撃の揺れ ---
@@ -1033,9 +1146,15 @@ void SceneForge::DrawUI()
 			ImGui::SliderFloat("Cam height",   &m_stationCamHeight, 0.0f, 2.0f, "%.2f");	// 作業点からの目の高さ
 			ImGui::SliderFloat("Look lift",    &m_stationLookLift, -0.5f, 0.5f, "%.2f");	// 注視点の高さ補正
 			ImGui::TextDisabled("-- Blade placement --");
-			ImGui::SliderFloat("Hearth lift",  &m_hearthLift,  -0.3f, 0.3f, "%.3f");	// 炭床の上の高さ
+			ImGui::SliderFloat("Hearth lift",  &m_hearthLift,  -0.3f, 0.3f, "%.3f");	// 炭床の上の高さ(差し込んだ切っ先の高さ)
+			ImGui::SliderAngle("Hearth angle", &m_hearthYaw,    0.0f, 80.0f);			// 炭床の長辺から奥へ振る角(平らに寝かせたまま)
+			ImGui::SliderFloat("Hearth tip side",  &m_hearthTipSide,  -0.8f, 0.8f, "%.2f");	// 先端の位置: 炭床の中心から長辺方向
+			ImGui::SliderFloat("Hearth tip depth", &m_hearthTipDepth, -0.5f, 0.5f, "%.2f");	// 先端の位置: 炭床の中心から奥へ
 			ImGui::SliderFloat("Grind lift",   &m_grindLift,   -0.5f, 0.5f, "%.3f");	// 砥石上端からの高さ
 			ImGui::SliderFloat("Trough hover", &m_troughHover,  0.0f, 1.0f, "%.3f");	// 水面の上に構える高さ
+			// 炉/水槽の正面(視点の側)。自動判定が外れた時だけ ON(次に工位へ入った時から反映)
+			ImGui::Checkbox("Hearth front flip", &m_hearthFrontFlip); ImGui::SameLine();
+			ImGui::Checkbox("Trough front flip", &m_troughFrontFlip);
 			if (ImGui::SliderAngle("Grind view", &m_grindViewYaw, -180.0f, 180.0f)	// 砥石の固定視点の向き(0/180=輪の両側)
 			    && m_station == Station::Grindstone && !m_walkMode)
 				m_stationViewDir = GrindViewDir();	// 研磨中ならその場で反映
@@ -1112,6 +1231,17 @@ void SceneForge::DrawUI()
 			ImGui::SliderFloat("Grip along iron",   &m_gripAlong,   0.0f, 1.0f, "%.2f");	// 挟む位置(手前の端から何割)
 			ImGui::SliderFloat3("Tongs base (R/U/F)", m_tongsBase, -1.5f, 1.0f, "%.2f");	// 火钳の柄の根元(画面の下の外)
 			ImGui::SliderFloat("Sway follow", &m_vmSwayLambda, 2.0f, 40.0f, "%.1f");	// 視点を振った時の追従の速さ(小=重く遅れる)
+			ImGui::TextDisabled("-- wall-clipping avoidance (purple ray in Show collision) --");
+			ImGui::Text("pull now %.2f m   raise now %.0f deg", m_carryPull, XMConvertToDegrees(m_carryRaise));
+			ImGui::SliderFloat("Avoid max pull", &m_carryAvoidMaxPull, 0.0f, 0.8f, "%.2f");	// まず手元へ引き寄せる量の上限(m)
+			ImGui::SliderAngle("Avoid max raise", &m_carryAvoidMaxRaise, 0.0f, 85.0f);		// 起こす角の上限
+			ImGui::SliderFloat("Avoid margin",    &m_carryAvoidMargin,  0.0f, 0.4f, "%.2f");	// 道具/壁の手前に空ける隙間
+			ImGui::SliderFloat("Avoid follow",    &m_carryAvoidLambda,  1.0f, 30.0f, "%.1f");	// 起こす/戻す速さ
+			ImGui::TextDisabled("-- sequence feel (grip / put-down animation) --");
+			ImGui::SliderFloat("Hand lag",     &m_seqHandLag,    0.0f, 0.5f, "%.2f");	// 目が先、手が遅れる割合(フォロースルー/オーバーラップ)
+			ImGui::SliderFloat("Arc lift",     &m_seqArcLift,    0.0f, 0.8f, "%.2f");	// 運ぶ時の弧の高さ(水平距離に対する比。アーク)
+			ImGui::SliderFloat("Time jitter",  &m_seqTimeJitter, 0.0f, 0.3f, "%.2f");	// 拍の長さのばらつき ±
+			ImGui::SliderFloat("Arc jitter",   &m_seqArcJitter,  0.0f, 0.8f, "%.2f");	// 弧の高さのばらつき ±
 			ImGui::TextDisabled("-- walking while carrying --");
 			ImGui::SliderFloat("Carry walk speed x", &m_carrySpeedMul, 0.2f, 1.0f, "%.2f");	// 運んでいる時の速さの倍率
 			ImGui::SliderFloat("Bob up/down",        &m_bobAmp,        0.0f, 0.06f, "%.3f");	// 上下の揺れ幅

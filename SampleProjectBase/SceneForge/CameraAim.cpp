@@ -92,9 +92,7 @@ void SceneForge::ApplyCamera()
 	// pos と look を同じ量だけ縦に動かす→視線方向(m_camFwd=照準)は不変。framing だけ揺れる。
 	// === 手持ち感の三層(すべて極小振幅) =================================
 	// 第3層(既存): 落錘の冲撃。m_shake(打撃で~0.9→0へ減衰)で「ガッ」と一発縦揺れして収まる。
-	// SHAKE_OSC_FREQ = 減衰振動の速さ(大=細かく振れて速く収まる)。
-	constexpr float SHAKE_OSC_FREQ = 42.0f;
-	float dy = (m_shake > 0.0f) ? (CAM_SHAKE_AMP * m_shake * sinf(m_shake * SHAKE_OSC_FREQ)) : 0.0f;
+	float dy = ShakeOffsetY();
 
 	// 第1層: 呼吸(常駐)。低頻ノイズで機位を三軸ともゆっくり漂わせる=「据えてるが生きてる」。
 	float bt = m_time * m_camBreathSpeed;
@@ -187,8 +185,19 @@ void SceneForge::ApplyWalkCamera()
 	XMFLOAT3 fwd = XMFLOAT3(sinf(yaw) * cy, sinf(m_walkPitch), cosf(yaw) * cy);
 	m_camFwd = fwd;	// 照準射線に使う変数も更新(走動中は未使用だが整合させる)
 
-	cam->SetPos (eye);
-	cam->SetLook(XMFLOAT3(eye.x + fwd.x, eye.y + fwd.y, eye.z + fwd.z));
+	// 拍子表の再生中だけ、工位カメラと同じ手持ちの呼吸を乗せる(m_seqBreathW で滑らかに付き/消える)。
+	// 普段の歩きには乗せない(マウスで視点を動かしている間に揺れると酔う)。
+	float ox = 0.0f, oy = 0.0f, oz = 0.0f;
+	if (m_seqBreathW > 0.0f)
+	{
+		const float bt = m_time * m_camBreathSpeed, amp = m_camBreathAmp * m_seqBreathW;
+		ox = OrganicNoise(bt, kNoiseSeedBreath[0]) * amp;
+		oy = OrganicNoise(bt, kNoiseSeedBreath[1]) * amp;
+		oz = OrganicNoise(bt, kNoiseSeedBreath[2]) * amp;
+	}
+	const float LN = m_camLookNoise;
+	cam->SetPos (XMFLOAT3(eye.x + ox, eye.y + oy, eye.z + oz));
+	cam->SetLook(XMFLOAT3(eye.x + fwd.x + ox * LN, eye.y + fwd.y + oy * LN, eye.z + fwd.z + oz * LN));
 	cam->SetUp  (XMFLOAT3(0.0f, 1.0f, 0.0f));
 }
 
@@ -250,6 +259,20 @@ void SceneForge::BeginEnterStation(Station s)
 	// 行き先の工位を決める。鉄はここでは動かさない: 手に持って来た鉄を置くのは呼び出し側(DoInteract→PutIronAt)。
 	//   鉄が別の工位にある時はそもそも入れない(Interaction.cpp)=鉄が瞬間移動することは無い。
 	m_station  = s;
+	SetupStationView(s);
+
+	// 工位の視点は「正面の既定」から始める(前回の視角のずれを持ち越さない)。
+	m_lookYaw = 0.0f; m_lookPitch = 0.0f;
+	m_modeTrans  = ModeTrans::Enter;
+	m_transTimer = 0.0f;
+	m_transDur   = TransDuration();
+}
+
+//--- 工位の視点方向(と砥石の研ぎ始め位置)を玩家の今の位置から決める。
+//    工位での鉄の向き(StationRight)もこれで決まるので、鉄を置く拍子表は再生開始時に先に呼ぶ(Sequence.cpp)。
+//    玩家は再生中に動かない → 最後の BeginEnterStation で同じ値になる=置いた姿勢のまま工位へ入れる。
+void SceneForge::SetupStationView(Station s)
+{
 	if (s != Station::Anvil)
 	{
 		// 工位カメラは「玩家が近づいて来た側」から作業点を見る=どの向きに置いた道具でも正面から見える。
@@ -260,17 +283,37 @@ void SceneForge::BeginEnterStation(Station s)
 		float len = sqrtf(dx * dx + dz * dz);
 		if (len > 1e-4f) m_stationViewDir = XMFLOAT3(dx / len, 0.0f, dz / len);
 	}
+	if (s == Station::Hearth || s == Station::Trough)
+	{
+		// 炉/水槽: 鉄の長軸(=StationRight)を炭床/水面の長辺に揃える。斜めから来ても鉄が斜めに置かれて
+		// 炉の壁/槽の縁を突き抜けない様に(2026-10-04 F5 で発覚)。
+		// 視点 = 長辺に直交する2方向のうち、玩家が居る側(近づいた側から見る、は保つ)。
+		const XMFLOAT3 L = (s == Station::Hearth) ? BedLongAxis(m_coalYaw, m_coalSize) : BedLongAxis(m_waterYaw, m_waterSize);
+		XMFLOAT3 v(L.z, 0.0f, -L.x);	// 長辺に直交する水平方向。StationRight = (-v.z, 0, v.x) = L(または -L)
+		if (v.x * m_stationViewDir.x + v.z * m_stationViewDir.z < 0.0f) v = XMFLOAT3(-v.x, 0.0f, -v.z);
+
+		// 道具に「正面」がある時(炉: 炭床の後ろに煙突/壁がある)は、近づいた側でなく正面から見る。
+		// 後ろから E を押すと視点が炉の中/壁の向こうになり、出た時に壁の外へ立ってしまった(2026-10-05 F5)。
+		// 正面 = 道具の箱の中心から見て、作業点がある側(炉の本体=煙突は炭床より後ろにある)。
+		// 中心と作業点がほぼ同じ所(水槽の様に前後対称)なら正面は無い → 近づいた側のまま。
+		// 自動判定が外れる配置用に F1 Stations の「front flip」で逆にできる。
+		const char* key = (s == Station::Hearth) ? "StForge" : "StTrough";
+		const bool  flip = (s == Station::Hearth) ? m_hearthFrontFlip : m_troughFrontFlip;
+		XMFLOAT3 mn, mx;
+		if (Prop* p = GetProp(key); p && PropWorldBox(*p, mn, mx))
+		{
+			const XMFLOAT3 base = StationBase(s);
+			const float off = (base.x - (mn.x + mx.x) * 0.5f) * v.x + (base.z - (mn.z + mx.z) * 0.5f) * v.z;
+			if (fabsf(off) > STATION_FRONT_MIN_OFFSET && off < 0.0f) v = XMFLOAT3(-v.x, 0.0f, -v.z);
+		}
+		if (flip) v = XMFLOAT3(-v.x, 0.0f, -v.z);
+		m_stationViewDir = v;
+	}
 	if (s == Station::Grindstone)
 	{
 		m_stationViewDir = GrindViewDir();	// 近づいた側に関係なく固定(刃の位置が毎回同じになる)
 		m_grindU = 0.5f;					// 刃の中央から研ぎ始める
 	}
-
-	// 工位の視点は「正面の既定」から始める(前回の視角のずれを持ち越さない)。
-	m_lookYaw = 0.0f; m_lookPitch = 0.0f;
-	m_modeTrans  = ModeTrans::Enter;
-	m_transTimer = 0.0f;
-	m_transDur   = TransDuration();
 }
 
 //--- 過渡の長さ = 開始視点から到着先までの距離 / 速さ。MIN..MAX に収める(遠いほど長い)。
@@ -442,6 +485,23 @@ XMFLOAT3 SceneForge::GrindViewDir()
 	return XMFLOAT3(d.x * c + d.z * s, 0.0f, -d.x * s + d.z * c);
 }
 
+//--- 炉に寝かせた鉄の長軸(水平)。炭床の長辺(StationRight)から奥(StationInto)へ m_hearthYaw だけ回した向き。
+//    +側の端が炭床の奥の先端、-側の端が炉口から手前へはみ出す。
+XMFLOAT3 SceneForge::HearthDir() const
+{
+	const XMFLOAT3 r = StationRight(), in = StationInto();
+	const float c = cosf(m_hearthYaw), s = sinf(m_hearthYaw);
+	return XMFLOAT3(r.x * c + in.x * s, 0.0f, r.z * c + in.z * s);	// 直交する単位ベクトルの合成=長さ1
+}
+
+//--- 炭床/水面の四角(ローカル X を sizeX、Z を sizeY に伸ばして yaw で回す=DrawCoalBed/DrawWater と同じ)の長辺の水平方向。
+XMFLOAT3 SceneForge::BedLongAxis(float yaw, const float size[2])
+{
+	// RotationY(yaw): ローカル X → (cos, 0, -sin)、ローカル Z → (sin, 0, cos)
+	const float c = cosf(yaw), s = sinf(yaw);
+	return (size[0] >= size[1]) ? XMFLOAT3(c, 0.0f, -s) : XMFLOAT3(s, 0.0f, c);
+}
+
 //--- 工位カメラから見た右方向。視線 f = -m_stationViewDir(作業点の方)、右 = up × f = (f.z, 0, -f.x)。
 XMFLOAT3 SceneForge::StationRight() const
 {
@@ -453,15 +513,18 @@ XMFLOAT3 SceneForge::StationRight() const
 //    Y 軸回転 θ はベクトルの水平角 atan2(x,z) に θ を足すので、差を取れば揃う。
 float SceneForge::StationAlignYaw() const
 {
-	if (!m_carrying && m_workAt == Station::Anvil) return 0.0f;
+	// 置いた時の左右反転(m_restFlip): 火钳で掴んだ端が玩家側に来る様に、置く時に半回転して置いた(Sequence.cpp)
+	if (!m_carrying && m_workAt == Station::Anvil) return m_restFlip ? XM_PI : 0.0f;
 	const int la = AimSystem::LongAxis(m_wpMin, m_wpMax);
 	XMVECTOR axis = XMVectorSet(la == 0 ? 1.0f : 0.0f, la == 1 ? 1.0f : 0.0f, la == 2 ? 1.0f : 0.0f, 0.0f);
 	XMFLOAT3 L; XMStoreFloat3(&L, XMVector3TransformNormal(axis, XMMatrixRotationRollPitchYaw(m_wpPitch, m_wpYaw, m_wpRoll)));
 	if (L.x * L.x + L.z * L.z < 1e-6f) return 0.0f;	// 長軸が真上を向いている=水平に揃えようがない
 	// 運んでいる時は長軸を手に持った向き m_heldDir の水平成分へ(上下の傾きは WeaponRot が足す)。工位ではカメラの左右へ。
-	XMFLOAT3 D = m_carrying ? m_heldDir : StationRight();
+	// 炉は炭床の長辺から奥へ m_hearthYaw だけ振った斜めに寝かせる(HearthDir)。
+	XMFLOAT3 D = m_carrying ? m_heldDir : (m_workAt == Station::Hearth ? HearthDir() : StationRight());
 	// 掴んだ端が長軸の + 側なら、手元側(-m_heldDir)へ + 側を向ける=掴んだ端がそのまま手元に来る(PlaySequence で決定)
 	if (m_carrying && m_heldFlip) D = XMFLOAT3(-D.x, -D.y, -D.z);
+	if (!m_carrying && m_restFlip) D = XMFLOAT3(-D.x, -D.y, -D.z);
 	return atan2f(D.x, D.z) - atan2f(L.x, L.z);
 }
 
@@ -481,7 +544,15 @@ void SceneForge::StationView(Station s, XMFLOAT3& eye, XMFLOAT3& target)
 	target = XMFLOAT3(base.x, base.y + m_stationLookLift, base.z);
 }
 
-//--- 金床以外の工位の固定カメラ。手持ち感の「呼吸」だけ乗せる(金床カメラと同じノイズ)。
+//--- 衝撃の縦揺れ(打撃 / 淬火の入水)。m_shake(~0.9→0へ減衰)を振幅に、その値自身で位相を回す減衰振動。
+//    SHAKE_OSC_FREQ = 減衰振動の速さ(大=細かく振れて速く収まる)。
+float SceneForge::ShakeOffsetY() const
+{
+	constexpr float SHAKE_OSC_FREQ = 42.0f;
+	return (m_shake > 0.0f) ? (CAM_SHAKE_AMP * m_shake * sinf(m_shake * SHAKE_OSC_FREQ)) : 0.0f;
+}
+
+//--- 金床以外の工位の固定カメラ。手持ち感の「呼吸」と、衝撃の縦揺れ(淬火の入水)を乗せる(金床カメラと同じ)。
 void SceneForge::ApplyWorkCamera()
 {
 	CameraBase* cam = GetObj<CameraBase>("Camera");
@@ -494,6 +565,8 @@ void SceneForge::ApplyWorkCamera()
 	float oy = OrganicNoise(bt, kNoiseSeedBreath[1]) * m_camBreathAmp;
 	float oz = OrganicNoise(bt, kNoiseSeedBreath[2]) * m_camBreathAmp;
 	const float LN = m_camLookNoise;
+	const float shake = ShakeOffsetY();	// 機位と注視点を同じだけ縦に動かす=視線の向きは変えず、画が揺れる
+	eye.y += shake; target.y += shake;
 
 	XMStoreFloat3(&m_camFwd, XMVector3Normalize(XMVectorSubtract(XMLoadFloat3(&target), XMLoadFloat3(&eye))));
 	cam->SetPos (XMFLOAT3(eye.x + ox, eye.y + oy, eye.z + oz));
@@ -806,6 +879,12 @@ void SceneForge::SaveTuning()
 	fprintf(fp, "grindsens %.6f\n", m_grindSens);
 	fprintf(fp, "forgework %.5f\n", m_forging.workNeeded);
 	fprintf(fp, "grindview %.5f\n", m_grindViewYaw);
+	fprintf(fp, "stationfront %d %d\n", m_hearthFrontFlip ? 1 : 0, m_troughFrontFlip ? 1 : 0);
+	fprintf(fp, "seqfeel %.5f %.5f %.5f %.5f\n", m_seqHandLag, m_seqArcLift, m_seqTimeJitter, m_seqArcJitter);
+	fprintf(fp, "carryavoid %.5f %.5f %.5f %.5f\n", m_carryAvoidMaxRaise, m_carryAvoidMargin, m_carryAvoidLambda, m_carryAvoidMaxPull);
+	fprintf(fp, "hearthlay %.5f %.5f %.5f\n", m_hearthYaw, m_hearthTipSide, m_hearthTipDepth);
+	fprintf(fp, "hotsteel %.5f %.5f %.5f %.5f\n", m_wpHotShade, m_wpRimK, m_wpRimPow, m_wpHotGain);
+	fprintf(fp, "forgescale %.5f %.5f %.5f %.5f %.5f %.5f\n", m_scaleTiling, m_scaleSoft, m_scaleOpacity, m_scaleGlow, m_scaleStart, m_scaleHoldMax);
 
 	fclose(fp);
 }
@@ -856,6 +935,11 @@ void SceneForge::TuningRefs(std::vector<float*>& out)
 		&m_hearthLift, &m_grindLift, &m_troughHover,
 		&m_wheel.pedalImpulse, &m_wheel.maxSpeed, &m_wheel.friction, &m_wheel.bladeDrag, &m_grindSens,
 		&m_forging.workNeeded, &m_grindViewYaw,
+		&m_wpHotShade, &m_wpRimK, &m_wpRimPow, &m_wpHotGain,
+		&m_scaleTiling, &m_scaleSoft, &m_scaleOpacity, &m_scaleGlow, &m_scaleStart, &m_scaleHoldMax,
+		// -- Sequence feel / hearth insert --
+		&m_seqHandLag, &m_seqArcLift, &m_seqTimeJitter, &m_seqArcJitter, &m_hearthYaw, &m_hearthTipSide, &m_hearthTipDepth,
+		&m_carryAvoidMaxRaise, &m_carryAvoidMargin, &m_carryAvoidLambda, &m_carryAvoidMaxPull,
 	};
 	out.assign(r, r + _countof(r));
 }
@@ -945,6 +1029,12 @@ void SceneForge::LoadTuning()
 		else if (strcmp(key, "grindsens")  == 0) sscanf_s(v, "%f", &m_grindSens);
 		else if (strcmp(key, "forgework")  == 0) sscanf_s(v, "%f", &m_forging.workNeeded);
 		else if (strcmp(key, "grindview")  == 0) sscanf_s(v, "%f", &m_grindViewYaw);
+		else if (strcmp(key, "carryavoid") == 0) sscanf_s(v, "%f %f %f %f", &m_carryAvoidMaxRaise, &m_carryAvoidMargin, &m_carryAvoidLambda, &m_carryAvoidMaxPull);	// 旧ファイル(3つ)は引き寄せが既定のまま
+		else if (strcmp(key, "seqfeel")    == 0) sscanf_s(v, "%f %f %f %f", &m_seqHandLag, &m_seqArcLift, &m_seqTimeJitter, &m_seqArcJitter);
+		else if (strcmp(key, "hearthlay")  == 0) sscanf_s(v, "%f %f %f", &m_hearthYaw, &m_hearthTipSide, &m_hearthTipDepth);
+		else if (strcmp(key, "stationfront") == 0) { int h = 0, t = 0; sscanf_s(v, "%d %d", &h, &t); m_hearthFrontFlip = (h != 0); m_troughFrontFlip = (t != 0); }
+		else if (strcmp(key, "hotsteel")   == 0) sscanf_s(v, "%f %f %f %f", &m_wpHotShade, &m_wpRimK, &m_wpRimPow, &m_wpHotGain);
+		else if (strcmp(key, "forgescale") == 0) sscanf_s(v, "%f %f %f %f %f %f", &m_scaleTiling, &m_scaleSoft, &m_scaleOpacity, &m_scaleGlow, &m_scaleStart, &m_scaleHoldMax);	// 足りない旧ファイルは残りが既定のまま
 	}
 	fclose(fp);
 }

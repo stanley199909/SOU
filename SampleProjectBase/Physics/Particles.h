@@ -5,7 +5,8 @@
 // CPU particle simulation for the forge (self-built physics).
 // Three pools: hammer sparks (spawned in bursts, fall under gravity, bounce on the
 // ground), coal embers (emitted from the coal bed, rise on buoyancy, fade out) and
-// quench steam (rises on buoyancy, slowed by air drag, expands).
+// quench steam (rises on buoyancy, slowed by air drag, expands) and quench splash (water
+// droplets thrown up when the hot blade hits the water; gravity, gone when back in the water).
 // This owns the particle STATE and the motion physics. Drawing (building the
 // billboards/streaks with shaders) stays in the renderer, which reads the pools.
 class Particles
@@ -28,9 +29,17 @@ public:
     void EmitEmbers(const DirectX::XMFLOAT3& centre, float areaX, float areaZ,
                     float rate, float rise, float dt);
 
-    // Emit steam this frame from a disc (centre + radius) at `rate` per second.
-    // Steam = hot vapour: rises fast at first, is slowed by the air, spreads and grows.
-    void EmitSteam(const DirectX::XMFLOAT3& centre, float radius, float rate, float dt);
+    // Emit steam along a line (the blade at the waterline) at `rate` per second.
+    // Steam = hot vapour: rises fast at first, is slowed by the air, spreads and grows. Each puff
+    // starts within `spread` of the line; speedMul scales its launch speed (a burst at the
+    // moment of contact is fast and violent, steady boiling is gentle).
+    void EmitSteamLine(const DirectX::XMFLOAT3& a, const DirectX::XMFLOAT3& b, float spread,
+                       float rate, float dt, float speedMul);
+
+    // Throw water droplets up from a line (the blade hitting the water). They fly under
+    // gravity and disappear when they fall back below surfaceY (back into the water).
+    void SpawnSplash(const DirectX::XMFLOAT3& a, const DirectX::XMFLOAT3& b, int count,
+                     float speed, float surfaceY);
 
     // Advance all pools: sparks (gravity + ground bounce), embers (buoyancy + drift + fade),
     // steam (buoyancy + air drag + growth). `time` drives the embers' sideways shimmer.
@@ -41,10 +50,12 @@ public:
     const std::vector<Particle>& Sparks() const { return m_sparks; }
     const std::vector<Particle>& Embers() const { return m_embers; }
     const std::vector<Particle>& Steam()  const { return m_steam; }
+    const std::vector<Particle>& Splash() const { return m_splash; }
 
     static const int MAX_SPARKS = 3000;
     static const int MAX_EMBERS = 500;
-    static const int MAX_STEAM  = 400;
+    static const int MAX_STEAM  = 800;
+    static const int MAX_SPLASH = 400;
 
     // Tunable physics constants. Defaults reproduce the original hardcoded behaviour,
     // so callers that ignore this (the game) are unchanged; the Particle Lab scene edits
@@ -77,6 +88,12 @@ public:
         float steamBuoyancy = 0.6f;       // upward accel (hot vapour)
         float steamDrag     = 1.4f;       // air drag rate (1/s): puffs slow down and hang
         float steamGrowth   = 0.35f;      // radius growth (/s): puffs expand as they cool
+        // -- splash droplets (SpawnSplash / Update) --
+        float splashLifeMax  = 1.2f;       // safety cap; normally they die on falling back into the water
+        float splashSizeMin  = 0.010f, splashSizeMax = 0.022f;
+        float splashUpMin    = 0.5f, splashUpMax = 1.0f;   // upward speed (x the caller's speed)
+        float splashSide     = 0.35f;      // sideways speed (x the caller's speed)
+        float splashGravity  = 9.8f;
     };
     Tune tune;
 
@@ -84,6 +101,8 @@ private:
     std::vector<Particle> m_sparks;
     std::vector<Particle> m_embers;
     std::vector<Particle> m_steam;
+    std::vector<Particle> m_splash;
+    float m_splashSurfaceY = 0.0f; // droplets below this (falling) have landed back in the water
     float m_emberSpawn = 0.0f; // fractional ember count carried to the next frame
     float m_steamSpawn = 0.0f; // fractional steam count carried to the next frame
 };

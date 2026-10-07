@@ -8,8 +8,13 @@
 //   * absorption : deeper water tints the background more
 //   * fresnel    : grazing angles reflect the (dim) indoor ambient, not a bright sky
 //   * contact    : a faint line where the water touches the basin walls
+//   * waves      : the surface height comes from Physics/WaterSim (2D wave equation, solved
+//                  on the CPU, uploaded as a texture). The vertex shader lifts the grid; here
+//                  the normal is taken from the same heights, so refraction and the fresnel
+//                  follow the real waves. Steep, churned water turns milky (foam).
 Texture2D    sceneTex : register(t0);   // scene behind the water (refraction source)
 Texture2D    depthTex : register(t1);   // scene depth (R32_FLOAT view of the DSV)
+Texture2D    heightTex : register(t2);  // WaterSim heights (m). u = quad length, v = width
 SamplerState samp     : register(s0);
 
 cbuffer WaterCB : register(b0)
@@ -18,6 +23,8 @@ cbuffer WaterCB : register(b0)
     float4 params2;   // x = proj._33 (A), y = proj._43 (B), z = contact width, w = absorption distance
     float4 eye;       // xyz = camera position, w = surface aspect (length / width)
     float4 room;      // rgb = indoor ambient colour, a = intensity
+    float4 sim;       // xy = full world size of the quad (length, width), zw = cos/sin of its yaw
+    float4 simTexel;  // xy = one height texel in UV (1/NX, 1/NZ)
 };
 
 struct PS_IN
@@ -41,6 +48,9 @@ static const float3 ABSORPTION_TINT = float3(0.10, 0.14, 0.12);
 static const float  MAX_ABSORPTION = 0.32;
 static const float  CONTACT_STRENGTH = 0.04;
 static const float  INDOOR_REFLECTION_SCALE = 0.08;   // diffuse fill is not a bright sky reflection
+static const float3 FOAM_COLOUR       = float3(0.80, 0.83, 0.85);
+static const float  FOAM_SLOPE_START  = 0.25;  // wave slope where the water starts to look churned
+static const float  FOAM_SLOPE_GAIN   = 2.0;   // how quickly it turns milky above that slope
 
 // NDC depth (0..1) -> linear eye-space Z.   ndcZ = A + B/viewZ  =>  viewZ = B/(ndcZ - A)
 float LinearZ(float ndcZ) { return params2.y / (ndcZ - params2.x); }
@@ -65,6 +75,17 @@ float4 main(PS_IN p) : SV_TARGET
     float2 slope = (WAVE_A * cos(dot(p.worldPos.xz, WAVE_A) + params.x * SPEED_A)
                   + SECONDARY_WEIGHT * WAVE_B * cos(dot(p.worldPos.xz, WAVE_B) + params.x * SPEED_B))
                   * RIPPLE_SLOPE * params.w;
+    // --- Simulated waves: slope = height difference across one texel (central difference). ---
+    // Measured along the quad's own axes (local x = length, local z = width), then turned by
+    // the quad's yaw into world X/Z, the same frame as the ambient ripple above.
+    float2 tx = float2(simTexel.x, 0), tz = float2(0, simTexel.y);
+    float dhdx = (heightTex.Sample(samp, p.uv + tx).r - heightTex.Sample(samp, p.uv - tx).r) / max(2 * simTexel.x * sim.x, MIN_DISTANCE);
+    float dhdz = (heightTex.Sample(samp, p.uv + tz).r - heightTex.Sample(samp, p.uv - tz).r) / max(2 * simTexel.y * sim.y, MIN_DISTANCE);
+    float2 axisX = float2(sim.z, -sim.w), axisZ = float2(sim.w, sim.z);   // RotationY(yaw): local X, local Z in world XZ
+    float2 simSlope = dhdx * axisX + dhdz * axisZ;
+    slope += simSlope;
+    float foam = saturate((length(simSlope) - FOAM_SLOPE_START) * FOAM_SLOPE_GAIN);
+
     float3 n = normalize(float3(-slope.x, 1, -slope.y));
     float3 v = normalize(eye.xyz - p.worldPos);
     float  depth01 = saturate(thick / max(params2.w, MIN_DISTANCE));
@@ -82,6 +103,7 @@ float4 main(PS_IN p) : SV_TARGET
     col = lerp(col, room.rgb * room.a * INDOOR_REFLECTION_SCALE, fresnel);
     float contact = 1 - saturate(thick / max(params2.z, MIN_DISTANCE));
     col += room.rgb * room.a * contact * CONTACT_STRENGTH;
+    col = lerp(col, FOAM_COLOUR * (room.rgb * room.a + INDOOR_REFLECTION_SCALE), foam);   // churned water, lit by the room
 
     // The refraction sample already contains the background: output opaque,
     // alpha-blending on top would add the background a second time.

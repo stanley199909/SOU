@@ -281,13 +281,17 @@ void SceneForge::DrawCoalBed()
 //    メッシュは炭と同じ ±1 水平板を流用し、world で位置/大きさを与える。
 void SceneForge::DrawWater()
 {
-	if (!m_waterOn || !m_waterMesh || !g_pPost) return;
+	if (!m_waterOn || !m_waterMesh || !m_waterHeightTex || !g_pPost) return;
 	CameraBase*   cam   = GetObj<CameraBase>("Camera");
-	VertexShader* vs    = GetObj<VertexShader>("VS_Coal");	// pos/uv/col 共通VS
+	VertexShader* vs    = GetObj<VertexShader>("VS_Water");	// 波の高さで格子を上下させる
 	PixelShader*  ps    = GetObj<PixelShader>("PS_Water");
 	DepthStencil* depth = GetObj<DepthStencil>("DSV");
 	RenderTarget* scene = g_pPost->GetSceneRT();
 	if (!cam || !vs || !ps || !depth || !scene) return;
+
+	// 波の高さ(WaterSim)を貼图へ送る。1行 = NX 個の float(R32_FLOAT)。
+	GetContext()->UpdateSubresource(m_waterHeightTex->GetTexture2D(), 0, nullptr, m_waterSim.Heights(),
+		WaterSim::NX * sizeof(float), 0);
 
 	// 背後のシーンをスナップショット(屈折元テクスチャ)。この時点で深度バッファには
 	// 金床・鉄条まで含めた全不透明シーンの深度が入っている=水深/遮蔽の判定に使える。
@@ -307,7 +311,7 @@ void SceneForge::DrawWater()
 
 	// 深度を線形化する係数(A=proj._33, B=proj._43)。転置していない生の投影行列から取る。
 	XMFLOAT4X4 projNT = cam->GetProj(false);
-	XMFLOAT4 cb[4];
+	XMFLOAT4 cb[6];
 	cb[0] = XMFLOAT4(m_time, (float)refr->GetWidth(), (float)refr->GetHeight(), m_waterBump);
 	cb[1] = XMFLOAT4(projNT._33, projNT._43, m_waterFoam, m_waterDepthFade);
 	// cb[2] = 視点位置 + 水面の縦横比(PSが両端を丸く切る=水槽の角丸に合わせる)
@@ -317,6 +321,10 @@ void SceneForge::DrawWater()
 	cb[2] = XMFLOAT4(eye.x, eye.y, eye.z, m_waterSize[0] / std::max(m_waterSize[1], MIN_WATER_WIDTH));
 	const auto& lighting = CottageRender::Data();
 	cb[3] = XMFLOAT4(lighting.ambient.x, lighting.ambient.y, lighting.ambient.z, lighting.windowExtra.w);
+	// cb[4] = 水面の全長/全幅 + yaw の cos/sin(PS が波の傾きを板のローカルからワールドへ回す)
+	// cb[5] = 高さ貼图の1テクセルの UV 幅(中心差分の幅)
+	cb[4] = XMFLOAT4(m_waterSize[0] * 2.0f, m_waterSize[1] * 2.0f, cosf(m_waterYaw), sinf(m_waterYaw));
+	cb[5] = XMFLOAT4(1.0f / WaterSim::NX, 1.0f / WaterSim::NZ, 0.0f, 0.0f);
 	ps->WriteBuffer(0, cb);
 
 	// 深度バッファをテクスチャとして読むため、一旦DSVをOMから外す(sceneRTだけ描画先に)。
@@ -326,13 +334,16 @@ void SceneForge::DrawWater()
 	SetBlendMode(BLEND_ALPHA);
 	SetDepthTest(DEPTH_DISABLE);
 	vs->Bind(); ps->Bind();
-	ps->SetTexture(0, refr);		// t0 = 屈折元(背後のシーン)
-	ps->SetTexture(1, depth);		// t1 = シーン深度(R32_FLOAT)
+	vs->SetTexture(0, m_waterHeightTex.get());	// VS t0 = 波の高さ(頂点を上下)
+	ps->SetTexture(0, refr);					// t0 = 屈折元(背後のシーン)
+	ps->SetTexture(1, depth);					// t1 = シーン深度(R32_FLOAT)
+	ps->SetTexture(2, m_waterHeightTex.get());	// t2 = 波の高さ(法線)
 	m_waterMesh->Draw();
 
 	// SRVを外し、描画先を sceneRT + 深度に戻す(この後の余燼/火花が深度テストできるように)。
-	ID3D11ShaderResourceView* pNull[2] = { nullptr, nullptr };
-	GetContext()->PSSetShaderResources(0, 2, pNull);
+	ID3D11ShaderResourceView* pNull[3] = { nullptr, nullptr, nullptr };
+	GetContext()->PSSetShaderResources(0, 3, pNull);
+	GetContext()->VSSetShaderResources(0, 1, pNull);
 	SetRenderTargets(1, &scene, depth);
 	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
 }
@@ -421,13 +432,13 @@ void SceneForge::DrawEmbers()
 	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
 }
 
-//--- 淬火の蒸気: カメラ向きの柔らかい円(余燼と同じ光の粒テクスチャ)を「アルファ合成」で重ねる。
+//--- 淬火の蒸気と水しぶき: カメラ向きの柔らかい円(余燼と同じ光の粒テクスチャ)を「アルファ合成」で重ねる。
 //    余燼(加算=光る)と違い、蒸気は光らず背景を白く覆う物なので BLEND_ALPHA。
 //    寿命の始めにふわっと濃くなり、終わりに向かって薄れる(大きさは Particles 側で膨らむ)。
 //    ※本番の蒸気の見た目(ソフトパーティクル等)は外観担当が差し替えてよい。発生/運動は Particles が持つ。
 void SceneForge::DrawSteam()
 {
-	if (m_particles.Steam().empty()) return;
+	if (m_particles.Steam().empty() && m_particles.Splash().empty()) return;
 	CameraBase*   cam = GetObj<CameraBase>("Camera");
 	VertexShader* vs  = GetObj<VertexShader>("VS_Forge");
 	PixelShader*  ps  = GetObj<PixelShader>("PS_Forge");
@@ -436,6 +447,8 @@ void SceneForge::DrawSteam()
 	const XMFLOAT3 STEAM_COLOR(0.86f, 0.88f, 0.90f);	// 白っぽい灰(室内の暖色光で少し沈む)
 	const float    STEAM_OPACITY = 0.35f;				// 1粒の最大不透明度(重なって濃くなる)
 	const float    FADE_IN       = 0.15f;				// 寿命の最初この割合で濃くなる
+	const XMFLOAT3 SPLASH_COLOR(0.92f, 0.95f, 1.0f);	// 水しぶき: 光を受けた水滴(蒸気より白く、少し青み)
+	const float    SPLASH_OPACITY = 0.85f;				// 小さく濃い(蒸気の様に重ねて濃くする物ではない)
 
 	XMFLOAT3 camPos = cam->GetPos();
 	XMVECTOR vcam    = XMLoadFloat3(&camPos);
@@ -443,13 +456,11 @@ void SceneForge::DrawSteam()
 	XMFLOAT4X4 camMat[2] = { cam->GetView(), cam->GetProj() };
 	vs->WriteBuffer(0, camMat);
 
+	// カメラ向きの四角(ビルボード)を1枚足す。蒸気と水しぶきで同じ形、色と濃さだけ違う。
 	int v = 0;
-	for (const Particles::Particle& p : m_particles.Steam())
+	auto addQuad = [&](const Particles::Particle& p, const XMFLOAT4& col) -> bool
 	{
-		float age = 1.0f - p.life / p.maxLife;			// 0→1
-		float a = (age < FADE_IN) ? age / FADE_IN : (1.0f - age) / (1.0f - FADE_IN);
-		XMFLOAT4 col(STEAM_COLOR.x, STEAM_COLOR.y, STEAM_COLOR.z, a * STEAM_OPACITY);
-
+		if (v + 6 > (int)m_vtx.size()) return false;
 		XMVECTOR c     = XMLoadFloat3(&p.pos);
 		XMVECTOR toCam = XMVector3Normalize(XMVectorSubtract(vcam, c));
 		XMVECTOR right = XMVector3Cross(worldUp, toCam);
@@ -473,8 +484,17 @@ void SceneForge::DrawSteam()
 		q[4] = { tr, XMFLOAT2(1,0), col };
 		q[5] = { br, XMFLOAT2(1,1), col };
 		v += 6;
-		if (v + 6 > (int)m_vtx.size()) break;
+		return true;
+	};
+
+	for (const Particles::Particle& p : m_particles.Steam())
+	{
+		float age = 1.0f - p.life / p.maxLife;			// 0→1
+		float a = (age < FADE_IN) ? age / FADE_IN : (1.0f - age) / (1.0f - FADE_IN);
+		if (!addQuad(p, XMFLOAT4(STEAM_COLOR.x, STEAM_COLOR.y, STEAM_COLOR.z, a * STEAM_OPACITY))) break;
 	}
+	for (const Particles::Particle& p : m_particles.Splash())	// 水へ落ちた瞬間に消える=薄れさせない
+		if (!addQuad(p, XMFLOAT4(SPLASH_COLOR.x, SPLASH_COLOR.y, SPLASH_COLOR.z, SPLASH_OPACITY))) break;
 	if (v == 0) return;
 
 	SetBlendMode(BLEND_ALPHA);

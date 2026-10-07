@@ -34,9 +34,9 @@ using namespace DirectX;
 //    KCD風: 熱い鋼の表面に黒い酸化皮(スケール)の斑が乗る。UV不要=世界座標の値ノイズで生成(核显向け)。
 static const char* g_wpVS = R"EOT(
 cbuffer Cam : register(b0){ float4x4 view; float4x4 proj; };
-struct VIN  { float3 pos:POSITION0; float3 nrm:NORMAL0; float2 uv:TEXCOORD0; float4 col:TEXCOORD1; float sharp:TEXCOORD2; };
-struct VOUT { float4 pos:SV_POSITION; float3 nrm:TEXCOORD0; float2 uv:TEXCOORD3; float4 col:TEXCOORD1; float3 wp:TEXCOORD2; float sharp:TEXCOORD4; };
-VOUT main(VIN v){ VOUT o; o.pos=mul(float4(v.pos,1),view); o.pos=mul(o.pos,proj); o.nrm=v.nrm; o.uv=v.uv; o.col=v.col; o.wp=v.pos; o.sharp=v.sharp; return o; }
+struct VIN  { float3 pos:POSITION0; float3 nrm:NORMAL0; float2 uv:TEXCOORD0; float4 col:TEXCOORD1; float sharp:TEXCOORD2; float work:TEXCOORD3; };
+struct VOUT { float4 pos:SV_POSITION; float3 nrm:TEXCOORD0; float2 uv:TEXCOORD3; float4 col:TEXCOORD1; float3 wp:TEXCOORD2; float sharp:TEXCOORD4; float work:TEXCOORD5; };
+VOUT main(VIN v){ VOUT o; o.pos=mul(float4(v.pos,1),view); o.pos=mul(o.pos,proj); o.nrm=v.nrm; o.uv=v.uv; o.col=v.col; o.wp=v.pos; o.sharp=v.sharp; o.work=v.work; return o; }
 )EOT";
 //--- 武器PS: 真の鋼テクスチャ(BaseColor)を地色にし、発光はゲームの実時温度 m_forging.Heat() で駆動する。
 //    col.rgb = 温度勾配色(HeatRGB)、col.a = 温度スカラー m_heat。
@@ -50,9 +50,20 @@ cbuffer Mtl : register(b0){
   float3 lightDir;float metal;     // 光方向 / 金属度
   float3 skyCol;  float specK;     // 擬似環境の空色 / 直接光高光強度
   float3 grdCol;  float envK;      // 擬似環境の地色 / 環境反射強度
-  float  fresK;   float3 _pad;     // 菲涅尔強度
+  float  fresK;                    // 菲涅尔強度
+  float  hotShade;                 // 熱い時、光の当たらない面の明るさ(0..1。1=明暗なし=旧の平らな発光)
+  float  rimK;   float rimPow;     // 熱い時の縁の明るさ / 縁へ寄る鋭さ
+  float  scaleTiling; float scaleSoft; float scaleOpacity; float scaleGlow;	// 氧化皮(黒皮)
+  float  hotGain;                  // 熱い鋼の発光全体の明るさ
+  float  scaleStart;               // 叩く前から剥がれている割合(マスクの灰度がこれ以下=開局から地金が見える)
+  float2 _pad2;
 };
-struct PIN{ float4 pos:SV_POSITION; float3 nrm:TEXCOORD0; float2 uv:TEXCOORD3; float4 col:TEXCOORD1; float3 wp:TEXCOORD2; float sharp:TEXCOORD4; };
+Texture2D scaleMask : register(t1);   // 氧化皮の厚み(灰度: 白=厚い / 黒=地金)。無縫=UV に繰り返して貼る
+struct PIN{ float4 pos:SV_POSITION; float3 nrm:TEXCOORD0; float2 uv:TEXCOORD3; float4 col:TEXCOORD1; float3 wp:TEXCOORD2; float sharp:TEXCOORD4; float work:TEXCOORD5; };
+// 氧化皮の見た目(色は固定の物理的な性質なので定数。量/明るさは cbuffer で調整)
+static const float3 SCALE_COLD_COL = float3(0.06, 0.055, 0.05);   // 冷えた黒皮=煤けたほぼ黒(艶なし)
+static const float3 SCALE_EMBER    = float3(1.0, 0.30, 0.08);     // 熱い黒皮の鈍い光の色(暗い赤)。地金の黄白色には寄せない
+static const float3 LUMA_WEIGHTS   = float3(0.2126, 0.7152, 0.0722); // 輝度(Rec.709)= 温度色から「明るさ」だけ取る
 // 研ぎ面(sharp: 0=鍛造のまま 1=研ぎ上がった刃先)。仮の見た目: 黒皮が取れて明るい地金が出て、面が滑らかになる。
 // ※本番の研ぎ面の見た目は外観担当(ChatGPT)が差し替える。値の意味(sharp)はCPU側で確定済み。
 static const float3 GROUND_STEEL  = float3(0.78, 0.80, 0.83);   // 研いだ地金の色
@@ -84,9 +95,31 @@ float4 main(PIN i):SV_TARGET{
   float3 refl = env * (envK + fre) * lerp(0.15, 1.0, metal) * steel;
 
   float3 cold = diff + spec + refl;                        // 冷: 金属らしくライティング
-  float3 hot  = i.col.rgb * (0.35 + 0.65*steel) + spec;    // 熱: 温度色で発光+高光は残す
+  // 熱: 温度色で発光。旧は法線を一切使わず(面の向きに関係なく同じ明るさ)=倒角/凹凸/表裏が平らに潰れて見えた。
+  //   → 発光にも面の向きの明暗を掛ける。ハーフランバート(Half-Lambert: N・L を 0..1 に寄せる)=背光面も真っ黒にならない。
+  //   → 縁(視線に対して寝ている面)を温度色で明るくする(菲涅尔型のリムライト)=輪郭と刃の稜線が浮く。
+  float  halfLambert = saturate(dot(N, L) * 0.5 + 0.5);
+  float  shade = lerp(hotShade, 1.0, halfLambert);
+  float  rim   = rimK * pow(1.0 - nv, rimPow);
+  float3 hot  = (i.col.rgb * (0.35 + 0.65*steel) * shade + i.col.rgb * rim + spec) * hotGain;
   float  k    = smoothstep(0.06, 0.45, i.col.a);           // 温度(col.a)で冷→熱をブレンド
   float3 col  = lerp(cold, hot, k);
+
+  // --- 氧化皮(黒皮): 叩いた面ほど剥がれる ---
+  //   マスクの灰度=皮の厚み。この面の鍛造進捗 work を閾値にして「閾値より薄い皮」から消す
+  //   =進捗が上がるにつれ、薄い所から少しずつ剥がれ、最後に厚い所が落ちる(突然消えない)。
+  //   研いだ所(sharp)は削られて皮が無い。冷えても皮は残る(本物と同じ)。
+  float  m       = scaleMask.Sample(samp, i.uv * scaleTiling).r;
+  //   開局(work=0)でも scaleStart 以下の薄い皮は既に剥がれている=炉から出したての「ひび割れて斑な黒皮」。
+  //   一様に全面を覆うと皮に見えず「刃の地の色」に見えてしまった(2026-10-03 F5 で判明)。
+  float  thr     = lerp(scaleStart, 1.0 + scaleSoft, saturate(i.work));
+  float  covered = smoothstep(thr - scaleSoft, thr, m) * (1.0 - e);
+  float3 scaleCold = SCALE_COLD_COL * (0.25 + 0.75 * nl);   // 艶の無い黒皮(拡散だけ)
+  // 熱い時の黒皮: 黒い地に、暗い赤の鈍い光を少しだけ乗せる。温度色をそのまま使うと、黄白に光る地金と
+  //   同じ色になって皮が溶け込み(特に開局の高温時)、ブルームにも埋もれた → 色は固定の暗赤、温度からは明るさだけ取る。
+  float  heatLuma  = dot(i.col.rgb, LUMA_WEIGHTS);
+  float3 scaleHot  = SCALE_COLD_COL + SCALE_EMBER * heatLuma * scaleGlow * shade;
+  col = lerp(col, lerp(scaleCold, scaleHot, k), covered * scaleOpacity);
   return float4(col, 1.0);
 }
 )EOT";
@@ -256,6 +289,8 @@ void SceneForge::Init()
 	// 武器の鋼テクスチャ(BaseColor=冷鋼の地色)。発光は温度 m_forging.Heat() で駆動するので Emissive は直貼りしない。
 	{
 		m_wpTex = TextureCache::Get("Assets/MM_Blacksmith_Pack/Medieval_Sword_Blade/Blade_BaseColor.png");
+		// 氧化皮マスクは「色」でなく「厚みのデータ」なので sRGB 変換をしない(false)=灰度がそのまま閾値と比べられる
+		m_wpScaleMask = TextureCache::Get("Assets/Model/weapon/forge_scale_mask.png", false);
 	}
 
 	// 光る炭ベッド用シェーダー(pos/uv/col レイアウト + テクスチャ)。
@@ -267,7 +302,10 @@ void SceneForge::Init()
 	if (FAILED(cps->Load("Assets/Shader/PS_Coal.cso")))
 		MessageBox(nullptr, "PS_Coal.cso", "Shader Error", MB_OK);
 
-	// 水面用ピクセルシェーダー(屈折)。頂点は VS_Coal を流用(pos/uv/col レイアウト)。
+	// 水面: 頂点は波の高さで格子を上下させる VS_Water、画素は屈折+深度+波の法線の PS_Water。
+	VertexShader* wvs = CreateObj<VertexShader>("VS_Water");
+	if (FAILED(wvs->Load("Assets/Shader/VS_Water.cso")))
+		MessageBox(nullptr, "VS_Water.cso", "Shader Error", MB_OK);
 	PixelShader* wps = CreateObj<PixelShader>("PS_Water");
 	if (FAILED(wps->Load("Assets/Shader/PS_Water.cso")))
 		MessageBox(nullptr, "PS_Water.cso", "Shader Error", MB_OK);
@@ -361,20 +399,34 @@ void SceneForge::Init()
 		if (Prop* m2 = GetProp("StMetal2")) if (table) { m2->pos[0] = table->pos[0] + 0.0f; m2->pos[2] = table->pos[2] - 0.2f; m2->pos[1] = tableH; }
 	}
 
-	// --- 炭ベッド(低ポリ炭塊) + 水面用の水平板(±1。両面。実サイズはDrawWaterのworldで拡縮) ---
+	// --- 炭ベッド(低ポリ炭塊) + 水面の格子(±1。両面。実サイズはDrawWaterのworldで拡縮) ---
+	//   水面は波の高さ場(WaterSim)と同じ細かさの格子にする=頂点ごとに高さを読んで本当に上下させる(VS_Water)。
+	//   uv は板の端から端へ 0..1(u = ローカル X = 槽の長さ、v = ローカル Z = 幅)。
 	{
-		float h = 1.0f;	// 単位板(±1)
-		Vertex q[12];
-		// 上向き(法線+Y)の2三角形
-		Vertex a{ {-h,0,-h},{0,0},{1,1,1,1} }, b{ {h,0,-h},{1,0},{1,1,1,1} };
-		Vertex c{ {-h,0, h},{0,1},{1,1,1,1} }, d{ {h,0, h},{1,1},{1,1,1,1} };
-		q[0]=a; q[1]=c; q[2]=b;  q[3]=b; q[4]=c; q[5]=d;			// 表
-		q[6]=a; q[7]=b; q[8]=c;  q[9]=b; q[10]=d; q[11]=c;			// 裏(カリング対策で逆巻き)
+		const int NX = WaterSim::NX, NZ = WaterSim::NZ;
+		auto vert = [&](int i, int k) -> Vertex
+		{
+			const float u = (float)i / (NX - 1), v = (float)k / (NZ - 1);
+			return Vertex{ { u * 2.0f - 1.0f, 0.0f, v * 2.0f - 1.0f }, { u, v }, { 1, 1, 1, 1 } };
+		};
+		std::vector<Vertex> q;
+		const int TRIS_PER_CELL_BOTH_SIDES = 12;	// 2三角形 × 3頂点 × 表裏
+		q.reserve((NX - 1) * (NZ - 1) * TRIS_PER_CELL_BOTH_SIDES);
+		for (int k = 0; k < NZ - 1; ++k)
+		for (int i = 0; i < NX - 1; ++i)
+		{
+			const Vertex a = vert(i, k), b = vert(i + 1, k), c = vert(i, k + 1), d = vert(i + 1, k + 1);
+			q.insert(q.end(), { a, c, b,  b, c, d });	// 表(上向き)
+			q.insert(q.end(), { a, b, c,  b, d, c });	// 裏(カリング対策で逆巻き)
+		}
 		MeshBuffer::Description cd = {};
-		cd.pVtx = q; cd.vtxSize = sizeof(Vertex); cd.vtxCount = 12;
+		cd.pVtx = q.data(); cd.vtxSize = sizeof(Vertex); cd.vtxCount = (UINT)q.size();
 		cd.topology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		m_waterMesh = std::make_shared<MeshBuffer>(cd);
 		m_coalBedMesh = CoalBedMesh::Create();
+
+		m_waterHeightTex = std::make_unique<Texture>();
+		m_waterHeightTex->Create(DXGI_FORMAT_R32_FLOAT, NX, NZ, m_waterSim.Heights());
 	}
 
 	// 編集シーンで作った配置(Assets/stage_layout.txt)を反映。無ければ上の既定のまま。
@@ -384,6 +436,7 @@ void SceneForge::Init()
 		for(auto& p:m_props) if(p.key==e.key) {p.scale=e.scale;p.pos[1]=e.y;p.groundSnap=false;}
 	}
 	LoadLayout();
+	m_waterSim.Init(m_waterSize[0] * 2.0f, m_waterSize[1] * 2.0f);	// 水面の大きさ(配置ファイルの W 行。±1 の板なので全長は2倍)
 	InitBuildingCollision();	// 家の壁線用の三角形と、裏口の扉の蝶番/凸包(Collision.cpp)
 	InitGrassMap();				// 草の踏み跡の貼图(範囲=屋外の地面。配置が決まった後に)
 	InitTongsGeometry();		// 火钳モデルの形(口の端・挟む点・輪の向き)を読む(Carry.cpp)
@@ -415,7 +468,9 @@ void SceneForge::Uninit()
 	DestroyObj("VS_Coal");
 	DestroyObj("PS_Coal");
 	DestroyObj("PS_Water");
+	DestroyObj("VS_Water");
 	m_waterMesh.reset();
+	m_waterHeightTex.reset();
 	m_coalBedMesh.reset();
 	// プロップのモデル(St...)とハンマーは破棄しない = static map に常駐させ、編集シーンと
 	// 共有する。両シーンはキー(St...)を統一済みなので、片方が読んだモデルをもう片方が
@@ -474,12 +529,13 @@ void SceneForge::StartGame()
 	m_tongsInHand = false;					// 火钳は左腰に掛かっている
 
 	// 工位と刃の置き場所: 鉄坯は金床の上から始まる(熱い状態=そのまま鍛打へ)。
-	m_station = Station::Anvil; m_workAt = Station::Anvil; m_carrying = false;
+	m_station = Station::Anvil; m_workAt = Station::Anvil; m_carrying = false; m_restFlip = false;
 	m_overheatWarned = false;
 	m_burnSparkAcc = 0.0f;
 	m_wheel.Reset();						// 砥石は止まっている
 	m_grindU = 0.5f; m_grindPress = 0.0f; m_grindSparkAcc = 0.0f; m_grindVol = 0.0f;
-	m_plunge = 0.0f; m_letterbox = 0.0f; m_steamTimer = 0.0f;	// 淬火/終幕の演出も解除
+	m_plunge = 0.0f; m_quenchTurn = 0.0f; m_agitate = 0.0f; m_quenchContact = false; m_clearDecided = false; m_letterbox = 0.0f; m_boil = 0.0f; m_boilStage = BoilStage::None; m_waterSim.Reset(); m_prevAgitate = 0.0f; m_bubbleAcc = 0.0f;
+	m_stirTarget = 0.0f; m_filmBreak = 0.0f; m_filmTime = 0.0f; m_stir01 = 0.0f; m_quenchStartHeat = 0.0f;	// 淬火/終幕の演出も解除
 	if (m_burnSndOn)  { Audio::Stop(Audio::SE_BURN_LOOP);  m_burnSndOn  = false; }
 	if (m_grindSndOn) { Audio::Stop(Audio::SE_GRIND_LOOP); m_grindSndOn = false; }
 
@@ -529,6 +585,47 @@ void SceneForge::AdvanceStep()
 	m_stepChangedAt = m_time;	// 指引 UI: 新しい案内文を淡入+工程リストで強調
 	if (!m_recipe || m_stepIdx >= (int)m_recipe->steps.size()) { FinishGame(); return; }
 	m_stepMachine.ChangeState(StepKey(m_recipe->steps[m_stepIdx].type));
+}
+
+//--- 【デバッグ】工程へ直接飛ぶ(淬火などを最初から通さずに試す為。F1 最上段の「Jump to step」)。
+//    新しい一局として始め直し(StartGame)、配方で前にある工程を「済」にしてから、その工程・その工位から始める。
+//    温度はその工程を試せる値にする: 加熱 = 冷えた鉄 / 鍛造・研磨 = 開始時の熱 / 淬火 = 淬火できる窓の真ん中。
+void SceneForge::DebugJumpToStep(int idx)
+{
+	if (!m_recipe || idx < 0 || idx >= (int)m_recipe->steps.size()) return;
+	StartGame();
+
+	for (int k = 0; k < idx; ++k)
+	{
+		switch (m_recipe->steps[k].type)
+		{
+		case StepName::Forge: m_forging.CompleteForging();  break;
+		case StepName::Grind: m_forging.CompleteGrinding(); break;
+		default: break;	// 加熱/淬火は形に残らない
+		}
+	}
+
+	const StepName type = m_recipe->steps[idx].type;
+	switch (type)
+	{
+	case StepName::Heat:   m_forging.SetHeat(COLD_LIMIT); break;	// 冷えた鉄(すぐ「済」にならない)
+	case StepName::Quench: m_forging.SetHeat((QUENCH_MIN_TEMP + QUENCH_MAX_TEMP) * 0.5f); break;
+	default:               m_forging.SetHeat(START_HEAT); break;
+	}
+
+	m_stepIdx = idx;
+	m_stepChangedAt = m_time;
+	m_trackerRows.clear();
+	m_stepMachine.ChangeState(StepKey(type));
+
+	// その工程の工位に鉄を置き、玩家もそこで作業中にする(歩いて運ぶ手間を省く。過渡アニメ無し)
+	const Station s = StepStation(type);
+	m_workAt = s; m_station = s;
+	SetupStationView(s);
+	m_walkMode = false;
+	m_modeTrans = ModeTrans::None;
+	m_lookYaw = 0.0f; m_lookPitch = 0.0f;
+	m_canStrike = false;
 }
 
 //--- 今実行中の工程設定(HUD の指示文表示などが読む)。範囲外は端にクランプ。
@@ -722,7 +819,7 @@ void SceneForge::UpdatePlay(float tick)
 	// --- 工位から出る: E または ESC(汎用の「戻る」)。翻面中は出ない(火钳を持ったまま離れない)。
 	//   翻面中の ESC は UpdateFlip が「一段戻る」として扱う(Flipping→Ready→火钳を戻す)。
 	//   淬火の動画(刃が水に入った後)も取り消せない=出られない。
-	const bool quenchLocked = (m_plunge > 0.0f);
+	const bool quenchLocked = (m_quenchTurn > 0.0f || m_plunge > 0.0f);	// 刃を立て始めたら取り消せない
 	if (inputOn && m_flipPhase == FlipPhase::None && !quenchLocked && (IsKeyTrigger('E') || IsKeyTrigger(VK_ESCAPE)))
 	{
 		m_charging = false; m_charge = 0.0f;	// 蓄力中なら破棄(暴発させない)
@@ -760,7 +857,7 @@ void SceneForge::UpdatePlay(float tick)
 			m_forging.AddHeat((fireTemp - m_forging.Heat()) * (1.0f - expf(-k * tick)));
 		}
 		else m_forging.Cool(tick);							// 火の外: 鉄が自分で冷める
-		if (m_plunge > 0.0f) m_forging.AddHeat(-QUENCH_COOL_RATE * tick);	// 水中で急冷
+		UpdateBoil(tick);	// 水中: 沸騰の段階ごとの速さで冷える + 沸き立ち(蒸気/水面)。水の外では何もしない
 	}
 	// 風箱を踏んでいる間は炉火の唸りをループ。離した(またはF1/遷移で入力停止)瞬間に停止。
 	if (bellows && !m_heatSndOn)      { Audio::PlayLoop(Audio::SE_FORGE_LOOP, 0.5f); m_heatSndOn = true; }
@@ -909,8 +1006,13 @@ void SceneForge::DoStrike()
 	// 打撃の「鉄の反応」(体積守恒の金属流動・損傷・成形進度)は ForgingSim が担当。
 	//   ここは玩家の動作側=修正値を渡して結果(outcome)を受け取るだけ。結果で下の回饋を出す。
 	int ci = m_aimI, cj = m_aimJ, seg = AimSeg();
+	const int  side        = m_forging.Side();
+	const bool faceWasDone = m_forging.SideDone(side);
 	ForgingSim::StrikeOutcome outcome =
 		m_forging.ApplyStrike(ci, cj, seg, power, heatFactor, grooveMult, cold, over);
+	// この一打で「上を向いている面」全体が仕上がった瞬間(未完成→完成のエッジ検出)=口笛で「この面は終わり、裏返せ」。
+	//   区域ごとの完成は音を鳴らさず、最後の黒皮が落ちる見た目だけで伝える(ユーザー決定 2026-10-04: 視覚=どこ / 音=面の完成)。
+	const bool faceJustDone = !faceWasDone && m_forging.SideDone(side);
 
 	// 温度が下がる / 火花 / 振動
 	m_forging.AddHeat(-STRIKE_COOL);	// 打撃で熱が金床/鎚へ逃げる
@@ -921,7 +1023,9 @@ void SceneForge::DoStrike()
 	if (cold) Audio::Play(Audio::SE_COLD, 0.9f);
 	else
 	{
-		Audio::Play(m_hammerAlt ? Audio::SE_ANVIL2 : Audio::SE_ANVIL1, 0.55f + power * 0.45f);
+		// リズムに乗った打撃は、金床が少し高く澄んで鳴る(口笛の代わりのリズムの手応え。口笛は区域完成の合図専用)
+		Audio::Play(m_hammerAlt ? Audio::SE_ANVIL2 : Audio::SE_ANVIL1, 0.55f + power * 0.45f,
+		            inGroove ? GROOVE_RING_PITCH : 1.0f);
 		m_hammerAlt = !m_hammerAlt;
 	}
 	// 冷打は「ガツン」と大きく揺れる(手応えが悪い=衝撃だけ大きい)
@@ -946,7 +1050,9 @@ void SceneForge::DoStrike()
 		if      (power > POWER_PERFECT) { label = "PERFECT!"; col = IM_COL32(255, 220, 120, 255); quality = QUALITY_PERFECT; }
 		else if (power > POWER_GOOD)    { label = "GOOD";     col = IM_COL32(180, 255, 150, 255); quality = QUALITY_GOOD; }
 		else                            { label = "WEAK";     col = IM_COL32(200, 200, 200, 255); quality = QUALITY_WEAK; }
-		if (inGroove) { quality += GROOVE_QUALITY_BONUS; Audio::Play(Audio::SE_WHISTLE, 0.5f); }	// テンポで口笛
+		if (inGroove) quality += GROOVE_QUALITY_BONUS;
+		// 口笛 = 面が仕上がった瞬間の合図だけ(リズムの手応えは上の金床音の音程で返す)。
+		if (faceJustDone) Audio::Play(Audio::SE_WHISTLE, FACE_DONE_WHISTLE_VOLUME);
 		m_qualitySum += quality;
 		m_score += (int)(quality * SCORE_PER_QUALITY);
 		break;
@@ -984,7 +1090,7 @@ XMFLOAT3 SceneForge::RandomBladePoint() const
 void SceneForge::UpdateBurnFx(float tick)
 {
 	// 運んでいる間も燃えていれば火花を噴く(鉄は手の前に描かれ、RandomBladePoint もその位置を返す)。
-	const bool show = (m_state == GAME_PLAY) && m_forging.IsBurning() && m_plunge <= 0.0f;
+	const bool show = (m_state == GAME_PLAY) && m_forging.IsBurning() && !m_quenchContact;
 	if (show)
 	{
 		m_burnSparkAcc += BURN_SPARK_RATE * tick;
@@ -1010,7 +1116,8 @@ void SceneForge::UpdateGrind(float tick, bool inputOn)
 	{
 		float dx, dy; ReadMouseDelta(dx, dy);	// 砥石の工位ではマウスを視角でなく刃の滑りに使う
 		// 刃が右へ動く=砥石に当たる位置は刃の左側へ移る(刃の長軸は StationRight に揃えてある)
-		m_grindU -= dx * m_grindSens;
+		// 左右反転して置いた(m_restFlip)時は長手の向きが逆 → 画面上の手応え(マウス右=刃が右)を保つ為に符号も逆
+		m_grindU -= dx * m_grindSens * (m_restFlip ? -1.0f : 1.0f);
 		if (m_grindU < 0.0f) m_grindU = 0.0f;
 		if (m_grindU > 1.0f) m_grindU = 1.0f;
 		if (IsKeyTrigger(VK_RBUTTON) || IsKeyTrigger(VK_SPACE)) m_wheel.Pedal();	// 点按=足で一回踏む(右クリック/Space。速すぎる連打は GrindWheel が無視)
@@ -1074,15 +1181,201 @@ bool SceneForge::TryQuench()
 		Say((const char*)u8"熱すぎる…このまま水に入れたら割れる。少し冷ましてから", IM_COL32(255, 120, 120, 255));
 		return false;
 	}
-	Audio::Play(Audio::SE_QUENCH, 0.9f);	// 水に入った瞬間の「ジュワッ」
-	Audio::Play(Audio::SE_STEAM,  0.9f);	// 続く大量の蒸気「シュワーーッ」
-	m_steamTimer = STEAM_DURATION;			// 蒸気の発生を開始(Update で弱まりながら続く)
+	// 音と蒸気はクリックの瞬間でなく、刃が水面に触れた瞬間に出す(SetPlunge)
+	m_quenchContact = false;
 	return true;
 }
 
+//--- ① 刃を立てる(刃を下へ)。出だしと止まりがゆっくり(smoothstep)。
+void SceneForge::SetQuenchTurn(float t01)
+{
+	m_quenchTurn = Lerp::SmoothStep(t01 < 0.0f ? 0.0f : (t01 > 1.0f ? 1.0f : t01));
+}
+
+//--- ② 沈める。smoothstep = ゆっくり構えから動き出し、水の抵抗で止まる。
+//    刃の一番低い点が水面を越えた瞬間 = 水に触れた瞬間に「ジュワッ」と蒸気(以後、水中の急冷も始まる)。
 void SceneForge::SetPlunge(float t01)
 {
 	m_plunge = Lerp::SmoothStep(t01 < 0.0f ? 0.0f : (t01 > 1.0f ? 1.0f : t01));
+	if (!m_quenchContact && m_plunge > 0.0f && IronLowestY() <= m_waterPos[1]) OnQuenchContact();
+}
+
+//--- 刃が水面に触れた瞬間。千度近い鋼が水を一気に気化させる「爆発」= 音・噴き出す蒸気・水しぶき・揺れを同時に。
+//    以後は蒸気膜段階から沸騰の段階が始まる(UpdateBoil)。
+void SceneForge::OnQuenchContact()
+{
+	m_quenchContact = true;
+	m_boilStage     = BoilStage::Film;
+	m_quenchStartHeat = m_forging.Heat();	// 淬火の完成度 % の起点
+	UpdateBladeWaterline();
+	Audio::Play(Audio::SE_QUENCH, 0.9f);	// 水に入った瞬間の「ジュワッ」
+	Audio::Play(Audio::SE_STEAM,  0.9f);	// 続く大量の蒸気「シュワーーッ」
+	const float ONE_FRAME = 1.0f;			// rate × dt = 個数。dt=1 として一度に STEAM_BURST 個を出す
+	m_particles.EmitSteamLine(m_bladeLineA, m_bladeLineB, STEAM_SPREAD, (float)STEAM_BURST, ONE_FRAME, STEAM_BURST_SPEED);
+	m_particles.SpawnSplash(m_bladeLineA, m_bladeLineB, SPLASH_COUNT, SPLASH_SPEED, m_waterPos[1]);
+	m_shake = QUENCH_SHAKE;
+	// 刃の線で水面を押し下げる → 波動方程式がそれを大きな波にして槽中へ広げ、壁で跳ね返す
+	float u0, v0, u1, v1;
+	WorldToWaterLocal(m_bladeLineA, u0, v0); WorldToWaterLocal(m_bladeLineB, u1, v1);
+	m_waterSim.PushLine(u0, v0, u1, v1, WATER_PUSH_RADIUS, WATER_ENTRY_PUSH);
+}
+
+//--- ワールドの点 → 水面の板のローカル(-1..1)。DrawWater の world = 拡縮(大きさ) × Y回転(yaw) × 平行移動 の逆。
+//    Y回転でローカル X はワールドの (cos, -sin)、ローカル Z は (sin, cos) を向く → 内積で戻して大きさで割る。
+void SceneForge::WorldToWaterLocal(const XMFLOAT3& p, float& u, float& v) const
+{
+	const float dx = p.x - m_waterPos[0], dz = p.z - m_waterPos[2];
+	const float c = cosf(m_waterYaw), s = sinf(m_waterYaw);
+	const float MIN_SIZE = 1e-4f;
+	u = (dx * c - dz * s) / fmaxf(m_waterSize[0], MIN_SIZE);
+	v = (dx * s + dz * c) / fmaxf(m_waterSize[1], MIN_SIZE);
+}
+
+//--- 水面を押して波を進める(どの状態でも=結果画面へ移っても波は自然に収まっていく)。
+//    押す物: ①揺すり = 刃が上下に動いた分だけ周りの水を押し上げる/引き込む
+//            ②沸騰の泡 = 沸き立ち(m_boil)に比例した数の泡が、刃の線の周りで水面を小さく持ち上げる
+void SceneForge::UpdateWaterSim(float tick)
+{
+	if (m_quenchContact)
+	{
+		float u0, v0, u1, v1;
+		WorldToWaterLocal(m_bladeLineA, u0, v0); WorldToWaterLocal(m_bladeLineB, u1, v1);
+
+		const float moved = m_agitate - m_prevAgitate;	// 刃が上下に動いた量(下がると負)
+		const float STILL_EPS = 1e-5f;
+		if (fabsf(moved) > STILL_EPS) m_waterSim.PushLine(u0, v0, u1, v1, WATER_PUSH_RADIUS, -moved * WATER_STROKE_PUSH);
+
+		m_bubbleAcc += WATER_BUBBLE_RATE * m_boil * tick;
+		for (; m_bubbleAcc >= 1.0f; m_bubbleAcc -= 1.0f)
+		{
+			const float t = frand();							// 刃の線上のどこか
+			XMFLOAT3 p(m_bladeLineA.x + (m_bladeLineB.x - m_bladeLineA.x) * t + frand(-WATER_BUBBLE_SPREAD, WATER_BUBBLE_SPREAD), 0.0f,
+			           m_bladeLineA.z + (m_bladeLineB.z - m_bladeLineA.z) * t + frand(-WATER_BUBBLE_SPREAD, WATER_BUBBLE_SPREAD));
+			float u, v; WorldToWaterLocal(p, u, v);
+			const float BUBBLE_MIN_SCALE = 0.5f;				// 泡の大きさのばらつき(0.5..1 倍)
+			m_waterSim.Push(u, v, WATER_BUBBLE_RADIUS, WATER_BUBBLE_PUSH * frand(BUBBLE_MIN_SCALE, 1.0f));
+		}
+	}
+	m_prevAgitate = m_agitate;
+	m_waterSim.Step(tick);
+}
+
+//--- ③ 水中で刃の向きに上下に揺する(刃の向きに上げ下げ。左右に振ると刃が曲がる)。
+//    揺すると蒸気の膜が破れる → 核沸騰へ(実際の焼入れで刃を動かす理由そのもの)。
+//    玩家がマウスの上下で揺する: マウスの移動量で目標の高さを動かし(手を止めると中央へ戻る)、
+//    刃は水の抵抗で少し遅れてそれを追う。膜沸騰の間に刃が動いた道のりが FILM_BREAK_WORK に達すると膜が破れる。
+void SceneForge::StirQuench(float dt)
+{
+	float dx, dy; ReadMouseDelta(dx, dy);
+	m_stirTarget -= dy * QUENCH_STIR_SENS;								// マウスを上へ = 刃が上へ(画面の y は下向き)
+	m_stirTarget  = Lerp::Damp(m_stirTarget, 0.0f, QUENCH_STIR_RETURN, dt);
+	m_stirTarget  = fminf(fmaxf(m_stirTarget, -QUENCH_STIR_RANGE), QUENCH_STIR_RANGE);
+
+	const float before = m_agitate;
+	m_agitate = Lerp::Damp(m_agitate, m_stirTarget, QUENCH_STIR_FOLLOW, dt);
+	const float moved = fabsf(m_agitate - before);
+
+	const float MIN_DT = 1e-4f;
+	const float speed01 = fminf(moved / fmaxf(dt, MIN_DT) / STIR_FULL_SPEED, 1.0f);
+	m_stir01 = Lerp::Damp(m_stir01, speed01, STIR_SPEED_LAMBDA, dt);
+
+	if (m_boilStage == BoilStage::Film)
+	{
+		m_filmBreak += moved;
+		if (m_filmBreak >= FILM_BREAK_WORK) m_boilStage = BoilStage::Nucleate;	// 揺すって膜を破った
+	}
+}
+
+//--- 淬火の完成度 = 入水時の温度から、沸騰が止む温度(BOIL_END_TEMP)までにどれだけ冷えたか。
+//    冷える速さは沸騰の段階で決まる(膜沸騰は遅く、核沸騰は速い。揺するほど速い)=揺すれば早く 100% になる。
+float SceneForge::QuenchProgress() const
+{
+	if (!m_quenchContact) return 0.0f;
+	const float MIN_RANGE = 1e-4f;
+	const float p = (m_quenchStartHeat - m_forging.Heat()) / fmaxf(m_quenchStartHeat - BOIL_END_TEMP, MIN_RANGE);
+	return fminf(fmaxf(p, 0.0f), 1.0f);
+}
+
+bool SceneForge::QuenchStirring() const
+{
+	return m_quenchContact && QuenchProgress() < 1.0f;	// 入水してから、冷え切る(100%)まで
+}
+
+//--- 淬火の出来: 膜沸騰が短いほど良い(早く揺すって膜を破った=均一に冷えた)。BEST 以下で 1、WORST 以上で 0。
+float SceneForge::QuenchScore() const
+{
+	const float t = (m_filmTime - QUENCH_FILM_TIME_BEST) / (QUENCH_FILM_TIME_WORST - QUENCH_FILM_TIME_BEST);
+	return 1.0f - fminf(fmaxf(t, 0.0f), 1.0f);
+}
+
+//--- 刃の長軸の両端(火钳で掴んだ端/反対の端)を水面の高さへ下ろした線。蒸気・水しぶき・水面の泡立ちはこの線から。
+void SceneForge::UpdateBladeWaterline()
+{
+	XMVECTOR a, b; IronEnds(WeaponWorld(), a, b);
+	XMStoreFloat3(&m_bladeLineA, a); XMStoreFloat3(&m_bladeLineB, b);
+	m_bladeLineA.y = m_bladeLineB.y = m_waterPos[1];
+}
+
+//--- 沸騰の段階を進め、その段階の速さで冷やし、沸き立ち(蒸気の量・水面)を追従させる。
+//    段階の目標の沸き立ち: 膜沸騰 = 静か(FILM_BOIL) / 核沸騰 = 熱いほど激しい / 対流・水の外 = 0。
+void SceneForge::UpdateBoil(float tick)
+{
+	const float heat = m_forging.Heat();
+	float coolRate = 0.0f, target = 0.0f;
+	switch (m_boilStage)
+	{
+	case BoilStage::Film:
+		if (heat < LEIDENFROST_TEMP) { m_boilStage = BoilStage::Nucleate; break; }	// 温度が下がって膜が保てない
+		coolRate = FILM_COOL_RATE; target = FILM_BOIL;
+		m_filmTime += tick;
+		break;
+	case BoilStage::Nucleate:
+	{
+		if (heat < BOIL_END_TEMP) { m_boilStage = BoilStage::Convection; break; }
+		// 揺するほど新しい冷水が刃に当たる → 速く冷え、激しく沸く
+		coolRate = NUCLEATE_COOL_RATE * (1.0f + NUCLEATE_STIR_BONUS * m_stir01);
+		const float hot01 = fminf(fmaxf((heat - BOIL_END_TEMP) / (LEIDENFROST_TEMP - BOIL_END_TEMP), 0.0f), 1.0f);
+		target = hot01 * (NUCLEATE_CALM_BOIL + (1.0f - NUCLEATE_CALM_BOIL) * m_stir01);
+		break;
+	}
+	case BoilStage::Convection:
+		coolRate = CONVECTION_COOL_RATE;
+		break;
+	default: break;
+	}
+	m_forging.AddHeat(-coolRate * tick);
+	m_boil = Lerp::Damp(m_boil, target, BOIL_FOLLOW_LAMBDA, tick);
+	if (m_quenchContact) UpdateBladeWaterline();
+}
+
+//--- 終幕へ入る。HUD を消してよいのは「ゲームが必ず終わる」と確定した時だけ
+//    (確定前に消すと、まだ続くのに UI が無くなる)。淬火が配方の最後の工程である事をデータで確かめる
+//    =別の配方で淬火の後に工程がある武器でも誤って消さない。
+void SceneForge::BeginFinale()
+{
+	m_clearDecided = m_recipe && m_stepIdx == (int)m_recipe->steps.size() - 1;
+}
+
+//--- 今の鉄の一番低い点(モデル箱の8隅をワールドへ運んだ最小の y)。どの軸が刃の幅でも正しい。
+float SceneForge::IronLowestY()
+{
+	const XMMATRIX w = WeaponWorld();
+	float lowest = FLT_MAX;
+	for (int i = 0; i < 8; ++i)
+	{
+		XMFLOAT3 c((i & 1) ? m_wpMax.x : m_wpMin.x, (i & 2) ? m_wpMax.y : m_wpMin.y, (i & 4) ? m_wpMax.z : m_wpMin.z);
+		XMFLOAT3 p; XMStoreFloat3(&p, XMVector3TransformCoord(XMLoadFloat3(&c), w));
+		lowest = fminf(lowest, p.y);
+	}
+	return lowest;
+}
+
+//--- 水槽では鉄を置かず、火钳で挟んだまま構える(淬火は手で持ったまま行う)。
+//    水槽の工位にいる間と、そこへ入る過渡の間。歩いて離れたら火钳は腰へ戻る。
+bool SceneForge::HoldingAtTrough() const
+{
+	if (m_state != GAME_PLAY || m_carrying || m_workAt != Station::Trough || m_station != Station::Trough) return false;
+	return !m_walkMode || m_modeTrans == ModeTrans::Enter;
 }
 
 void SceneForge::SetLetterbox(float t01)
@@ -1120,6 +1413,8 @@ void SceneForge::Update(float tick)
 		// 互動の注視判定(①範囲 ②視線)。走動中以外(工位/移動アニメ中)は対象なし=提示がフェードアウト。
 		UpdateInteract(tick);
 		UpdateGuide();		// 指引 UI: 今の状況から案内文と行き先を決める(HUD.cpp)
+		UpdateSeqBreath(tick);	// 拍子表の再生中だけカメラに呼吸を乗せる重み(Sequence.cpp)
+		UpdateCarryAvoid(tick);	// 手の鉄が道具/壁に入らない様に起こす(Carry.cpp)。運んでいない時は 0 へ戻る
 
 		if (Transitioning())
 		{
@@ -1165,7 +1460,8 @@ void SceneForge::Update(float tick)
 		{
 			// 金床以外の工位は固定カメラ。砥石だけはマウス左右を刃の滑りに使う(UpdatePlay→UpdateGrind が読む)。
 			// それ以外(炉/水槽)は読んで捨てる=光標を中心へ戻し、戻った時に視点が跳ばない。
-			if (m_station != Station::Grindstone) { float dx, dy; ReadMouseDelta(dx, dy); }
+			// 水槽で揺すっている間はマウスの上下を刃に使う(QuenchStep→StirQuench が読む)。
+			if (m_station != Station::Grindstone && !QuenchStirring()) { float dx, dy; ReadMouseDelta(dx, dy); }
 		}
 		else
 		{
@@ -1208,14 +1504,17 @@ void SceneForge::Update(float tick)
 	if (m_coalOn)
 		m_particles.EmitEmbers(XMFLOAT3(m_emberPos[0], m_emberPos[1], m_emberPos[2]),
 			m_emberArea[0], m_emberArea[1], m_emberRate, m_emberRise, tick);
-	// 淬火の蒸気: 刃を入れた瞬間が最も多く、STEAM_DURATION かけて弱まる(結果画面に移っても消えゆく)。
-	if (m_steamTimer > 0.0f)
+	// 淬火の蒸気: 沸き立ち(m_boil = 沸騰の段階と鉄の温度から UpdateBoil が決める)に比例して、刃の水面の線から湧く。
+	// 結果画面へ移った後(UpdatePlay が止まる)は沸き立ちを 0 へ追従させ、消えゆく様にする。
+	if (m_state != GAME_PLAY) m_boil = Lerp::Damp(m_boil, 0.0f, BOIL_FOLLOW_LAMBDA, tick);
+	const float BOIL_VISIBLE_EPS = 0.001f;
+	if (m_boil > BOIL_VISIBLE_EPS)
 	{
-		m_steamTimer -= tick;
-		const float rate = STEAM_RATE * (m_steamTimer > 0.0f ? m_steamTimer / STEAM_DURATION : 0.0f);
-		m_particles.EmitSteam(XMFLOAT3(m_waterPos[0], m_waterPos[1], m_waterPos[2]), STEAM_RADIUS, rate, tick);
+		const float NORMAL_SPEED = 1.0f;
+		m_particles.EmitSteamLine(m_bladeLineA, m_bladeLineB, STEAM_SPREAD, STEAM_RATE * m_boil, tick, NORMAL_SPEED);
 	}
 	m_particles.Update(tick, m_time);
+	UpdateWaterSim(tick);	// 水槽の水面の波(刃・泡で押し、波動方程式で広げる)
 }
 
 
@@ -1226,11 +1525,12 @@ void SceneForge::Draw()
 	ApplyViewCamera();	// Update と同じ規約でDrawでも適用(GetViewの前に)
 	DrawModelsTest();	// 先に不透明な3Dモデル(金床)を描く
 	// 鉄は置かれた工位に描く。運んでいる間は手のビューモデルとして最後に描く(DrawViewmodel。めり込み防止)。
-	if (!m_carrying)
+	// 拍子表の再生中は普通に描く(置く時、炉の中などへ入って行く鉄が道具に正しく隠れる様に)。
+	if (!m_carrying || SequencePlaying())
 	{
 		if (m_wpOk) DrawWeapon();	// Blender武器モデルを進捗でモーフ(あれば優先)
 		else        Draw3DBillet();	// 無ければ従来の高さ場メッシュ
-		if (m_wpOk) DrawGhostTarget();	// 実体の後に完成形の半透明ゴーストを重ねる
+		if (m_wpOk && !m_carrying) DrawGhostTarget();	// 実体の後に完成形の半透明ゴーストを重ねる
 	}
 	DrawWater();		// 水槽の水面(屈折。背後のシーンを撮ってから描く=不透明の後)
 	if (DebugUI::IsVisible()) { DrawDebugBoxes(); DrawInteractBoxes(); }	// F1中はAABB/箱・互動範囲を線で表示

@@ -261,6 +261,17 @@ void SceneForge::DrawCollision()
 		Geometory::AddLine(XMFLOAT3(foot.x + cosf(a0) * r, y0, foot.z + sinf(a0) * r),
 		                   XMFLOAT3(foot.x + cosf(a1) * r, y0, foot.z + sinf(a1) * r));
 	}
+	// 手の鉄のめり込み回避のレイ(Carry.cpp UpdateCarryAvoid)。紫=当たるまでの距離、先端に縦線。運んでいる時だけ。
+	if (m_carrying)
+	{
+		const XMFLOAT4 PURPLE(0.85f, 0.3f, 1.0f, 1.0f);
+		const XMFLOAT2 o = m_carryAvoidOrigin, d = m_carryAvoidDir;
+		const XMFLOAT2 hit(o.x + d.x * m_carryAvoidFree, o.y + d.y * m_carryAvoidFree);
+		Geometory::SetColor(PURPLE);
+		Geometory::AddLine(XMFLOAT3(o.x, ys, o.y), XMFLOAT3(hit.x, ys, hit.y));
+		Geometory::AddLine(XMFLOAT3(hit.x, y0, hit.y), XMFLOAT3(hit.x, y1, hit.y));
+	}
+
 	// 深度テストを切って描く(=透視。デバッグ表示の定石)。壁線は壁の表面を切った線なので
 	// 表面と同じ深さにあり、深度テスト有りだと凸凹の石に隠れて見えない。道具の中の凸包も同じ。
 	SetDepthTest(DEPTH_DISABLE);

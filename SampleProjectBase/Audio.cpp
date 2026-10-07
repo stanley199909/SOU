@@ -445,7 +445,7 @@ namespace Audio
 		if (g_xa)     { g_xa->Release(); g_xa = nullptr; }
 	}
 
-	void Play(SoundId id, float volume)
+	void Play(SoundId id, float volume, float pitch)
 	{
 		if (!g_xa || id < 0 || id >= SE_MAX) return;
 		Sound& s = g_sound[id];
@@ -463,6 +463,7 @@ namespace Audio
 		b.Flags      = XAUDIO2_END_OF_STREAM;
 		v->SubmitSourceBuffer(&b);
 		v->SetVolume(volume);
+		v->SetFrequencyRatio(pitch);	// 毎回設定する(ボイスは使い回し=前回の音程が残らない様に)
 		v->Start(0);
 	}
 

@@ -183,6 +183,7 @@
     <ClCompile Include="GameData\WeaponRecipe.cpp" />
     <ClCompile Include="Physics\HammerPhysics.cpp" />
     <ClCompile Include="Physics\ForgingSim.cpp" />
+    <ClCompile Include="Physics\WaterSim.cpp" />
     <ClCompile Include="Physics\Particles.cpp" />
     <ClCompile Include="Physics\GrindWheel.cpp" />
     <ClCompile Include="Physics\Collision2D.cpp" />
@@ -245,6 +246,7 @@
     <ClInclude Include="GameData\WeaponRecipe.h" />
     <ClInclude Include="Physics\HammerPhysics.h" />
     <ClInclude Include="Physics\ForgingSim.h" />
+    <ClInclude Include="Physics\WaterSim.h" />
     <ClInclude Include="Physics\Particles.h" />
     <ClInclude Include="Physics\GrindWheel.h" />
     <ClInclude Include="Physics\Collision2D.h" />
@@ -328,6 +330,10 @@
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Vertex</ShaderType>
     </FxCompile>
     <FxCompile Include="VS_Grass.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Vertex</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Vertex</ShaderType>
+    </FxCompile>
+    <FxCompile Include="VS_Water.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Vertex</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Vertex</ShaderType>
     </FxCompile>

@@ -196,4 +196,38 @@ namespace Collision2D
         // A segment has no inside, so only the "outside" case exists.
         return PushAwayFrom(c, r, ClosestOnSegment(c, s.a, s.b));
     }
+
+    namespace
+    {
+        // Ray (o + t*d) vs segment (a..b). Solve o + t*d = a + u*(b-a) with 2D cross products:
+        //   t = cross(a-o, e) / cross(d, e),  u = cross(a-o, d) / cross(d, e),  e = b-a.
+        // Hit if t >= 0 and 0 <= u <= 1. Parallel (cross(d,e) ~ 0) -> no hit.
+        bool RaySegment(const XMFLOAT2& o, const XMFLOAT2& d, const XMFLOAT2& a, const XMFLOAT2& b, float& t)
+        {
+            const float ex = b.x - a.x, ey = b.y - a.y;
+            const float den = d.x * ey - d.y * ex;
+            const float PARALLEL_EPS = 1e-8f;
+            if (fabsf(den) < PARALLEL_EPS) return false;
+            const float ax = a.x - o.x, ay = a.y - o.y;
+            t = (ax * ey - ay * ex) / den;
+            const float u = (ax * d.y - ay * d.x) / den;
+            return t >= 0.0f && u >= 0.0f && u <= 1.0f;
+        }
+    }
+
+    float RayCast(const World& world, XMFLOAT2 origin, XMFLOAT2 dir, float maxDist)
+    {
+        float best = maxDist, t;
+        // A convex hull is entered through one of its edges, so testing every edge as a
+        // segment finds the entry point (the nearest crossing).
+        for (const Hull& h : world.hulls)
+        {
+            const size_t n = h.size();
+            for (size_t i = 0; i < n; ++i)
+                if (RaySegment(origin, dir, h[i], h[(i + 1) % n], t) && t < best) best = t;
+        }
+        for (const Segment& s : world.segments)
+            if (RaySegment(origin, dir, s.a, s.b, t) && t < best) best = t;
+        return best;
+    }
 }

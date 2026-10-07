@@ -286,13 +286,21 @@ XMMATRIX SceneForge::WeaponRot() const
 		const float HORIZONTAL_EPS = 1e-6f;	// 真上/真下を向いていたら水平成分が無い=傾けようがない
 		if (XMVectorGetX(XMVector3LengthSq(dh)) > HORIZONTAL_EPS) r = r * RotationFromTo(dh, d);
 	}
+	// 淬火で刃を立てる: 今の長軸(ワールド)まわりに回す=平らに寝ていた刃が、刃を下にして縦に立つ
+	// (幅の向きが上下になる。どの軸が長軸かはモデルの箱から決まる=ベタ書き無し)。
+	else if (m_workAt == Station::Trough && m_quenchTurn > 0.0f)
+	{
+		const int la = AimSystem::LongAxis(m_wpMin, m_wpMax);
+		const XMVECTOR local = XMVectorSet(la == 0 ? 1.0f : 0.0f, la == 1 ? 1.0f : 0.0f, la == 2 ? 1.0f : 0.0f, 0.0f);
+		r = r * XMMatrixRotationAxis(XMVector3TransformNormal(local, r), m_quenchTurn * QUENCH_TURN_ANGLE);
+	}
 	return r;
 }
 
 //--- 刃を置く点。工位の作業点に、その工位の「動き」を足す:
 //    金床  : F1 の微調整 m_wpOff
 //    砥石  : 刃を長軸方向に滑らせ、今研いでいる位置(m_grindU)を砥石の接点に持って来る + 押し当てで少し沈む
-//    水槽  : 淬火で水の中へ沈む(m_plunge)
+//    水槽  : 淬火で刃を立てて(少し持ち上げ)水の中へ沈め、上下に揺する(m_quenchTurn / m_plunge / m_agitate)
 XMFLOAT3 SceneForge::WorkAnchor()
 {
 	if (m_carrying) return HeldPoint();	// 火钳で掴んで運んでいる=手の前(Carry.cpp)
@@ -302,19 +310,36 @@ XMFLOAT3 SceneForge::WorkAnchor()
 	case Station::Anvil:
 		a.x += m_wpOff[0]; a.y += m_wpOff[1]; a.z += m_wpOff[2];
 		break;
+	case Station::Hearth:
+	{
+		// 炭床に平らに、斜めに寝かせた鉄の中心。先端が炭床の中の決まった点
+		// (中心から 長辺方向へ m_hearthTipSide・奥へ m_hearthTipDepth)に来る様に、中心を長軸に沿って半分の長さだけ戻す。
+		// 鉄は炭床より長いので、反対の端(掴んだ端)は炉口から斜め手前へはみ出す=実際の鍛冶の置き方。
+		// 先端の位置で決めるので、鉄の長さが変わっても先端は炭床から出ない。
+		const float half = m_barLen * m_wpScale * 0.5f;
+		const XMFLOAT3 r = StationRight(), into = StationInto(), d = HearthDir();
+		a.x += r.x * m_hearthTipSide + into.x * m_hearthTipDepth - d.x * half;
+		a.z += r.z * m_hearthTipSide + into.z * m_hearthTipDepth - d.z * half;
+		break;
+	}
 	case Station::Grindstone:
 	{
 		// 長軸は StationRight に揃えてある。長さ方向の位置 u の点を接点へ寄せる=刃を -(u-0.5)*全長 だけ動かす。
 		const float len = m_barLen * m_wpScale;	// ワールドでの刃の全長(フィットで最長辺=m_barLen)
 		const XMFLOAT3 r = StationRight();
-		const float s = -(m_grindU - 0.5f) * len;
+		// 左右反転して置いた(m_restFlip)時はローカルの長手の向きが -StationRight なので、滑らせる向きも逆
+		const float s = -(m_grindU - 0.5f) * len * (m_restFlip ? -1.0f : 1.0f);
 		a.x += r.x * s; a.z += r.z * s;
 		a.y -= m_grindPress * GRIND_PRESS_DROP;
 		break;
 	}
 	case Station::Trough:
-		a.y -= m_plunge * PLUNGE_DEPTH;
+	{
+		// 立てる時に少し持ち上げ(予備動作)、沈める間にその持ち上げは消える。水中では上下に揺する。
+		a.y += m_quenchTurn * QUENCH_TURN_LIFT * (1.0f - m_plunge) - m_plunge * PLUNGE_DEPTH;
+		a.y += m_agitate;	// 揺する=刃の向きに上下(長手に振ると槽の両端に当たる)
 		break;
+	}
 	default: break;
 	}
 	return a;
@@ -391,6 +416,7 @@ void SceneForge::BuildWeaponMorph()
 		const XMFLOAT3& a0 = m_wpStage[0].pos[i];
 		int   thisSeg;
 		float pFront, pBack;	// この頂点位置での表(面0)/裏(面1)それぞれの進捗
+		float vFront, vBack;	// 同じく、氧化皮の剥がれ具合(未完成の区域は厚い皮が残る=どこが未完成か鉄を見て分かる)
 		float sharp = 0.0f;		// この頂点位置での刃の鋭さ(区域の鋭さを隣とブレンド)
 		if (playing)
 		{
@@ -406,15 +432,23 @@ void SceneForge::BuildWeaponMorph()
 			};
 			pFront = segBlend(0);
 			pBack  = segBlend(1);
+			// 氧化皮用の進捗: 未完成の区域では m_scaleHoldMax で頭打ち(=一番厚い皮が残る)、完成した瞬間に 1(=全部剥がれる)。
+			//   形の進捗(pFront/pBack)をそのまま使うと、完成の手前で皮が無くなり、残りの区域が見分けられなかった。
+			auto scaleVis = [&](int side, int s) {
+				return m_forging.SegDoneOf(side, s) ? 1.0f : m_forging.SegProgOf(side, s) * m_scaleHoldMax;
+			};
+			vFront = scaleVis(0, sa) + (scaleVis(0, sb) - scaleVis(0, sa)) * ft;
+			vBack  = scaleVis(1, sa) + (scaleVis(1, sb) - scaleVis(1, sa)) * ft;
 			sharp  = m_forging.Sharpness(sa) + (m_forging.Sharpness(sb) - m_forging.Sharpness(sa)) * ft;
 			thisSeg = (int)sc; if (thisSeg >= NSEG) thisSeg = NSEG - 1;
 		}
-		else { pFront = pBack = m_forgeProg; thisSeg = -1; }
+		else { pFront = pBack = m_forgeProg; vFront = vBack = m_forgeProg; thisSeg = -1; }
 
 		// ★軸分解モーフ: 輪郭(長さ/幅)は両面で共有 → 両面の平均進捗で動かす(翻しても輪郭が残る)。
 		//   厚み方向は「この頂点が属する面」の進捗で動かす(叩いた面だけ斜面が付き、裏はまだ平ら)。
 		const float pOutline = (pFront + pBack) * 0.5f;
 		float pFace = pOutline;
+		float vFace = (vFront + vBack) * 0.5f;	// 氧化皮用(面の重みは下で pFace と同じ物を使う)
 		if (ta >= 0)
 		{
 			// 頂点の厚み座標を stage0 の中心面基準で -1..+1 に正規化 → +側の面に属する重み。
@@ -425,6 +459,9 @@ void SceneForge::BuildWeaponMorph()
 			const float pPlus  = plusIsFront ? pFront : pBack;
 			const float pMinus = plusIsFront ? pBack  : pFront;
 			pFace = pMinus + (pPlus - pMinus) * wPlus;
+			const float vPlus  = plusIsFront ? vFront : vBack;
+			const float vMinus = plusIsFront ? vBack  : vFront;
+			vFace = vMinus + (vPlus - vMinus) * wPlus;
 		}
 
 		XMVECTOR posO, nrmO, posF, nrmF;
@@ -448,6 +485,7 @@ void SceneForge::BuildWeaponMorph()
 			(&lp.x)[ta] = tc + ((&lp.x)[ta] - tc) * (1.0f - EDGE_THIN * edge);
 		}
 		m_wpVtx[i].sharp = edge;	// PS へ: 研ぎ面の見た目(磨いた明るい鋼)に使う
+		m_wpVtx[i].work  = vFace;	// PS へ: この頂点の面の氧化皮の剥がれ具合(刃先/側面は両面を混ぜた値。完成まで厚い皮が残る)
 
 		XMVECTOR pp = XMVector3TransformCoord(XMLoadFloat3(&lp), world);
 		// 法線は面側を使う: 陰影に効くのは表面の傾き(斜面の有無)で、それは厚み方向の変形が決める。
@@ -492,7 +530,9 @@ void SceneForge::DrawWeapon()
 		XMFLOAT3 lightDir;float metal;
 		XMFLOAT3 skyCol;  float specK;
 		XMFLOAT3 grdCol;  float envK;
-		float    fresK;   XMFLOAT3 pad;
+		float    fresK;   float hotShade; float rimK; float rimPow;
+		float    scaleTiling; float scaleSoft; float scaleOpacity; float scaleGlow;
+		float    hotGain; float scaleStart; XMFLOAT2 pad2;
 	} mtl;
 	mtl.camPos   = cam->GetPos();
 	mtl.rough    = m_wpRough;
@@ -503,7 +543,17 @@ void SceneForge::DrawWeapon()
 	mtl.grdCol   = { m_wpGround[0], m_wpGround[1], m_wpGround[2] };
 	mtl.envK     = m_wpEnv;
 	mtl.fresK    = m_wpFresnel;
-	mtl.pad      = { 0,0,0 };
+	mtl.hotShade = m_wpHotShade;
+	mtl.rimK     = m_wpRimK;
+	mtl.rimPow   = m_wpRimPow;
+	mtl.scaleTiling  = m_scaleTiling;
+	mtl.scaleSoft    = m_scaleSoft;
+	// マスクが読めない時は黒皮を出さない(灰色の既定テクスチャで全面が皮に覆われない様に)
+	mtl.scaleOpacity = (m_wpScaleMask && m_wpScaleMask->GetResource()) ? m_scaleOpacity : 0.0f;
+	mtl.scaleGlow    = m_scaleGlow;
+	mtl.hotGain      = m_wpHotGain;
+	mtl.scaleStart   = m_scaleStart;
+	mtl.pad2         = { 0, 0 };
 
 	SetBlendMode(BLEND_NONE);
 	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
@@ -511,6 +561,8 @@ void SceneForge::DrawWeapon()
 	ps->Bind();
 	ps->WriteBuffer(0, &mtl);						// b0 = 金属質感パラメータ
 	if (m_wpTex) ps->SetTexture(0, m_wpTex.get());	// t0 = 鋼テクスチャ(BaseColor)
+	if (m_wpScaleMask && m_wpScaleMask->GetResource())
+		ps->SetTexture(1, m_wpScaleMask.get());		// t1 = 氧化皮の厚みマスク
 	m_wpMesh->Draw();
 }
 

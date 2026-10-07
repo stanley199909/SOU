@@ -92,7 +92,7 @@ CoalBedMesh::Vertex a{{-1,0,-1},{0,0},{1,1,1,1}},b{{1,0,-1},{1,0},{1,1,1,1}},c{{
 CoalBedMesh::Vertex vertices[]={a,c,b,b,c,e};
 MeshBuffer::Description md{};md.pVtx=vertices;md.vtxSize=sizeof(a);md.vtxCount=6;md.topology=D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;MeshBuffer plane(md);
 setWorld(water);auto eye=cam.GetPos();auto projection=cam.GetProj(false);auto lighting=CottageRender::Data();
-XMFLOAT4 constants[4]={{1,W,H,1},{projection._33,projection._43,.06f,.35f},{eye.x,eye.y,eye.z,water[4]/water[5]},{lighting.ambient.x,lighting.ambient.y,lighting.ambient.z,lighting.windowExtra.w}};
+XMFLOAT4 constants[6]={{1,W,H,1},{projection._33,projection._43,.06f,.35f},{eye.x,eye.y,eye.z,water[4]/water[5]},{lighting.ambient.x,lighting.ambient.y,lighting.ambient.z,lighting.windowExtra.w},{0,0,0,0},{0,0,0,0}}; // [4..5] wave simulation: none (flat)
 waterPS.WriteBuffer(0,constants);waterPS.Bind();ctx->OMSetRenderTargets(1,&raw,nullptr);
 ID3D11ShaderResourceView* resources[]={colorSRV.Get(),depthSRV.Get()};ctx->PSSetShaderResources(0,2,resources);SetDepthTest(DEPTH_DISABLE);plane.Draw();
 ID3D11ShaderResourceView* empty[]={nullptr,nullptr};ctx->PSSetShaderResources(0,2,empty);

@@ -80,6 +80,7 @@ void SceneForge::UpdateViewmodelSway(float tick)
 void SceneForge::DrawViewmodel()
 {
 	if (!m_carrying || m_state != GAME_PLAY) return;
+	if (SequencePlaying()) return;	// 置く拍子表の再生中: 鉄は Draw の通常パス、火钳は DrawCarry が描く
 	ID3D11DeviceContext* ctx = GetContext();
 	UINT n = 1; D3D11_VIEWPORT old; ctx->RSGetViewports(&n, &old);
 	D3D11_VIEWPORT vp = old;
@@ -125,7 +126,9 @@ XMFLOAT3 SceneForge::HeldGrip()
 {
 	XMVECTOR eye, fwd, right, up;
 	if (!CameraBasis(eye, fwd, right, up)) return m_barAnchor;
-	XMFLOAT3 g; XMStoreFloat3(&g, eye + right * m_gripOff[0] + up * m_gripOff[1] + fwd * m_gripOff[2] + ViewmodelBob(right, up));
+	// 道具/壁に近い時は鉄の水平方向の逆(手元側)へ引き寄せる(UpdateCarryAvoid)
+	const XMVECTOR pull = XMVectorSet(m_carryAvoidDir.x, 0.0f, m_carryAvoidDir.y, 0.0f) * -m_carryPull;
+	XMFLOAT3 g; XMStoreFloat3(&g, eye + right * m_gripOff[0] + up * m_gripOff[1] + fwd * m_gripOff[2] + ViewmodelBob(right, up) + pull);
 	return g;
 }
 
@@ -136,8 +139,9 @@ XMFLOAT3 SceneForge::HeldPoint()
 {
 	XMVECTOR eye, fwd, right, up;
 	if (!CameraBasis(eye, fwd, right, up)) return m_barAnchor;
-	const float cp = cosf(m_carryPitch);
-	XMVECTOR dir = XMVector3Normalize(fwd * (cosf(m_carryYaw) * cp) + right * (sinf(m_carryYaw) * cp) + up * sinf(m_carryPitch));
+	const float pitch = m_carryPitch + m_carryRaise;	// 道具/壁に近い時は起こす(UpdateCarryAvoid)
+	const float cp = cosf(pitch);
+	XMVECTOR dir = XMVector3Normalize(fwd * (cosf(m_carryYaw) * cp) + right * (sinf(m_carryYaw) * cp) + up * sinf(pitch));
 	XMStoreFloat3(&m_heldDir, dir);
 
 	const XMFLOAT3 g = HeldGrip();
@@ -145,6 +149,72 @@ XMFLOAT3 SceneForge::HeldPoint()
 	XMFLOAT3 out;
 	XMStoreFloat3(&out, XMLoadFloat3(&g) + dir * (len * (0.5f - m_gripAlong)));
 	return out;
+}
+
+//--- 起こし角 raise・引き寄せ 0 の時、鉄の先端(挟む点から遠い方の端)が、目から視線の水平方向 dirH へ何 m 先に届くか。
+//    HeldPoint と同じ式で先端を求め、目からの差を dirH へ射影する。
+//    (引き寄せは挟む点を -dirH へ動かすだけ=届く距離がちょうどその分だけ減る。だから引き寄せ 0 で測れば足りる)
+float SceneForge::HeldReach(float raise, FXMVECTOR eye, const XMFLOAT2& dirH)
+{
+	const float keepRaise = m_carryRaise, keepPull = m_carryPull;
+	m_carryRaise = raise; m_carryPull = 0.0f;
+	const XMFLOAT3 c = HeldPoint();		// 中心(m_heldDir も更新)
+	m_carryRaise = keepRaise; m_carryPull = keepPull;
+	const float half = m_barLen * m_wpScale * 0.5f;
+	XMFLOAT3 tip; XMStoreFloat3(&tip, XMLoadFloat3(&c) + XMLoadFloat3(&m_heldDir) * half);
+	XMFLOAT3 e; XMStoreFloat3(&e, eye);
+	return (tip.x - e.x) * dirH.x + (tip.z - e.z) * dirH.y;
+}
+
+//--- 手の鉄のめり込み回避。先端が「道具/壁までの距離 − 隙間」より先へ出ない様にする。
+//    はみ出す量 excess を ①引き寄せで消す(上限 m_carryAvoidMaxPull。届く距離は引き寄せ量だけ線形に減る=引き算で済む)
+//    ②残りを起こし角で消す(届く距離は起こすほど短くなる=単調なので、二分探索で解ける。
+//      式を解かなくても、カメラの傾きや m_carryYaw があっても正しい)。
+void SceneForge::UpdateCarryAvoid(float tick)
+{
+	float targetPull = 0.0f, targetRaise = 0.0f;
+	XMVECTOR eye, fwd, right, up;
+	if (m_carrying && CameraBasis(eye, fwd, right, up))
+	{
+		// 鉄の水平の向き(起こす前)。起こしても水平の向きはほぼ変わらない=レイはこの向きに1本だけ
+		HeldReach(0.0f, eye, XMFLOAT2(0.0f, 1.0f));
+		XMFLOAT2 dirH(m_heldDir.x, m_heldDir.z);
+		const float lenH = sqrtf(dirH.x * dirH.x + dirH.y * dirH.y);
+		const float HORIZONTAL_EPS = 1e-4f;
+		if (lenH > HORIZONTAL_EPS)
+		{
+			dirH.x /= lenH; dirH.y /= lenH;
+			XMFLOAT3 e; XMStoreFloat3(&e, eye);
+			const float reach0 = HeldReach(0.0f, eye, dirH);
+			const float free = Collision2D::RayCast(m_collision, XMFLOAT2(e.x, e.z), dirH, reach0 + m_carryAvoidMargin);
+			const float limit = free - m_carryAvoidMargin;
+			m_carryAvoidOrigin = XMFLOAT2(e.x, e.z); m_carryAvoidDir = dirH; m_carryAvoidFree = free;
+
+			const float excess = reach0 - limit;				// 先端がはみ出す量(m)
+			if (excess > 0.0f)
+			{
+				// ① 引き寄せ
+				targetPull = fminf(excess, m_carryAvoidMaxPull);
+				// ② 引き寄せで足りない分 → 起こし角。引き寄せた分だけ許される届く距離が延びる
+				if (excess > m_carryAvoidMaxPull)
+				{
+					const float limitAfterPull = limit + m_carryAvoidMaxPull;
+					float lo = 0.0f, hi = m_carryAvoidMaxRaise;
+					if (HeldReach(hi, eye, dirH) > limitAfterPull) lo = hi;	// 上限まで起こしても当たる=上限で諦める
+					else
+						for (int i = 0; i < CARRY_AVOID_ITERATIONS; ++i)
+						{
+							const float mid = 0.5f * (lo + hi);
+							if (HeldReach(mid, eye, dirH) > limitAfterPull) lo = mid; else hi = mid;
+						}
+					targetRaise = (lo == m_carryAvoidMaxRaise) ? lo : hi;
+				}
+			}
+		}
+		HeldPoint();	// m_heldDir を今の起こし角の値へ戻す(上の探索で書き換えた)
+	}
+	m_carryPull  = Lerp::Damp(m_carryPull,  targetPull,  m_carryAvoidLambda, tick);
+	m_carryRaise = Lerp::Damp(m_carryRaise, targetRaise, m_carryAvoidLambda, tick);
 }
 
 //--- 左腰の点。体の位置(走動=玩家の足元 / 工位=カメラの真下)から、左・床からの高さ・前へ m_hipOff。
@@ -278,6 +348,18 @@ void SceneForge::DrawCarry()
 		return;
 	}
 	if (m_carrying) return;	// 手の火钳は DrawViewmodel が最後に描く(めり込み防止)
+	if (HoldingAtTrough())
+	{
+		// 水槽: 火钳で挟んだまま構える/淬火する。鉄の今の姿勢(立てる・沈める・揺する)から挟む姿勢を求める=口が鉄から離れない。
+		// 柄の向きだけは手元(カメラの下)からでなく、「口から上へ・手前へ」立ち上がる向きにする:
+		//   鉄は槽の中にあるので、手元から伸ばすと柄が槽の手前の壁を突き抜ける(2026-10-06 F5)。実際も柄は水から斜め上へ出て縁を越える。
+		TongsPose t = TongsOnIron(WeaponWorld());
+		const XMFLOAT3 handle(t.grip.x + m_stationViewDir.x * TROUGH_TONGS_OUT, t.grip.y + TROUGH_TONGS_RISE,
+		                      t.grip.z + m_stationViewDir.z * TROUGH_TONGS_OUT);
+		XMStoreFloat3(&t.approach, XMVector3Normalize(XMLoadFloat3(&t.grip) - XMLoadFloat3(&handle)));	// 柄 → 口
+		DrawModelWorld(tongs, TongsWorld(t.approach, t.barDir, t.grip));
+		return;
+	}
 	const bool atAnvil = !m_walkMode && !Transitioning() && m_station == Station::Anvil;
 	if ((m_walkMode || atAnvil) && !m_tongsInHand)
 	{
