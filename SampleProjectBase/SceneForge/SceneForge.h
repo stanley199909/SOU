@@ -397,7 +397,7 @@ private:
 	void   UpdateWalkLook();			// 走動時: マウスを玩家yaw(左右)とカメラpitch(上下)へ
 	void   ApplyWalkCamera();			// 走動時: カメラを玩家の目線に置く一人称カメラ
 
-	//--- 走動 ⇔ 工位 の過渡(移動アニメ)。E で入る/E・ESC で出る。取り消し不可(入力は捨てる)。
+	//--- 走動 ⇔ 工位 の過渡(移動アニメ)。E で入る/E で出る。取り消し不可(入力は捨てる)。
 	//    カメラを「開始時に画面に映っていた視点」から「到着先の視点」へ補間する。
 	//    位置は線形補間、向きは yaw/pitch 角で補間(ベクトルの線形補間だと真後ろ向き時に潰れて跳ぶ)。
 	//    到着先は毎フレーム実際のカメラ関数(ApplyCamera/ApplyWalkCamera)から取る=着いた瞬間に画が跳ばない。
@@ -475,12 +475,14 @@ private:
 	void  BuildPropHulls();						// 全プロップの凸包を作る(配置が決まった後=LoadLayout の後に1回)
 	void  BuildCollisionWorld();				// 凸包/壁線/扉を今の配置でワールドへ運ぶ(毎フレーム。点が少ないので軽い)
 	void  DrawCollision();						// 凸包の柱・壁線・玩家の円を線で描く(m_showCollision の時)
-	//--- 建物の壁線: 家の三角形(扉を除く)を「床+m_wallSliceHeight」の高さで切る。
+	//--- 建物の壁線: 家の三角形(扉を除く)を、体の高さ(床+m_wallSliceLowHeight〜背丈)の間で m_wallSliceStep ごとに切って合わせた線。
 	//    切る高さ(家のモデル空間)は家の配置で変わるので、変わった時だけ切り直す(三角形は保持)。
 	std::vector<DirectX::XMFLOAT3>     m_houseTris;		// 家の三角形(モデル空間, 3頂点ずつ)。Init で1回取得
 	std::vector<Collision2D::Segment>  m_wallSegLocal;	// 断面の線分(家のモデル空間 XZ)
-	float m_wallSliceLocalY = -1e30f;				// m_wallSegLocal を切った高さ(家のモデル空間)。変化検出用
-	float m_wallSliceHeight = 1.0f;					// 床から何の高さで壁を切るか(=腰。戸口はこの高さで空いている。F1)
+	float m_wallSliceLocalY = -1e30f;				// 一番低い切り口(家のモデル空間)。変化検出用
+	float m_wallSliceStepUsed = -1.0f;				// 切った時の刻み。変化検出用
+	float m_wallSliceLowHeight = 0.3f;				// 一番低い切り口(床から, m)。床の段差/敷居は拾わない高さ(F1)
+	float m_wallSliceStep      = 0.3f;				// 切り口の間隔(m)。これより薄い張り出しは間をすり抜け得る(F1)
 	static constexpr float WALL_RESLICE_EPS = 1e-3f;	// 切る高さがこれ以上変わったら切り直す(家のモデル空間)
 	void  UpdateWallSlice(const DirectX::XMMATRIX& houseWorld);	// 必要なら壁線を切り直す
 	void  InitBuildingCollision();					// 家の三角形・扉の蝶番/凸包を用意する(Init で1回)
@@ -705,6 +707,16 @@ private:
 	float m_camLerpRate   = 4.0f;					// 3段カメラ切替の速さ(小=ゆっくり重い,大=機敏)
 	float m_camSway    = 0.30f;					// マウスに応じた視点の揺れ幅
 	bool  m_cursorShown = true;					// OSカーソルの表示状態(PLAY中は隠す)
+	//--- 一時停止メニュー(ESC。2026-10-08 ユーザー要望)。開いている間は世界の更新を止める。
+	enum class PauseItem { Resume, Title, Quit, Count, None = -1 };	// 並び順 = メニューの上から
+	bool      m_paused       = false;
+	int       m_pauseSel     = 0;					// 今選んでいる項目(マウスのホバー / 上下キー)
+	PauseItem m_pauseRequest = PauseItem::None;	// 決定された項目(描画側のクリック or キー)。次の UpdatePause で実行
+	bool  CanPause() const;
+	void  OpenPause();
+	void  ClosePause();
+	void  UpdatePause();
+	void  DrawPauseMenu();						// HUD.cpp
 
 	//--- 調整用パラメータ(F1デバッグでスライダ変更可)
 	float m_strikeCDMax = 1.25f;	// 打撃後クールダウン(秒)

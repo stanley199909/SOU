@@ -125,6 +125,7 @@ void SceneForge::InitBuildingCollision()
 	m_houseTris.clear();
 	m_wallSegLocal.clear();
 	m_wallSliceLocalY = -1e30f;	// 次の UpdateWallSlice で必ず切る
+	m_wallSliceStepUsed = -1.0f;
 	Model* house = GetObj<Model>(CottageDoor::HOUSE_KEY);
 	Model* door  = GetObj<Model>(CottageDoor::DOOR_KEY);
 	if (house) house->AppendLocalTriangles(m_houseTris);	// 扉は SceneRoot で除いてある=戸口は空いている
@@ -148,20 +149,26 @@ XMMATRIX SceneForge::DoorWorld()
 	return CottageDoor::HingeMatrix(m_doorHinge, m_door.Angle()) * PropWorld(*house);
 }
 
-//--- 壁線を「床 + m_wallSliceHeight」の高さで切る。その高さを家のモデル空間へ戻して切る。
-//    家の配置(大きさ/高さ)か切る高さが変わった時だけ切り直す(6万三角形でも数ミリ秒だが毎フレームは無駄)。
+//--- 壁線 = 体が占める高さ(床+m_wallSliceLowHeight 〜 床+PLAYER_BODY_HEIGHT)を m_wallSliceStep ごとに切った線を全部合わせた物。
+//    1つの高さだけだと、その高さに無い物を素通りした: 壁から張り出した窓枠の上の横木に、目(1.6m)が入り込んだ(2026-10-08 F5)。
+//    体の高さ全体を切れば、体のどこかに当たる物は全部ぶつかる。戸口は扉を除いてあるので、どの高さでも空いている。
+//    家の配置(大きさ/高さ)か切る設定が変わった時だけ切り直す(6万三角形 × 数枚でも一度きり。毎フレームは無駄)。
 void SceneForge::UpdateWallSlice(const XMMATRIX& houseWorld)
 {
 	// 家の行列は 一様スケール×Y回転×平行移動 → 高さは localY*scale + originY。これを逆算する。
 	const float scale   = XMVectorGetX(XMVector3Length(houseWorld.r[0]));
 	const float originY = XMVectorGetY(houseWorld.r[3]);
 	if (scale <= 0.0f) return;
-	const float localY = (m_walkFloorY + m_wallSliceHeight - originY) / scale;
-	if (fabsf(localY - m_wallSliceLocalY) < WALL_RESLICE_EPS) return;
+	const float MIN_STEP = 0.05f;	// 0 刻みで無限ループしない様に
+	const float step     = fmaxf(m_wallSliceStep, MIN_STEP);
+	const float localLow = (m_walkFloorY + m_wallSliceLowHeight - originY) / scale;
+	if (fabsf(localLow - m_wallSliceLocalY) < WALL_RESLICE_EPS && fabsf(step - m_wallSliceStepUsed) < WALL_RESLICE_EPS) return;
 
 	m_wallSegLocal.clear();
-	Collision2D::SliceTriangles(m_houseTris, localY, m_wallSegLocal);
-	m_wallSliceLocalY = localY;
+	for (float h = m_wallSliceLowHeight; h <= PLAYER_BODY_HEIGHT + WALL_RESLICE_EPS; h += step)
+		Collision2D::SliceTriangles(m_houseTris, (m_walkFloorY + h - originY) / scale, m_wallSegLocal);	// 追記(SliceTriangles は out に足す)
+	m_wallSliceLocalY   = localLow;
+	m_wallSliceStepUsed = step;
 }
 
 //--- 凸包/壁線/扉を今の配置でワールド XZ へ運ぶ(毎フレーム)。
@@ -219,7 +226,7 @@ void SceneForge::DrawCollision()
 
 	const float y0 = m_walkFloorY + COLLISION_DRAW_LIFT;
 	const float y1 = m_walkFloorY + PLAYER_BODY_HEIGHT;
-	const float ys = m_walkFloorY + m_wallSliceHeight;
+	const float ys = m_walkFloorY + m_wallSliceLowHeight;	// 壁線は全部の高さの和なので、一番低い所に描く
 	const XMFLOAT3 foot = m_player.GetPosition();
 	const float r = m_player.GetRadius();
 	const float probeR = r + COLLISION_TOUCH_MARGIN;	// 少し大きい円で試す=触れているだけでも赤

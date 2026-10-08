@@ -701,8 +701,8 @@ void SceneForge::UpdateFlip(float tick, bool inputOn)
 		break;
 	}
 
-	case FlipPhase::Ready:									// 火钳待命: F/ESC=戻す / 左键=夹む
-		if      (IsKeyTrigger('F') || IsKeyTrigger(VK_ESCAPE)) { m_flipPhase = FlipPhase::PutBack; m_flipTimer = 0.0f; }
+	case FlipPhase::Ready:									// 火钳待命: F=戻す / 左键=夹む(ESC は一時停止メニュー専用)
+		if      (IsKeyTrigger('F')) { m_flipPhase = FlipPhase::PutBack; m_flipTimer = 0.0f; }
 		else if (IsKeyTrigger(VK_LBUTTON)){ m_flipPhase = FlipPhase::Gripping; m_flipTimer = 0.0f; }
 		break;
 
@@ -725,7 +725,7 @@ void SceneForge::UpdateFlip(float tick, bool inputOn)
 		//   k が偶数=表, 奇数=裏。0.5 を越えるたびに k が1つ進む=一回ずつ翻る。見た目の刃と必ず一致。
 		const int k = (int)floorf(m_flipAngle / DirectX::XM_PI + 0.5f);
 		m_forging.SetSide(((k % 2) + 2) % 2);			// 負の k(逆回転)でも 0/1 に正規化
-		if (IsKeyTrigger(VK_LBUTTON) || IsKeyTrigger(VK_ESCAPE))	// 現在の面を確定→待命へ(ESC=一段戻る)
+		if (IsKeyTrigger(VK_LBUTTON))	// 現在の面を確定→待命へ
 		{
 			// 角度を「今の面の清潔な角」(0 か π)の近くへ巻き戻す。2π の倍数を引くだけなので見た目は不変。
 			// これで確定後の Damp(目標=面×π)が最短で落ち着き、回し続けても角度が無限に増えない。
@@ -836,11 +836,10 @@ void SceneForge::UpdatePlay(float tick)
 	// ※走動中・走動⇔工位の移動アニメ中に打鉄/加熱/工程FSMが動かないよう条件に含める。
 	bool inputOn = !DebugUI::IsVisible() && !m_fade.IsBusy() && !m_walkMode && !Transitioning();
 
-	// --- 工位から出る: E または ESC(汎用の「戻る」)。翻面中は出ない(火钳を持ったまま離れない)。
-	//   翻面中の ESC は UpdateFlip が「一段戻る」として扱う(Flipping→Ready→火钳を戻す)。
+	// --- 工位から出る: E。翻面中は出ない(火钳を持ったまま離れない)。ESC は一時停止メニュー専用(2026-10-08)。
 	//   淬火の動画(刃が水に入った後)も取り消せない=出られない。
 	const bool quenchLocked = (m_quenchTurn > 0.0f || m_plunge > 0.0f);	// 刃を立て始めたら取り消せない
-	if (inputOn && m_flipPhase == FlipPhase::None && !quenchLocked && (IsKeyTrigger('E') || IsKeyTrigger(VK_ESCAPE)))
+	if (inputOn && m_flipPhase == FlipPhase::None && !quenchLocked && IsKeyTrigger('E'))
 	{
 		m_charging = false; m_charge = 0.0f;	// 蓄力中なら破棄(暴発させない)
 		BeginExitStation();
@@ -1496,12 +1495,85 @@ void SceneForge::UpdateResult(float /*tick*/)
 	}
 }
 
+//====================================================================
+//  一時停止メニュー(ESC): 続ける / タイトルへ戻る / ゲームを終了する
+//====================================================================
+//--- 開ける時: 遊んでいて、F1 でも画面遷移中でもなく、タイトルからの導入運鏡も終わっている。
+bool SceneForge::CanPause() const
+{
+	return m_state == GAME_PLAY && !DebugUI::IsVisible() && !m_fade.IsBusy() && m_introPhase == IntroPhase::None;
+}
+
+void SceneForge::OpenPause()
+{
+	m_paused       = true;
+	m_pauseSel     = (int)PauseItem::Resume;	// 既定 = 続ける(誤って終了しない様に)
+	m_pauseRequest = PauseItem::None;
+	m_charging = false; m_charge = 0.0f;		// 蓄力中なら破棄(再開した瞬間に暴発させない)
+	// 鳴り続ける効果音(風箱/燃焼/研ぎ)を止める。再開後、必要なら各 Update がまた鳴らす(状態フラグを戻しておく)
+	if (m_heatSndOn)  { Audio::Stop(Audio::SE_FORGE_LOOP); m_heatSndOn  = false; }
+	if (m_burnSndOn)  { Audio::Stop(Audio::SE_BURN_LOOP);  m_burnSndOn  = false; }
+	if (m_grindSndOn) { Audio::Stop(Audio::SE_GRIND_LOOP); m_grindSndOn = false; }
+	if (!m_cursorShown) { ShowCursor(TRUE); m_cursorShown = true; }	// メニューはマウスで選ぶ
+}
+
+void SceneForge::ClosePause()
+{
+	m_paused = false;
+	m_canStrike = false;					// 押しっぱなしのボタンで再開直後に打たない(一度離すまで)
+	float dx, dy; ReadMouseDelta(dx, dy);	// メニュー中に動かしたカーソルの分を捨てる(再開で視点が跳ばない)
+	// カーソルの表示は Update の通常処理が PLAY 中は隠す
+}
+
+//--- メニューを開いている間の更新。ESC = 続ける(「続ける」と同じ処理)。キーボードでも選べる。
+//    マウスの選択/決定は描画側(DrawPauseMenu)が当たり判定をして m_pauseSel / m_pauseRequest に書く=ここで実行する。
+void SceneForge::UpdatePause()
+{
+	const int N = (int)PauseItem::Count;
+	if (IsKeyTrigger(VK_ESCAPE)) m_pauseRequest = PauseItem::Resume;
+	if (IsKeyTrigger(VK_UP)   || IsKeyTrigger('W')) m_pauseSel = (m_pauseSel + N - 1) % N;
+	if (IsKeyTrigger(VK_DOWN) || IsKeyTrigger('S')) m_pauseSel = (m_pauseSel + 1) % N;
+	if (IsKeyTrigger(VK_RETURN) || IsKeyTrigger(VK_SPACE)) m_pauseRequest = (PauseItem)m_pauseSel;
+
+	const PauseItem req = m_pauseRequest;
+	m_pauseRequest = PauseItem::None;
+	switch (req)
+	{
+	case PauseItem::Resume:
+		ClosePause();
+		break;
+	case PauseItem::Title:
+		ClosePause();
+		// 結果画面からタイトルへ戻るのと同じ流れ(黒幕の裏で状態を切り替える)。途中の工程の状態も片付ける。
+		m_fade.Transition([this] {
+			StopSequence();							// 拍子表の途中なら打ち切る(鉄の姿勢の上書きも解除)
+			m_modeTrans = ModeTrans::None;
+			m_flipPhase = FlipPhase::None;
+			m_camTongsW = 0.0f; m_camGripW = 0.0f; m_hammerStowW = 0.0f; m_tongsInHand = false;
+			m_state = GAME_TITLE;
+			ResetTitleStage();						// 金床の上を「新しい熱い鉄」に戻す
+			Audio::Stop(Audio::BGM_PLAY);
+			Audio::PlayLoop(Audio::BGM_TITLE, TITLE_BGM_VOLUME);
+		});
+		break;
+	case PauseItem::Quit:
+		PostQuitMessage(0);						// 通常の終了と同じ(メインループが抜けて Uninit=調整値の保存も走る)
+		break;
+	default: break;
+	}
+}
+
 void SceneForge::Update(float tick)
 {
 	m_time += tick;
 	m_fade.Update(tick);	// 画面フェード(黒幕)を進める。遷移はTransitionの黒転じで実行される
 	m_door.Update(tick);	// 扉の開閉の回転(E で切り替えた後、入力と無関係に最後まで回り切る)
 	m_grassMapDt += tick;	// 草の踏み跡が薄れる時間(GPU の Fade は Draw の最初でまとめて)
+
+	// --- 一時停止メニュー(ESC)。開いている間は世界を止める(以下の更新を全部飛ばす=時間・温度・粒子も止まる) ---
+	//   開いたフレームは UpdatePause を呼ばない: 同じフレームの ESC の押下を「続ける」と読んで即座に閉じていた(2026-10-08 F5)。
+	if (!m_paused && CanPause() && IsKeyTrigger(VK_ESCAPE)) { OpenPause(); return; }
+	if (m_paused) { UpdatePause(); return; }
 
 	// F8 = 全調整値を起動時スナップショットへ一発リセット(F1デバッグ表示中のみ=誤爆防止)。
 	if (DebugUI::IsVisible() && IsKeyTrigger(VK_F8)) RestoreTuning();
@@ -1541,7 +1613,7 @@ void SceneForge::Update(float tick)
 			UpdateCarryBob(tick, walked);			// 実際に進んだ距離で揺らす(壁に当たって止まれば揺れも止まる)
 
 			// 互動: ①範囲 ②視線 の両方が true の物件だけ E が効く(Interaction.cpp)。
-			//   金床=工位へ移動 / 火钳=取って工位へ移動→翻面。退出(工位→走動)は UpdatePlay 側で E/ESC。
+			//   金床=工位へ移動 / 火钳=取って工位へ移動→翻面。退出(工位→走動)は UpdatePlay 側で E。
 			if (m_player.WantInteract() && m_focus >= 0) DoInteract(INTERACTABLES[m_focus]);
 		}
 		else if (m_flipPhase == FlipPhase::Flipping)

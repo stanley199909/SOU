@@ -103,6 +103,19 @@ static void DrawNineSlice(ImDrawList* dl, Texture* tex, ImVec2 a, ImVec2 b, floa
 		}
 }
 
+//--- 羊皮紙のパネル(工程リストと一時停止メニューで共用)。parchment_frame.jpg(ChatGPT 生成版)の寸法は「画像に対する比」で持つ
+//    =保存解像度が変わっても合う。cornerPx = 画面上の隅の大きさ(px)。
+static const float PARCHMENT_CORNER_SRC_RATIO = 0.27f;	// 四隅の飾りが収まる大きさ(画像の高さ比)
+static const float PARCHMENT_CENTER_SRC_RATIO = 0.17f;	// 上辺中央の飾りの幅(画像の幅比)。ここは伸ばさない
+static const ImU32 PARCHMENT_TINT             = IM_COL32(255, 255, 255, 235);	// 背景がほんの少し透ける
+static void DrawParchment(ImDrawList* dl, Texture* frame, ImVec2 a, ImVec2 b, float cornerPx)
+{
+	if (!frame) return;
+	const float srcCorner = frame->GetHeight() * PARCHMENT_CORNER_SRC_RATIO;
+	const float srcCenter = frame->GetWidth()  * PARCHMENT_CENTER_SRC_RATIO;
+	DrawNineSlice(dl, frame, a, b, srcCorner, cornerPx / srcCorner, PARCHMENT_TINT, srcCenter);
+}
+
 //--- 動くマウスの案内(動画型の操作案内)。静止したアイコンより「何をすれば良いか」が一目で分かる(動きそのものを見せる)。
 //    マウスの絵 = Kenney の mouse.png。矢印は三角形を描く(光り方を動きの向きに合わせて変える為)。
 //    axis = 上下 / 左右。towards = 0: 往復(両方の矢印が動きに合わせて光る) / -1: 上(左)へだけ / +1: 下(右)へだけ。
@@ -632,16 +645,10 @@ void SceneForge::DrawStepTracker()
 	const float PANEL_X_RATIO   = 0.015f;	// パネルの左端(画面幅比)
 	const float PANEL_Y_RATIO   = 0.22f;	// パネルの上端(画面高さ比)
 	const float PANEL_W_RATIO   = 0.22f;	// パネルの幅(画面幅比)。狭すぎると上辺中央の飾りが横に潰れる
-	// parchment_frame.jpg(ChatGPT 生成版)の寸法を「画像に対する比」で持つ=保存解像度が変わっても合う
-	const float FRAME_CORNER_SRC_RATIO = 0.27f;	// 四隅の飾りが収まる大きさ(画像の高さ比)
-	const float FRAME_CENTER_SRC_RATIO = 0.17f;	// 上辺中央の飾りの幅(画像の幅比)。ここは伸ばさない
-	const float FRAME_SRC_CORNER = m_uiFrame ? m_uiFrame->GetHeight() * FRAME_CORNER_SRC_RATIO : 1.0f;
-	const float FRAME_SRC_CENTER = m_uiFrame ? m_uiFrame->GetWidth()  * FRAME_CENTER_SRC_RATIO : 0.0f;
 	const float FRAME_CORNER_RATIO = 0.085f;	// 画面上の隅の大きさ(画面高さ比)
 	const float INSET_TOP       = 0.95f;	// 中身の上端=上辺の飾りの下(隅の大きさに対する比)
 	const float INSET_BOTTOM    = 0.75f;	// 中身の下端から下辺まで(同)
 	const float INSET_SIDE      = 0.60f;	// 中身の左右の余白(同)。枠の二重線の内側
-	const ImU32 PAPER_TINT      = IM_COL32(255, 255, 255, 235);	// 背景がほんの少し透ける
 
 	// --- 行 ---
 	const float ROW_RATIO     = 0.050f;	// 行の間隔
@@ -707,7 +714,7 @@ void SceneForge::DrawStepTracker()
 	const float contentH = row * HEAD_GAP + row * n + subRow * nSub;
 	ImVec2 pa(disp.x * PANEL_X_RATIO, disp.y * PANEL_Y_RATIO);
 	ImVec2 pb(pa.x + disp.x * PANEL_W_RATIO, pa.y + corner * INSET_TOP + contentH + corner * INSET_BOTTOM);
-	if (m_uiFrame) DrawNineSlice(dl, m_uiFrame.get(), pa, pb, FRAME_SRC_CORNER, corner / FRAME_SRC_CORNER, PAPER_TINT, FRAME_SRC_CENTER);
+	DrawParchment(dl, m_uiFrame.get(), pa, pb, corner);
 
 	const float x  = pa.x + corner * INSET_SIDE;
 	float       cy = pa.y + corner * INSET_TOP;
@@ -1087,6 +1094,73 @@ void SceneForge::DrawResultUI()
 	CenterText("PRESS  SPACE  TO  RETURN", PROMPT_Y, PROMPT_SCALE, IM_COL32(240, 228, 205, 230), body);	// 暗い背景の上=影あり
 }
 
+//--- 一時停止メニュー: 画面を暗くし、中央に羊皮紙のパネル(工程リストと同じ見た目)。項目はマウスのホバーで選び、クリックで決定。
+//    実行は UpdatePause(次の Update)=描画の途中で状態を変えない。寸法は画面比(解像度非依存)。
+void SceneForge::DrawPauseMenu()
+{
+	ImVec2 disp = ImGui::GetIO().DisplaySize;
+	ImDrawList* dl = ImGui::GetForegroundDrawList();
+
+	const ImU32 DIM_COL       = IM_COL32(0, 0, 0, 150);			// 背後の世界を暗く(止まっている事が分かる)
+	const float PANEL_W_RATIO = 0.30f;							// パネルの幅(画面幅比)
+	const float CORNER_RATIO  = 0.085f;							// 隅の大きさ(画面高さ比)=工程リストと同じ
+	const float HEAD_RATIO    = 0.040f;							// 見出しの文字の高さ
+	const float ITEM_RATIO    = 0.034f;							// 項目の文字の高さ
+	const float ROW_RATIO     = 0.075f;							// 項目の間隔
+	const float HEAD_GAP      = 1.3f;							// 見出しから1項目目まで(行単位)
+	const float INSET_TOP     = 0.95f, INSET_BOTTOM = 0.75f;	// 枠の飾りの内側(隅の大きさ比)=工程リストと同じ
+	const float MARK_RATIO    = 0.010f;							// 選んでいる項目の左の印(三角)の大きさ
+	const float MARK_GAP      = 0.6f;							// 印と文字の間(印の大きさ比)
+	const ImU32 INK_HEAD = IM_COL32( 60,  38,  22, 255);		// 工程リストと同じインク
+	const ImU32 INK_ITEM = IM_COL32( 60,  42,  28, 220);
+	const ImU32 INK_SEL  = IM_COL32(150,  32,  18, 255);		// 選択中 = 朱(工程リストの「今」と同じ)
+	static const char* LABELS[(int)PauseItem::Count] = {
+		(const char*)u8"ゲームを続ける", (const char*)u8"タイトルへ戻る", (const char*)u8"ゲームを終了する" };
+
+	dl->AddRectFilled(ImVec2(0, 0), disp, DIM_COL);
+
+	const float corner = disp.y * CORNER_RATIO;
+	const float row    = disp.y * ROW_RATIO;
+	const float panelW = disp.x * PANEL_W_RATIO;
+	const float panelH = corner * INSET_TOP + row * HEAD_GAP + row * (int)PauseItem::Count + corner * INSET_BOTTOM;
+	const ImVec2 pa((disp.x - panelW) * 0.5f, (disp.y - panelH) * 0.5f);
+	const ImVec2 pb(pa.x + panelW, pa.y + panelH);
+	DrawParchment(dl, m_uiFrame.get(), pa, pb, corner);
+
+	const float cx = (pa.x + pb.x) * 0.5f;
+	float cy = pa.y + corner * INSET_TOP;
+	{
+		const float px = disp.y * HEAD_RATIO;
+		ImFont* f = DebugUI::FontJPFor(px);
+		const char* head = (const char*)u8"一時停止";
+		const ImVec2 sz = f->CalcTextSizeA(px, FLT_MAX, 0.0f, head);
+		dl->AddText(f, px, ImVec2(cx - sz.x * 0.5f, cy), INK_HEAD, head);
+	}
+	cy += row * HEAD_GAP;
+
+	const ImVec2 mouse = ImGui::GetIO().MousePos;
+	const float  ipx   = disp.y * ITEM_RATIO;
+	ImFont* f = DebugUI::FontJPFor(ipx);
+	for (int i = 0; i < (int)PauseItem::Count; ++i, cy += row)
+	{
+		// 当たり判定 = パネルの幅いっぱい × 1行(文字の上だけでなく行のどこでも選べる)
+		const ImVec2 ra(pa.x + corner * INSET_BOTTOM, cy - (row - ipx) * 0.5f), rb(pb.x - corner * INSET_BOTTOM, ra.y + row);
+		const bool hover = mouse.x >= ra.x && mouse.x <= rb.x && mouse.y >= ra.y && mouse.y <= rb.y;
+		if (hover) m_pauseSel = i;
+		if (hover && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) m_pauseRequest = (PauseItem)i;
+
+		const bool sel = (i == m_pauseSel);
+		const ImVec2 sz = f->CalcTextSizeA(ipx, FLT_MAX, 0.0f, LABELS[i]);
+		const float tx = cx - sz.x * 0.5f;
+		dl->AddText(f, ipx, ImVec2(tx, cy), sel ? INK_SEL : INK_ITEM, LABELS[i]);
+		if (sel)
+		{
+			const float m = disp.y * MARK_RATIO, my = cy + ipx * 0.5f, mx = tx - m * (1.0f + MARK_GAP);
+			dl->AddTriangleFilled(ImVec2(mx - m, my - m), ImVec2(mx - m, my + m), ImVec2(mx + m * 0.6f, my), INK_SEL);
+		}
+	}
+}
+
 void SceneForge::DrawUI()
 {
 	// 配置/材質/炭火/カメラの編集はすべて SCENE_STAGE_EDITOR に移設。
@@ -1098,6 +1172,7 @@ void SceneForge::DrawUI()
 	case GAME_PLAY:
 		// タイトル→金床へカメラが移っている間は何も出さない(ロゴは既に消えている。映像だけを見せる)。
 		if (m_introPhase != IntroPhase::CameraMove) DrawPlayUI();
+		if (m_paused) DrawPauseMenu();
 		break;
 	case GAME_RESULT: DrawResultUI(); break;
 	}
@@ -1328,7 +1403,8 @@ void SceneForge::DrawUI()
 		if (ImGui::CollapsingHeader("Collision"))
 		{
 			ImGui::SliderFloat("Player radius", m_player.RadiusPtr(), 0.1f, 0.6f, "%.2f");	// 足元の円(大=道具から遠くで止まる)
-			ImGui::SliderFloat("Wall slice height", &m_wallSliceHeight, 0.2f, 2.0f, "%.2f");	// 壁を切る高さ(床から)。戸口がこの高さで空いていること
+			ImGui::SliderFloat("Wall slice low",  &m_wallSliceLowHeight, 0.05f, 1.0f, "%.2f");	// 一番低い切り口(床から)。ここから背丈まで刻みごとに切る
+			ImGui::SliderFloat("Wall slice step", &m_wallSliceStep,      0.05f, 1.0f, "%.2f");	// 切り口の間隔
 			ImGui::Text("colliders: %d hulls / %d wall segments", (int)m_collision.hulls.size(), (int)m_collision.segments.size());
 			ImGui::Text("door: %s", m_door.IsOpen() ? "open" : "closed");
 			ImGui::SliderFloat("Door open angle", &m_door.openAngle, 0.5f, 2.2f, "%.2f");	// 開いた時の角度(rad)
