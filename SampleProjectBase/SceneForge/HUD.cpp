@@ -1092,6 +1092,9 @@ void SceneForge::DrawResultUI()
 	sprintf_s(buf, sizeof(buf), "SCORE   %d", m_score);
 	CenterText(buf, SCORE_Y, STAT_SCALE, INK_LABEL, title, false);
 	CenterText("PRESS  SPACE  TO  RETURN", PROMPT_Y, PROMPT_SCALE, IM_COL32(240, 228, 205, 230), body);	// 暗い背景の上=影あり
+	// 素材のクレジット(CC BY は作者名の表示が使用条件。一覧は CREDITS.txt)。目立たない様に画面下端に小さく
+	const float CREDIT_Y = 0.95f, CREDIT_SCALE = 0.45f;
+	CenterText("Sound: ZijunSANG, soundslikewillem (freesound.org, CC BY-NC 4.0)", CREDIT_Y, CREDIT_SCALE, IM_COL32(200, 190, 170, 170), body);
 }
 
 //--- 一時停止メニュー: 画面を暗くし、中央に羊皮紙のパネル(工程リストと同じ見た目)。項目はマウスのホバーで選び、クリックで決定。
