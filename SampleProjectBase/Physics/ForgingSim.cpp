@@ -10,9 +10,9 @@ void ForgingSim::Reset()
     {
         for (int i = 0; i < NL; ++i)
         for (int j = 0; j < NW; ++j) { m_h[s][i][j] = m_hStart; m_dmgF[s][i][j] = 0.0f; }
-        for (int k = 0; k < NSEG; ++k) m_segProg[s][k] = 0.0f;
+        m_shape[s].Reset();   // all of the shaping is still to do
+        m_edge[s].Reset();    // edge not ground yet
     }
-    for (int s = 0; s < NSIDES; ++s) for (int k = 0; k < NSEG; ++k) m_sharp[s][k] = 0.0f;   // edge not ground yet
     BuildTarget();
 }
 
@@ -111,7 +111,7 @@ float ForgingSim::ShapeMatch() const
     return m;
 }
 
-ForgingSim::StrikeOutcome ForgingSim::ApplyStrike(int ci, int cj, int seg,
+ForgingSim::StrikeOutcome ForgingSim::ApplyStrike(int ci, int cj, float lenCoord,
     float power, float heatFactor, float grooveMult, bool cold, bool over)
 {
     // Guided flow (volume-conserving, outcome-locked): the hit cell only drops
@@ -168,16 +168,14 @@ ForgingSim::StrikeOutcome ForgingSim::ApplyStrike(int ci, int cj, int seg,
         if (d > 1.0f) d = 1.0f;
         return StrikeOutcome::OverHit;
     }
-    if (SegDone(seg)) return StrikeOutcome::AlreadyDone; // striking a finished segment wastes it
-
-    // Good strike on an unfinished segment: advance its shaping (forward only).
-    //   FORGE_STEP is "how much of the whole progresses"; a segment is 1/NSEG of the
-    //   length, so scale by NSEG to keep hits-per-segment near the old whole-bar count.
-    //   Divided by workNeeded: half the work needed = each strike counts double.
-    const float MIN_WORK = 0.05f;   // guard against a zero/negative slider value
-    float& prog = m_segProg[m_side][seg];
-    prog += FORGE_STEP * NSEG * power * grooveMult / fmaxf(workNeeded, MIN_WORK);
-    if (prog > 1.0f) prog = 1.0f;
+    // Good strike: subtract this strike's share of the face's work, taken around the impact.
+    //   work = 1 face (NL cell-units) / strikesPerFace -> after exactly strikesPerFace valid
+    //   strikes the face is done. power/grooveMult are deliberately NOT used here (they grade
+    //   the strike for the score; the work done must not depend on the grade).
+    const float MIN_STRIKES = 1.0f;   // guard against a zero/negative slider value
+    const float work = (float)NL / fmaxf(strikesPerFace, MIN_STRIKES);
+    if (m_shape[m_side].Apply(lenCoord, work, strikeSpread) == WorkField::Result::AlreadyDone)
+        return StrikeOutcome::AlreadyDone;
     return StrikeOutcome::Shaped;
 }
 
@@ -193,22 +191,6 @@ void ForgingSim::BurnAll(float amount)
     }
 }
 
-bool ForgingSim::SideDone(int side) const
-{
-    const int s = side ? 1 : 0;
-    for (int k = 0; k < NSEG; ++k) if (m_segProg[s][k] < SEG_DONE) return false;
-    return true;
-}
-
-float ForgingSim::SideProgress(int side) const
-{
-    // Mean of the face's segments, each capped at "done" so a finished face reads 1.0.
-    const int s = side ? 1 : 0;
-    float sum = 0.0f;
-    for (int k = 0; k < NSEG; ++k) sum += fminf(m_segProg[s][k] / SEG_DONE, 1.0f);
-    return sum / NSEG;
-}
-
 bool ForgingSim::BothSidesDone() const
 {
     // The Forge step ends only when every segment of BOTH faces is shaped. The
@@ -217,37 +199,14 @@ bool ForgingSim::BothSidesDone() const
     return true;
 }
 
-float ForgingSim::SharpProgress(int side) const
+ForgingSim::GrindOutcome ForgingSim::ApplyGrind(int side, float lenCoord, float dt)
 {
-    // Mean edge sharpness, each segment capped at "done" (HUD progress bar).
-    float sum = 0.0f;
-    for (int k = 0; k < NSEG; ++k) sum += fminf(m_sharp[side ? 1 : 0][k] / SHARP_DONE, 1.0f);
-    return sum / NSEG;
-}
-
-float ForgingSim::SegAverage() const
-{
-    float sum = 0.0f;
-    for (int k = 0; k < NSEG; ++k) sum += m_segProg[m_side][k];
-    return sum / NSEG;
-}
-
-ForgingSim::GrindOutcome ForgingSim::ApplyGrind(int side, int seg, float amount)
-{
-    if (seg < 0 || seg >= NSEG) return GrindOutcome::AlreadySharp;
-    // Grinding an edge that is already finished only wastes metal: report it so the
-    // scene can react (a line from the smith), but do not change the state.
-    float& sharp = m_sharp[side ? 1 : 0][seg];
-    if (sharp >= SHARP_DONE) return GrindOutcome::AlreadySharp;
-    sharp += amount;
-    if (sharp > 1.0f) sharp = 1.0f;
+    // Fixed rate: one bevel = NL cell-units of work over grindSecondsPerSide seconds.
+    const float MIN_SECONDS = 1.0f;   // guard against a zero/negative slider value
+    const float work = (float)NL * dt / fmaxf(grindSecondsPerSide, MIN_SECONDS);
+    if (m_edge[side ? 1 : 0].Apply(lenCoord, work, grindSpread) == WorkField::Result::AlreadyDone)
+        return GrindOutcome::AlreadySharp;   // grinding a finished edge only wastes metal
     return GrindOutcome::Sharpened;
-}
-
-bool ForgingSim::AllSharp() const
-{
-    for (int s = 0; s < NSIDES; ++s) for (int k = 0; k < NSEG; ++k) if (m_sharp[s][k] < SHARP_DONE) return false;
-    return true;
 }
 
 void ForgingSim::CompleteForging()
@@ -256,11 +215,11 @@ void ForgingSim::CompleteForging()
     {
         for (int i = 0; i < NL; ++i)
         for (int j = 0; j < NW; ++j) { m_h[s][i][j] = m_hTgt[i][j]; m_dmgF[s][i][j] = 0.0f; }
-        for (int k = 0; k < NSEG; ++k) m_segProg[s][k] = 1.0f;
+        m_shape[s].Complete();
     }
 }
 
 void ForgingSim::CompleteGrinding()
 {
-    for (int s = 0; s < NSIDES; ++s) for (int k = 0; k < NSEG; ++k) m_sharp[s][k] = 1.0f;
+    for (int s = 0; s < NSIDES; ++s) m_edge[s].Complete();
 }

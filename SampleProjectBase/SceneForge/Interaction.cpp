@@ -185,7 +185,13 @@ void SceneForge::DoInteract(const Interactable& it)
 		//   手に持っている     → 置く拍子表を演じ(Sequence.cpp)、終わったら置いて入る(RunSeqEnd)
 		//   その工位に置いてある → そのまま入る
 		//   別の所にある       → 入らない。鉄の在り処を言うだけ(玩家が自分で取りに行く。自動では動かない)
-		if (m_carrying)                   PlaySequence(PutIronSequence(it.station), it.station);
+		// 砥石は鍛造が終わってから(研ぐのは形が出来た刃。ユーザー決定 2026-10-08: 鍛造中に研げてしまうのは誤り)
+		if (it.station == Station::Grindstone && !StepReached(StepName::Grind))
+		{
+			Say((const char*)u8"まだ研げない。先に鍛造を終わらせる", IM_COL32(255, 200, 90, 255));
+			break;
+		}
+		if (m_carrying)                  PlaySequence(PutIronSequence(it.station), it.station);
 		else if (m_workAt == it.station)  BeginEnterStation(it.station);
 		else                              SayWhereIronIs();
 		break;

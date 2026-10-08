@@ -425,6 +425,11 @@ void SceneForge::BuildWeaponMorph()
 	const int   segAim  = (playing && m_aimValid) ? AimSeg() : -1;	// 準心が鉄の上に無ければ高亮なし
 	const float pulse   = 0.5f + 0.5f * sinf(m_time * 8.0f);
 	XMFLOAT4 heat = HeatRGB(m_forging.Heat(), 0.0f);
+	const int NL = ForgingSim::NL;
+	// 打撃の跡の光: 打った所は少し熱い色(温度 + m_impactFlashHeat の HeatRGB)へ寄せ、時間で線形に戻す。
+	const float MIN_FLASH_TIME = 0.01f, MIN_FLASH_SPREAD = 0.1f;	// 0 割りの防止
+	const float flashLife = 1.0f - (m_time - m_impactTime) / fmaxf(m_impactFlashTime, MIN_FLASH_TIME);	// 1=打った瞬間 → 0
+	XMFLOAT4 flashCol = HeatRGB(fminf(m_forging.Heat() + m_impactFlashHeat, 1.0f), 0.0f);
 
 	// 進捗 p(0..1) → 段チェーン(stage_0..final)上の頂点 i の補間位置/法線(ローカル)。
 	auto morphAt = [&](int i, float p, XMVECTOR& outPos, XMVECTOR& outNrm)
@@ -457,35 +462,45 @@ void SceneForge::BuildWeaponMorph()
 		float pFront, pBack;	// この頂点位置での表(面0)/裏(面1)それぞれの進捗
 		float vFront, vBack;	// 同じく、氧化皮の剥がれ具合(未完成の区域は厚い皮が残る=どこが未完成か鉄を見て分かる)
 		float sFront = 0.0f, sBack = 0.0f;	// この頂点位置での表/裏の刃の研ぎ具合(見た目用。区域を隣とブレンド)
+		float flash = 0.0f;					// 打撃の跡の光(0..1)
 		if (playing)
 		{
-			float sc = AimSystem::SegCoordLocal(a0, m_wpMin, m_wpMax, NSEG);	// 0..NSEG
-			float fpos = sc - 0.5f;			// 区域中心を基準にした連続座標
-			int   s0 = (int)floorf(fpos);
-			float ft = fpos - s0;
-			int   sa = s0 < 0 ? 0 : (s0 >= NSEG ? NSEG - 1 : s0);
-			int   sb = (s0 + 1) < 0 ? 0 : ((s0 + 1) >= NSEG ? NSEG - 1 : (s0 + 1));
-			auto segBlend = [&](int side) {
-				float a = m_forging.SegProgOf(side, sa), b = m_forging.SegProgOf(side, sb);
-				return a + (b - a) * ft;
+			// 成形は長手セル(NL 個)ごとの連続値。隣のセル中心との間を線形補間=叩いた所の周りだけ滑らかに変わる。
+			float cc = AimSystem::SegCoordLocal(a0, m_wpMin, m_wpMax, NL);	// 0..NL
+			float cpos = cc - 0.5f;			// セル中心を基準にした連続座標
+			int   c0 = (int)floorf(cpos);
+			float ct = cpos - c0;
+			int   ca = c0 < 0 ? 0 : (c0 >= NL ? NL - 1 : c0);
+			int   cb = (c0 + 1) < 0 ? 0 : ((c0 + 1) >= NL ? NL - 1 : (c0 + 1));
+			auto cellBlend = [&](int side) {
+				float a = m_forging.CellProgOf(side, ca), b = m_forging.CellProgOf(side, cb);
+				return a + (b - a) * ct;
 			};
-			pFront = segBlend(0);
-			pBack  = segBlend(1);
-			// 氧化皮用の進捗: 未完成の区域では m_scaleHoldMax で頭打ち(=一番厚い皮が残る)、完成した瞬間に 1(=全部剥がれる)。
-			//   形の進捗(pFront/pBack)をそのまま使うと、完成の手前で皮が無くなり、残りの区域が見分けられなかった。
-			auto scaleVis = [&](int side, int s) {
-				return m_forging.SegDoneOf(side, s) ? 1.0f : m_forging.SegProgOf(side, s) * m_scaleHoldMax;
+			pFront = cellBlend(0);
+			pBack  = cellBlend(1);
+			// 氧化皮用の進捗: 未完成のセルでは m_scaleHoldMax で頭打ち(=一番厚い皮が残る)、完成した瞬間に 1(=全部剥がれる)。
+			//   形の進捗(pFront/pBack)をそのまま使うと、完成の手前で皮が無くなり、残りの所が見分けられなかった。
+			auto scaleVis = [&](int side, int c) {
+				return m_forging.CellDoneOf(side, c) ? 1.0f : m_forging.CellProgOf(side, c) * m_scaleHoldMax;
 			};
-			vFront = scaleVis(0, sa) + (scaleVis(0, sb) - scaleVis(0, sa)) * ft;
-			vBack  = scaleVis(1, sa) + (scaleVis(1, sb) - scaleVis(1, sa)) * ft;
+			vFront = scaleVis(0, ca) + (scaleVis(0, cb) - scaleVis(0, ca)) * ct;
+			vBack  = scaleVis(1, ca) + (scaleVis(1, cb) - scaleVis(1, ca)) * ct;
+			// 打撃の跡の光: 打った長手位置からの距離でガウス減衰 × 時間で線形に消える。
+			if (flashLife > 0.0f)
+			{
+				const float d = cc - m_impactCoord;
+				const float sg = fmaxf(m_impactFlashSpread, MIN_FLASH_SPREAD);
+				flash = flashLife * expf(-(d * d) / (2.0f * sg * sg));
+			}
+
 			// 研ぎの見た目: 研ぎ上がるまでは SHARP_HOLD_MAX で頭打ち(刃先に暗い所が残る)、研ぎ上がった瞬間に 1(=一気に明るく)。
-			//   鍛造の「最後の黒皮が落ちる」と同じ考え方=区域が仕上がった事が見て分かる(ユーザー要望 2026-10-07)。
-			auto sharpVis = [&](int side, int s) {
-				return m_forging.SharpDoneOf(side, s) ? 1.0f : m_forging.SharpRatioOf(side, s) * SHARP_HOLD_MAX;
+			//   鍛造の「最後の黒皮が落ちる」と同じ考え方=仕上がった所が見て分かる(ユーザー要望 2026-10-07)。研ぎも長手セル単位。
+			auto sharpVis = [&](int side, int c) {
+				return m_forging.EdgeCellDoneOf(side, c) ? 1.0f : m_forging.EdgeCellProgOf(side, c) * SHARP_HOLD_MAX;
 			};
-			sFront = sharpVis(0, sa) + (sharpVis(0, sb) - sharpVis(0, sa)) * ft;
-			sBack  = sharpVis(1, sa) + (sharpVis(1, sb) - sharpVis(1, sa)) * ft;
-			thisSeg = (int)sc; if (thisSeg >= NSEG) thisSeg = NSEG - 1;
+			sFront = sharpVis(0, ca) + (sharpVis(0, cb) - sharpVis(0, ca)) * ct;
+			sBack  = sharpVis(1, ca) + (sharpVis(1, cb) - sharpVis(1, ca)) * ct;
+			thisSeg = (int)AimSystem::SegCoordLocal(a0, m_wpMin, m_wpMax, NSEG); if (thisSeg >= NSEG) thisSeg = NSEG - 1;	// P の調試高亮用
 		}
 		else { pFront = pBack = m_forgeProg; vFront = vBack = m_forgeProg; thisSeg = -1; }
 
@@ -546,6 +561,12 @@ void SceneForge::BuildWeaponMorph()
 		// 既定は熱色のみ(KCD式=「叩く場所」を示さない)。Pキーでデバッグ可視化ONの時だけ
 		// 「今照準している区域」を青緑で薄く塗る(叩く指示ではなく開発用)。
 		XMFLOAT4 col = heat;
+		if (flash > 0.0f)
+		{
+			col.x += (flashCol.x - col.x) * flash;
+			col.y += (flashCol.y - col.y) * flash;
+			col.z += (flashCol.z - col.z) * flash;
+		}
 		if (m_showAimHi && thisSeg == segAim)
 		{
 			float b = 0.30f + 0.20f * pulse;
@@ -686,6 +707,27 @@ XMFLOAT3 SceneForge::HammerStrikePoint()
 	return XMFLOAT3(head.x, WorkAnchor().y + BladeDepthBelowCentre(), head.z);	// 高さ = 鉄の上面(頭が当たる所)
 }
 
+//--- 打撃が効く長手位置 = 描かれているハンマーの頭が落ちる所(HammerStrikePoint)を、刃のローカル長手座標へ。
+//    照準点(m_aimWorld)でなく頭そのものから取る: 追従の遅れやオフセットがあっても「見えている頭の真下」が変形する=指した所を打つ。
+//    描画(BuildWeaponMorph)と同じ WeaponWorld の逆変換 + SegCoordLocal 規約なので、変形する所と頭の位置が原理的に一致する。
+float SceneForge::StrikeLenCoord()
+{
+	if (!m_wpOk) return m_aimI + 0.5f;	// 武器FBXが無い時(旧・高さ場): 照準セルの中心
+	const XMFLOAT3 p = HammerStrikePoint();
+	XMFLOAT3 lp; XMStoreFloat3(&lp, XMVector3TransformCoord(XMLoadFloat3(&p), XMMatrixInverse(nullptr, WeaponWorld())));
+	return AimSystem::SegCoordLocal(lp, m_wpMin, m_wpMax, ForgingSim::NL);	// 0..NL(刃の外は端へ寄せる)
+}
+
+//--- 研いでいる長手位置 = 砥石の接点(StationBase: 砥石の上端。刃はここへ滑らせて当てている)を刃のローカル長手座標へ。
+//    旧: m_grindU*NSEG で区域を推測 → 置いた向き次第で描画の区域と逆になり、暗い所を当てても別の区域が研げていた(研ぎが 90% で止まる)。
+float SceneForge::GrindLenCoord()
+{
+	if (!m_wpOk) return m_grindU * ForgingSim::NL;
+	const XMFLOAT3 p = StationBase(Station::Grindstone);
+	XMFLOAT3 lp; XMStoreFloat3(&lp, XMVector3TransformCoord(XMLoadFloat3(&p), XMMatrixInverse(nullptr, WeaponWorld())));
+	return AimSystem::SegCoordLocal(lp, m_wpMin, m_wpMax, ForgingSim::NL);
+}
+
 //--- ハンマーの頭の中心(モデル空間)。柄は細長く頭は太い → 長軸の両端の帯で「長軸に直交する広がり」を比べ、広い方が頭。
 //    その帯の頂点の平均 = 頭の中心。モデルの向きや原点の位置に依らない(別のハンマーに替えても同じ式)。
 XMFLOAT3 SceneForge::FindHammerHeadLocal(Model* hammer)
@@ -768,21 +810,29 @@ bool SceneForge::HammerOnHip() const
 	return m_walkMode || Transitioning() || m_station != Station::Anvil;
 }
 
-//--- 右腰のハンマー: 体の右・床からの高さ・前へ m_hammerHipOff の点に、m_hammerHipRot の向きで(体の向きに合わせて回す)。
-//    火钳の左腰(HipPoint)の左右反対。向き/位置は F1「Carry」で合わせる(モデルの軸に依らない様に回転は数値で持つ)。
+//--- 右腰のハンマー = 腰帯(ベルトの輪)に下げた状態: 頭が輪に掛かって腰の高さに止まり、柄は真下へ垂れる。
+//    腰の点 = 体の右・床からの高さ・前へ m_hammerHipOff(火钳の左腰 HipPoint の左右反対)。体と一緒に動き、腰より上へは出ない。
+//    向きは数値で持たずモデルから求める: 頭(FindHammerHeadLocal) → 箱の中心 の向き(=柄の向き)を真下へ回す。
+//    旧: 金床で構える回転をそのまま流用 → 頭が上・前へ突き出て、工位の見下ろしカメラの視野に入った(2026-10-08 F5)。
 XMMATRIX SceneForge::HammerHipWorld(Model* hammer)
 {
+	if (!m_hammerHeadReady) { m_hammerHeadLocal = FindHammerHeadLocal(hammer); m_hammerHeadReady = true; }
 	const XMFLOAT3 f = BodyForward();
 	const XMFLOAT3 r(f.z, 0.0f, -f.x);	// 右(前方を右へ90度)
-	XMFLOAT3 body = m_player.GetPosition();
-	const XMFLOAT3 p(body.x + r.x * m_hammerHipOff[0] + f.x * m_hammerHipOff[2],
-	                 m_walkFloorY + m_hammerHipOff[1],
-	                 body.z + r.z * m_hammerHipOff[0] + f.z * m_hammerHipOff[2]);
-	const float bodyYaw = atan2f(f.x, f.z);
-	XMMATRIX world =
-		XMMatrixScaling(m_hammerScale, m_hammerScale, m_hammerScale) *
-		XMMatrixRotationRollPitchYaw(m_hammerHipRot[0], m_hammerHipRot[1], m_hammerHipRot[2]) *
-		XMMatrixRotationY(bodyYaw) *
-		XMMatrixTranslation(p.x, p.y, p.z);
-	return hammer->GetScaleBaseMatrix() * world;
+	const XMFLOAT3 body = BodyPosition();	// 火钳の左腰と同じ体の位置(工位では工位カメラの真下)
+	const XMFLOAT3 belt(body.x + r.x * m_hammerHipOff[0] + f.x * m_hammerHipOff[2],
+	                    m_walkFloorY + m_hammerHipOff[1],
+	                    body.z + r.z * m_hammerHipOff[0] + f.z * m_hammerHipOff[2]);
+
+	// モデル(基準行列+大きさ適用後)の「頭 → 中心」= 柄の向き。これを真下へ向ける最短回転。
+	const XMMATRIX scaled = hammer->GetScaleBaseMatrix() * XMMatrixScaling(m_hammerScale, m_hammerScale, m_hammerScale);
+	XMFLOAT3 mn, mx; hammer->GetLocalAABB(mn, mx);
+	const XMFLOAT3 centre((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f, (mn.z + mx.z) * 0.5f);
+	const XMVECTOR head   = XMVector3TransformCoord(XMLoadFloat3(&m_hammerHeadLocal), scaled);
+	const XMVECTOR handle = XMVector3TransformCoord(XMLoadFloat3(&centre), scaled) - head;
+	const XMMATRIX hang = RotationFromTo(handle, XMVectorSet(0.0f, -1.0f, 0.0f, 0.0f)) *
+	                      XMMatrixRotationY(atan2f(f.x, f.z) + m_hammerHipYaw);	// 体の向きに合わせ、垂れた軸まわりに m_hammerHipYaw だけ回す
+	// 頭の中心がちょうど腰の点に来る様に平行移動
+	XMFLOAT3 h; XMStoreFloat3(&h, XMVector3TransformCoord(head, hang));
+	return scaled * hang * XMMatrixTranslation(belt.x - h.x, belt.y - h.y, belt.z - h.z);
 }

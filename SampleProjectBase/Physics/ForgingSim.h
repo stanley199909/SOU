@@ -1,9 +1,21 @@
 #pragma once
+#include "WorkField.h"
 
 // Simulation of the iron being forged (self-built physics).
 // It owns the workpiece STATE -- a coarse height field on the anvil, per-segment
 // shaping progress, and per-cell damage -- and the physics that changes that
 // state when the iron is struck (volume-conserving metal flow).
+//
+// Shaping and grinding are both tracked as REMAINING WORK (WorkField), not accumulated progress. Each face starts
+// with 100% of its work left, spread over the length cells (1 per cell, NL cells).
+// Every valid strike subtracts exactly the same amount (100% / strikesPerFace) from
+// that face -- the strike's grade (power, rhythm) only affects the score, never the
+// work. So a face is finished after exactly strikesPerFace valid strikes: completion
+// is guaranteed, nothing can stop at 99%.
+// Where the work is taken from is local: mostly the cells under the hammer (Gaussian
+// falloff), and what those cells cannot absorb (already finished) goes to the nearest
+// unfinished cells. So the iron changes where it was hit. The NSEG segments are only a
+// grouping read from the cells (HUD/F1), never what a strike writes.
 //
 // Boundary: the player's ACTION (swinging the hammer) lives in the forge step;
 // this class only answers "given a strike, how does the iron react". Game rules
@@ -19,7 +31,10 @@ class ForgingSim
 public:
     static const int NL = 20;    // cells along the length (Z)
     static const int NW = 6;     // cells across the width (X)
-    static const int NSEG = 5;   // coarse length segments (per-segment morph progress)
+    static const int NSEG = 5;   // coarse length segments (grouping of the length cells for HUD/done checks)
+    static const int CELLS_PER_SEG = NL / NSEG;
+    static_assert(NL % NSEG == 0, "length cells must split evenly into segments");
+    static_assert(NL == WorkField::N, "the work fields use the same length cells as the height field");
     static const int NSIDES = 2; // the blade has two faces; each is forged independently
 
     // What one strike did to the iron. The scene switches on this for audio/score/
@@ -30,10 +45,13 @@ public:
     void  BuildTarget();      // compute the target (finished-weapon) height field
     float ShapeMatch() const; // 0..1 match of current vs target (no-FBX fallback path)
 
-    // Apply one strike at cell (ci,cj) / segment seg. power/heatFactor/grooveMult are
-    // gameplay modifiers the scene already computed; cold/over say the temperature was
-    // bad. Deforms the metal, marks damage on a bad hit, advances shaping on a good one.
-    StrikeOutcome ApplyStrike(int ci, int cj, int seg,
+    // Apply one strike at cell (ci,cj) of the height field. lenCoord is where the hammer
+    // head landed along the weapon's length, in cells (0..NL, continuous; the same
+    // local-length convention the renderer uses), and is the centre of the shaping
+    // falloff. power/heatFactor/grooveMult are gameplay modifiers the scene already
+    // computed; cold/over say the temperature was bad. Deforms the metal, marks damage
+    // on a bad hit, advances shaping on a good one.
+    StrikeOutcome ApplyStrike(int ci, int cj, float lenCoord,
                               float power, float heatFactor, float grooveMult,
                               bool cold, bool over);
 
@@ -49,10 +67,18 @@ public:
     void  SetHeat(float heat);   // set directly (clamped 0..1). For the opening: the iron is already hot on the anvil
     float Heat() const { return m_heat; }
     float coolRate = 0.008f;     // natural cooling speed (/sec). ~65 s from burning (0.87) to too cold (0.35). Tunable
-    // How much hammering a face needs, as a fraction of the original design (1 = original,
-    // 0.5 = half as many good strikes). The forge step was too long next to heat/grind/quench
-    // (user playtest 2026-10-02: 1m30s + 2m30s for the two faces, as an experienced player). Tunable
-    float workNeeded = 0.5f;
+    // Valid strikes (hot enough, not overheated, on unfinished metal) one face needs. Every
+    // such strike removes exactly 1/strikesPerFace of the face's work. Tunable
+    // (the forge step was too long next to heat/grind/quench in the 2026-10-02 playtest).
+    float strikesPerFace = 14.0f;
+    // Seconds of valid grinding (pressed on a spinning wheel at a usable angle) one bevel
+    // needs. Valid grinding removes work at a fixed rate; angle/speed only grade it. Tunable
+    float grindSecondsPerSide = 15.0f;
+    float grindSpread = 1.0f;    // Gaussian sigma (cells) of the wheel contact along the length
+    // How far one strike's shaping spreads along the length: the standard deviation of
+    // the Gaussian falloff, in length cells. Small = only the spot under the hammer moves
+    // (precise but more strikes to cover the blade); large = feels like the old segments.
+    float strikeSpread = 1.5f;
 
     // At this temperature the steel starts to throw sparks from its surface ("burning").
     // It is the visible signal a smith reads: the iron is ready (Heat step target).
@@ -61,14 +87,17 @@ public:
     bool  IsBurning() const { return m_heat >= BURN_TEMP; }
 
     // --- edge sharpness (grinding) ---
-    // One value per length segment (the same segments as shaping) and per bevel: the edge
-    // is ground from both faces (each face gets its own bevel, so each side is tracked).
-    // Grinding removes metal from the edge, so this only ever goes up.
+    // Remaining work per bevel (each face of the blade gets its own bevel), along the same
+    // length cells as shaping. Grinding only ever subtracts.
     enum class GrindOutcome { Sharpened, AlreadySharp };
-    GrindOutcome ApplyGrind(int side, int seg, float amount); // grind bevel `side` of segment `seg` by `amount` (0..1 scale)
-    bool  SharpDoneOf(int side, int s) const { return m_sharp[side ? 1 : 0][s] >= SHARP_DONE; } // one bevel of one segment ground
-    float SharpRatioOf(int side, int s) const { float r = m_sharp[side ? 1 : 0][s] / SHARP_DONE; return r < 1.0f ? r : 1.0f; } // 0..1 toward "done"
-    bool  AllSharp() const;                         // every segment of both bevels ground (ends the Grind step)
+    // Grind bevel `side` for dt seconds at lenCoord (contact along the length, cells 0..NL).
+    // Call only while the grinding is valid (pressed, wheel spinning, usable angle).
+    GrindOutcome ApplyGrind(int side, float lenCoord, float dt);
+    float EdgeCellProgOf(int side, int i) const { return m_edge[side ? 1 : 0].CellProgress(i); } // renderer
+    bool  EdgeCellDoneOf(int side, int i) const { return m_edge[side ? 1 : 0].CellDone(i); }
+    bool  SharpDoneOf(int side, int s)  const { return m_edge[side ? 1 : 0].SegDone(s, NSEG); }     // F1 readout
+    float SharpRatioOf(int side, int s) const { return m_edge[side ? 1 : 0].SegProgress(s, NSEG); } // F1 readout
+    bool  AllSharp() const { return m_edge[0].Done() && m_edge[1].Done(); } // both bevels ground (ends the Grind step)
 
     // Debug step jump (F1): put the piece into the state "this step was already done".
     void  CompleteForging();  // both faces shaped to the target, no damage
@@ -86,25 +115,22 @@ public:
     // draw / aim at "the visible face" need no change when the piece is flipped.
     float Height(int i, int j) const { return m_h[m_side][i][j]; }
     float Damage(int i, int j) const { return m_dmgF[m_side][i][j]; }
-    float SegProg(int s)       const { return m_segProg[m_side][s]; }
-    float SegProgOf(int side, int s) const { return m_segProg[side ? 1 : 0][s]; } // a specific face (renderer needs both)
+    float CellProgOf(int side, int i) const { return m_shape[side ? 1 : 0].CellProgress(i); }  // shaping progress of one length cell = 1 - work left (renderer)
+    bool  CellDoneOf(int side, int i) const { return m_shape[side ? 1 : 0].CellDone(i); }      // no work left (exact)
+    float SegProgOf(int side, int s)  const { return m_shape[side ? 1 : 0].SegProgress(s, NSEG); } // F1 readout
+    bool  SegDoneOf(int side, int s)  const { return m_shape[side ? 1 : 0].SegDone(s, NSEG); }
     float Start()              const { return m_hStart; }
-    bool  SegDone(int s)       const { return m_segProg[m_side][s] >= SEG_DONE; }
-    bool  SegDoneOf(int side, int s) const { return m_segProg[side ? 1 : 0][s] >= SEG_DONE; } // a specific face (renderer: last scale falls only when done)
     bool  BothSidesDone()      const; // every segment of BOTH faces is shaped (ends the Forge step)
-    bool  SideDone(int side)   const; // every segment of ONE face is shaped (HUD: "flip it now")
-    float SideProgress(int side) const; // 0..1 shaping progress of one face (HUD progress bar)
-    float SharpProgress(int side) const; // 0..1 grinding progress of one bevel (HUD progress bar)
-    float SegAverage()         const; // mean segment progress of the up face (display / morph preview)
+    bool  SideDone(int side)     const { return m_shape[side ? 1 : 0].Done(); }     // ONE face is shaped (HUD: "flip it now")
+    float SideProgress(int side) const { return m_shape[side ? 1 : 0].Progress(); } // 0..1 work done on one face (HUD bar)
+    float SharpProgress(int side) const { return m_edge[side ? 1 : 0].Progress(); } // 0..1 work done on one bevel (HUD bar)
+    float SegAverage()           const { return m_shape[m_side].Progress(); }       // up face (display / morph preview)
 
 private:
     // How strongly the iron reacts (physics magnitudes; the numbers you tune/defend).
-    static constexpr float SEG_DONE     = 0.98f;  // a segment counts as finished at/above this
-    static constexpr float FORGE_STEP   = 0.055f; // shaping progress from one ideal full strike
     static constexpr float FLOW_DROP    = 0.095f; // height pushed out of the hit cell (ideal strike)
     static constexpr float DMG_COLD_HIT = 0.35f;  // crack from one cold strike
     static constexpr float DMG_OVER_HIT = 0.25f;  // scorch from one overheated strike
-    static constexpr float SHARP_DONE   = 0.98f;  // an edge segment counts as ground at/above this
 
     int   m_side = 0;                 // which face is up right now (0 = front, 1 = back)
     float m_heat = 0.0f;              // temperature 0..1 (one value for the whole piece)
@@ -112,6 +138,6 @@ private:
     float m_h[NSIDES][NL][NW];        // current height (thickness) field, per face
     float m_hTgt[NL][NW];             // target (finished weapon) height field (same shape for both faces)
     float m_dmgF[NSIDES][NL][NW];     // per-cell damage 0..1 (cold crack / overheat scorch), per face
-    float m_segProg[NSIDES][NSEG] = {}; // per-segment shaping progress 0..1, per face
-    float m_sharp[NSIDES][NSEG] = {};   // per-segment edge sharpness 0..1 (0 = as forged), per bevel
+    WorkField m_shape[NSIDES];        // shaping work left along the length, per face
+    WorkField m_edge[NSIDES];         // grinding work left along the length, per bevel
 };

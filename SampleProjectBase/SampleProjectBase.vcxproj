@@ -184,6 +184,7 @@
     <ClCompile Include="Physics\HammerPhysics.cpp" />
     <ClCompile Include="Physics\ForgingSim.cpp" />
     <ClCompile Include="Physics\WaterSim.cpp" />
+    <ClCompile Include="Physics\WorkField.cpp" />
     <ClCompile Include="Physics\Particles.cpp" />
     <ClCompile Include="Physics\GrindWheel.cpp" />
     <ClCompile Include="Physics\Collision2D.cpp" />
@@ -247,6 +248,7 @@
     <ClInclude Include="Physics\HammerPhysics.h" />
     <ClInclude Include="Physics\ForgingSim.h" />
     <ClInclude Include="Physics\WaterSim.h" />
+    <ClInclude Include="Physics\WorkField.h" />
     <ClInclude Include="Physics\Particles.h" />
     <ClInclude Include="Physics\GrindWheel.h" />
     <ClInclude Include="Physics\Collision2D.h" />

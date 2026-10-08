@@ -543,7 +543,7 @@ void SceneForge::StartGame()
 	m_burnSparkAcc = 0.0f;
 	m_wheel.Reset();						// 砥石は止まっている
 	ClearGrindHint(); m_grindPress = 0.0f;
-	m_grindU = 0.5f; m_grindFace = 0; m_grindFlipRoll = 0.0f; m_grindSparkAcc = 0.0f; m_grindVol = 0.0f; m_grindAngle = m_grindAngleTarget = 0.0f;
+	m_grindU = 0.5f; m_grindFace = 0; m_grindFaceInit = false; m_grindFlipRoll = 0.0f; m_grindSparkAcc = 0.0f; m_grindVol = 0.0f; m_grindAngle = m_grindAngleTarget = 0.0f;
 	m_plunge = 0.0f; m_quenchTurn = 0.0f; m_agitate = 0.0f; m_quenchContact = false; m_clearDecided = false; m_letterbox = 0.0f; m_boil = 0.0f; m_boilStage = BoilStage::None; m_waterSim.Reset(); m_prevAgitate = 0.0f; m_bubbleAcc = 0.0f;
 	m_stirTarget = 0.0f; m_filmBreak = 0.0f; m_filmTime = 0.0f; m_stir01 = 0.0f; m_quenchStartHeat = 0.0f;	// 淬火/終幕の演出も解除
 	if (m_burnSndOn)  { Audio::Stop(Audio::SE_BURN_LOOP);  m_burnSndOn  = false; }
@@ -555,6 +555,7 @@ void SceneForge::StartGame()
 	m_hammer.Reset();			// 鎚を静止高へ・速度ゼロに戻す
 	m_aimI = ForgingSim::NL / 2; m_aimJ = ForgingSim::NW / 2; m_aimSeg = 0; m_aimValid = false;
 	m_aimWorld = m_barAnchor;	// 最初の有効照準までのハンマー既定位置(板中心)
+	m_impactTime = -1000.0f;	// 前の回の打撃の光を消す
 	m_lookYaw = 0.0f; m_lookPitch = 0.0f;
 	m_canStrike   = false;		// SPACEを一度離すまで蓄力しない
 	m_shake        = 0.0f;
@@ -586,6 +587,15 @@ void SceneForge::SetupSteps()
 	m_forgeStep->RegisterState(m_stepMachine);
 	m_grindStep->RegisterState(m_stepMachine);
 	m_quenchStep->RegisterState(m_stepMachine);
+}
+
+//--- 配方でその種類の工程まで進んだか(その工程が今か、もう済んだ)。工位に入れるかの判定に使う(データ駆動=順序は配方が決める)。
+bool SceneForge::StepReached(StepName type) const
+{
+	if (!m_recipe) return true;
+	for (int k = 0; k <= m_stepIdx && k < (int)m_recipe->steps.size(); ++k)
+		if (m_recipe->steps[k].type == type) return true;
+	return false;
 }
 
 //--- 次の工程へ進む。配方(データ)が順序の正。最後の工程を越えたら完成(淬火済み)へ。
@@ -989,8 +999,10 @@ void SceneForge::DoStrike()
 {
 	float power = m_charge;			// 0..1
 	const float heat = m_forging.Heat();
-	bool cold = (heat < COLD_LIMIT);
-	bool over = (heat > OVERHEAT);
+	// 有効な打撃 = 温度ゲージの緑帯(IDEAL_MIN..IDEAL_MAX)の中だけ。ゲージで緑に塗っている範囲と判定を一致させる
+	//   (緑の外でも成功するなら、緑で示す意味が無い。ユーザー指摘 2026-10-08)。下=冷たすぎ / 上=熱すぎ。
+	bool cold = (heat < IDEAL_MIN);
+	bool over = (heat > IDEAL_MAX);
 
 	// --- リズム判定: 前回打撃からの間隔が「速すぎず遅すぎず」なら良いテンポ ---
 	float interval = m_sinceStrike;
@@ -1015,11 +1027,14 @@ void SceneForge::DoStrike()
 	float heatFactor = cold ? HEAT_EFF_COLD : (over ? HEAT_EFF_OVER : 1.0f);
 	// 打撃の「鉄の反応」(体積守恒の金属流動・損傷・成形進度)は ForgingSim が担当。
 	//   ここは玩家の動作側=修正値を渡して結果(outcome)を受け取るだけ。結果で下の回饋を出す。
-	int ci = m_aimI, cj = m_aimJ, seg = AimSeg();
+	//   成形は「ハンマーの頭が落ちた所」を中心に効く(StrikeLenCoord。区域単位でなく連続位置=指した所が変わる)。
+	int ci = m_aimI, cj = m_aimJ;
+	const float lenCoord   = StrikeLenCoord();
 	const int  side        = m_forging.Side();
 	const bool faceWasDone = m_forging.SideDone(side);
 	ForgingSim::StrikeOutcome outcome =
-		m_forging.ApplyStrike(ci, cj, seg, power, heatFactor, grooveMult, cold, over);
+		m_forging.ApplyStrike(ci, cj, lenCoord, power, heatFactor, grooveMult, cold, over);
+	m_impactCoord = lenCoord; m_impactTime = m_time;	// 打った所を一瞬光らせる(BuildWeaponMorph)
 	// この一打で「上を向いている面」全体が仕上がった瞬間(未完成→完成のエッジ検出)=口笛で「この面は終わり、裏返せ」。
 	//   区域ごとの完成は音を鳴らさず、最後の黒皮が落ちる見た目だけで伝える(ユーザー決定 2026-10-04: 視覚=どこ / 音=面の完成)。
 	const bool faceJustDone = !faceWasDone && m_forging.SideDone(side);
@@ -1053,7 +1068,9 @@ void SceneForge::DoStrike()
 	case ForgingSim::StrikeOutcome::ColdHit:
 		label = (const char*)u8"まだ冷たい…赤くなるまで熱して"; col = IM_COL32(120, 170, 255, 255); break;
 	case ForgingSim::StrikeOutcome::OverHit:
-		label = (const char*)u8"熱しすぎだ！鋼が焼ける";       col = IM_COL32(255, 120, 120, 255); break;
+		// 緑帯の上: 過熱(鋼が焼ける)まで行っていれば強く、手前なら「少し冷ませ」(どちらも有効打ではない)
+		label = (heat > OVERHEAT) ? (const char*)u8"熱しすぎだ！鋼が焼ける" : (const char*)u8"熱すぎる…少し冷めるまで待つ";
+		col = IM_COL32(255, 120, 120, 255); break;
 	case ForgingSim::StrikeOutcome::AlreadyDone:
 		label = (const char*)u8"ここはもう完成済みだ";         col = IM_COL32(255, 200,  90, 255); break;
 	default:	// Shaped = 適温 & 未完成の区域に命中 = 成功。得点のみ
@@ -1121,6 +1138,14 @@ void SceneForge::UpdateGrind(float tick, bool inputOn)
 {
 	const int NSEG = ForgingSim::NSEG;
 	const bool here = inputOn && m_station == Station::Grindstone;
+	// この回で初めて砥石に置いた時は、表(面0)の刃を砥石へ向ける。下を向く面は見た目の向き(GrindSide=鍛造で最後に
+	//   上にした面などで変わる)で決まるので、裏が下なら F の裏返しを済ませた状態(半回転)から始める=最初は必ず表。
+	if (!m_grindFaceInit && m_workAt == Station::Grindstone && !m_carrying && !m_seqIronOverride)
+	{
+		m_grindFace = 0; m_grindFlipRoll = 0.0f;
+		if (GrindSide() != 0) { m_grindFace = 1; m_grindFlipRoll = XM_PI; }	// 裏が下だった → 半回転して表を下へ(動画でなく即座に)
+		m_grindFaceInit = true;
+	}
 	bool pressing = false;
 	if (here)	// 工程に関係なく、砥石の工位にいればいつでも研げる(玩家の自由)
 	{
@@ -1148,16 +1173,20 @@ void SceneForge::UpdateGrind(float tick, bool inputOn)
 	bool onDoneSpot = false;	// 研ぎ上がった所を研いでいる(火花が細り、音が軽く高くなる=もう削る物が無い)
 	if (grinding)
 	{
-		int seg = (int)(m_grindU * NSEG);
-		if (seg >= NSEG) seg = NSEG - 1;
-		const float eff = GrindAngleEfficiency();	// 角度が正しいほど速く研げ、火花も多い
+		// 研いでいる所 = 砥石の接点(刃の長手のどこが砥石に当たっているか)。m_grindU から区域を推測せず、
+		//   描画と同じ WeaponWorld の逆変換で求める=見えている暗い所を当てれば、そこが研げる(鍛造の StrikeLenCoord と同じ考え方)。
+		const float lenCoord = GrindLenCoord();
+		int cell = (int)lenCoord; if (cell < 0) cell = 0; if (cell > ForgingSim::NL - 1) cell = ForgingSim::NL - 1;
+		const float eff = GrindAngleEfficiency();	// 角度の正しさ: 火花の量と評価だけに効く(研ぎ進みには効かない)
 		const int  side = GrindSide();	// 砥石へ向いている刃の面
-		onDoneSpot = m_forging.SharpDoneOf(side, seg);
+		onDoneSpot = m_forging.EdgeCellDoneOf(side, cell);
 		const bool faceWasDone = m_forging.SharpProgress(side) >= 1.0f;
 		// 誤りは独白で知らせ(1回の独白 = 1回の誤り)、同じ誤りをくり返したら直し方の案内を出す(DrawGrindHint)。
 		if (eff > 0.0f)
 		{
-			if (m_forging.ApplyGrind(side, seg, GRIND_RATE * speed * eff * tick) == ForgingSim::GrindOutcome::AlreadySharp)
+			// 有効な研ぎ = 使える角度 + 砥石が十分に回っている。有効な間は一定の速さで残り作業量を減らす(ForgingSim::ApplyGrind)。
+			if (speed < GRIND_WORK_MIN_SPEED) { /* 砥石が遅すぎる: 研げない(火花も細い=踏めと分かる) */ }
+			else if (m_forging.ApplyGrind(side, lenCoord, tick) == ForgingSim::GrindOutcome::AlreadySharp)
 			{
 				if (m_popupLife <= 0.0f)
 				{

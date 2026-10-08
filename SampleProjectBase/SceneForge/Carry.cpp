@@ -19,16 +19,34 @@
 
 using namespace DirectX;
 
-//--- 体の水平前方。走動=玩家の向き / 工位(金床)=金床カメラの「通常の」水平視線。
-//    工位では今のカメラでなく既定値(m_camPos/m_camLook)を使う: 翻面の運鏡でカメラが腰の方へ振り向いても、
-//    体の向き(=腰の位置)は動かない。
+//--- 工位で体が居る所 = その工位の「既定の」カメラ(金床 = m_camPos/m_camLook、他 = StationView)。
+//    今のカメラでなく既定値を使う: 翻面の運鏡/研ぎの視点でカメラが振り向いても、体(=腰の道具)は動かない。
+//    旧: 工位なら常に金床カメラを使っていた → 炉/砥石/水槽では腰の道具が金床の所に浮いていた(2026-10-08 F5)。
+void SceneForge::StationBodyPose(XMFLOAT3& eye, XMFLOAT3& target)
+{
+	if (m_station == Station::Anvil) { eye = XMFLOAT3(m_camPos[0], m_camPos[1], m_camPos[2]); target = XMFLOAT3(m_camLook[0], m_camLook[1], m_camLook[2]); }
+	else StationView(m_station, eye, target);
+}
+
+//--- 体の水平前方。走動=玩家の向き / 工位=その工位の既定カメラの水平視線。
 XMFLOAT3 SceneForge::BodyForward()
 {
 	if (SequencePlaying()) return m_seqBodyFwd;	// 拍子表の再生中は首だけ回る(体=腰の位置は動かない)
 	if (m_walkMode) return m_player.GetForward();
-	float dx = m_camLook[0] - m_camPos[0], dz = m_camLook[2] - m_camPos[2], len = sqrtf(dx * dx + dz * dz);
+	XMFLOAT3 eye, target; StationBodyPose(eye, target);
+	float dx = target.x - eye.x, dz = target.z - eye.z, len = sqrtf(dx * dx + dz * dz);
 	if (len < 1e-4f) return XMFLOAT3(0, 0, 1);
 	return XMFLOAT3(dx / len, 0.0f, dz / len);
+}
+
+//--- 体の位置。走動=玩家の足元 / 工位=その工位の既定カメラの真下。
+XMFLOAT3 SceneForge::BodyPosition()
+{
+	XMFLOAT3 body = m_player.GetPosition();
+	if (m_walkMode) return body;
+	XMFLOAT3 eye, target; StationBodyPose(eye, target);
+	body.x = eye.x; body.z = eye.z;
+	return body;
 }
 
 //--- 最短回転(from → to): 回転軸 = 外積、角度 = 内積の acos。真逆なら from に直交する軸で半回転。
@@ -222,8 +240,7 @@ XMFLOAT3 SceneForge::HipPoint()
 {
 	XMFLOAT3 f = BodyForward();
 	XMFLOAT3 r(f.z, 0.0f, -f.x);	// 右(前方を右へ90度)
-	XMFLOAT3 body = m_player.GetPosition();
-	if (!m_walkMode) { body.x = m_camPos[0]; body.z = m_camPos[2]; }	// 工位=金床カメラの真下に体がある
+	const XMFLOAT3 body = BodyPosition();
 	return XMFLOAT3(body.x - r.x * m_hipOff[0] + f.x * m_hipOff[2],
 	                m_walkFloorY + m_hipOff[1],
 	                body.z - r.z * m_hipOff[0] + f.z * m_hipOff[2]);

@@ -60,6 +60,7 @@ public:
 	void  DebugJumpToStep(int idx);				// 【デバッグ】配方の idx 番目の工程から始める(前の工程は済ませた状態で、その工位に立つ。F1 最上段)
 	int   m_debugJumpIdx = 0;					// F1 で選んでいる工程
 	const StepSetting& CurrentStep() const;		// 今実行中の工程設定(HUD が instruction を表示)
+	bool  StepReached(StepName type) const;		// 配方でその種類の工程まで進んだか(今その工程 or もう済んだ)
 
 private:
 	struct Prop;	// シーン装飾プロップ(定義は後方)
@@ -211,11 +212,12 @@ private:
 
 	//--- 炉(加熱)。ニュートンの冷却(加熱)則: 鉄の温度は「火の温度」へ指数的に近づく。
 	//      dT/dt = k * (T_fire - T)   →  1フレームの厳密解: T += (T_fire - T) * (1 - exp(-k*dt))
-	//    炭火だけ = 燃える温度(BURN_TEMP)と過熱(OVERHEAT)の間で止まる=放っておいても焼けない。
-	//    風箱(R長押し) = 火が熱くなり(T_fire↑)、速く(k↑)近づく=早いが、踏みすぎると過熱する。
-	static constexpr float COAL_FIRE_TEMP    = 0.87f;	// 炭火だけの火の温度(燃える〜過熱の間)
-	static constexpr float BELLOWS_FIRE_TEMP = 1.00f;	// 風箱で煽った火の温度(白熱。過熱を越える)
-	static constexpr float COAL_HEAT_K       = 0.25f;	// 炭火だけの熱の入り方(1/秒)。0→燃えるまで約10秒
+	//    炭火だけでも火は過熱(OVERHEAT)より熱い=炉に置いたままなら上がり続け、いずれ過熱する(現実と同じ。取り出すのは玩家)。
+	//      旧: 炭火を 0.87(過熱の手前)にしていた → 炉が勝手に温度を保つ様に見えた(2026-10-08 ユーザー指摘で修正)。
+	//    風箱(R長押し) = 火が更に熱くなり(T_fire↑)、速く(k↑)近づく=早いが、すぐ過熱する。
+	static constexpr float COAL_FIRE_TEMP    = 0.98f;	// 炭火だけの火の温度(過熱より上)
+	static constexpr float BELLOWS_FIRE_TEMP = 1.00f;	// 風箱で煽った火の温度(白熱)
+	static constexpr float COAL_HEAT_K       = 0.12f;	// 炭火だけの熱の入り方(1/秒)。0→燃える(0.80)まで約14秒、→過熱(0.92)まで約23秒
 	static constexpr float BELLOWS_HEAT_K    = 0.60f;	// 風箱を踏んでいる時(1/秒)。0→燃えるまで約3秒
 	bool  m_overheatWarned = false;					// 過熱の独白を一度だけ出す(冷めたら再武装)
 
@@ -236,6 +238,7 @@ private:
 	//    研ぐ面は F で裏返して選ぶ(鍛造の F と同じ操作。ユーザー指定 2026-10-07)。両方研ぎ上がって研磨完了。
 	float m_grindAngle       = 0.0f;				// 今の傾き(rad, 0..MAX)。0 = 平らに寝ている
 	int   m_grindFace        = 0;					// 今研いでいる面(0 = 表 / 1 = 裏)。F で切り替え
+	bool  m_grindFaceInit    = false;				// この回で砥石に置いた最初に「表を砥石へ」を済ませたか(StartGame で false)
 	float m_grindFlipRoll    = 0.0f;				// 裏返しの見た目の回転(rad。m_grindFace × π へ追従)
 	static constexpr float GRIND_FLIP_LAMBDA = 10.0f;	// 裏返しの速さ(Damp率, 1/秒)
 	float m_grindAngleTarget = 0.0f;				// マウスで決めた傾きの目標(刃は少し遅れて追う)
@@ -257,7 +260,8 @@ private:
 	static constexpr float GRIND_PITCH_MAX  = 1.4f;		// 全速の時の音程(XAudio2 の上限 2.0 未満)
 	static constexpr float GRIND_SND_LAMBDA = 10.0f;	// 音量の追従の速さ(Damp率。大=機敏)
 	static constexpr float GRIND_SND_OFF    = 0.01f;	// これ未満まで消えたらループを止めてよい
-	static constexpr float GRIND_RATE         = 0.35f;	// 全速で押し当てた時の研ぎ進み(/秒)
+	static constexpr float GRIND_WORK_MIN_SPEED = 0.3f;	// 砥石の回転(0..1)がこれ以上で研げる。未満は当てても削れない(踏んで回す意味)
+	float GrindLenCoord();							// 砥石の接点 → 刃のローカル長手位置(セル単位 0..NL)
 	float m_grindPress = 0.0f;						// 押し当て 0..1(Damp)。0 = 砥石の少し上に構える / 1 = 砥石に当てる
 	static constexpr float GRIND_HOVER        = 0.03f;	// 押し当てていない時、刃の一番低い点を砥石から浮かせる高さ(m)
 	static constexpr float GRIND_PRESS_LAMBDA = 14.0f;	// 押し当て/持ち上げの速さ(Damp率, 1/秒)
@@ -551,12 +555,14 @@ private:
 	void  InitTongsGeometry();						// 上の値を火钳モデルから求める(Init で1回)
 	float m_hipOff[3]     = { 0.28f, 0.95f, 0.12f };	// 腰の火钳の位置(体から 左/床からの高さ/前, world)
 	// 右腰のハンマー(ユーザー要望 2026-10-08: 金床を離れてもハンマーが金床に残って見えた → 左腰=火钳 / 右腰=ハンマー)。F1「Carry」で合わせる
-	float m_hammerHipOff[3] = { 0.28f, 0.95f, 0.12f };	// 体から 右/床からの高さ/前(m)
-	float m_hammerHipRot[3] = { 3.14f, -0.2f, -1.58f };	// 向き(rad, Pitch/Yaw/Roll。体の向きに対して)。既定は金床で構える向き
+	float m_hammerHipOff[3] = { 0.28f, 0.95f, 0.0f };	// 腰帯の輪(頭が掛かる所): 体から 右/床からの高さ/前(m)。前 0 = 体の真横=見下ろしても視野に入らない
+	float m_hammerHipYaw    = 0.0f;						// 垂れた柄の軸まわりの向き(rad)。頭の打つ面を前後/左右どちらへ向けるか(見た目だけ)
 	DirectX::XMFLOAT3 HeldPoint();					// 手に持った鉄の中心(挟む点から m_heldDir へずらした所)。m_heldDir も更新
 	DirectX::XMFLOAT3 HeldGrip();					// 火钳が鉄を挟む点(カメラ基準)
 	bool  CameraBasis(DirectX::XMVECTOR& eye, DirectX::XMVECTOR& fwd, DirectX::XMVECTOR& right, DirectX::XMVECTOR& up);	// 今のカメラの位置と向き
-	DirectX::XMFLOAT3 BodyForward();				// 体の水平前方(走動=玩家の向き / 工位=カメラの水平視線)
+	DirectX::XMFLOAT3 BodyForward();				// 体の水平前方(走動=玩家の向き / 工位=その工位の既定カメラの水平視線)
+	DirectX::XMFLOAT3 BodyPosition();				// 体の位置(走動=玩家の足元 / 工位=その工位の既定カメラの真下)。腰の道具はここ基準
+	void  StationBodyPose(DirectX::XMFLOAT3& eye, DirectX::XMFLOAT3& target);	// 今の工位の既定カメラ(金床=m_camPos/Look、他=StationView)
 	DirectX::XMFLOAT3 HipPoint();					// 左腰の点(火钳を掛ける所。翻面の運鏡もここを見る)
 	DirectX::XMMATRIX TongsWorld(const DirectX::XMFLOAT3& approach, const DirectX::XMFLOAT3& barDir,
 	                             const DirectX::XMFLOAT3& gripAt);	// 挟む点を gripAt に、柄→口を approach へ、輪を barDir が通る様に
@@ -724,7 +730,15 @@ private:
 	float m_scaleOpacity = 0.9f;				// 黒皮の不透明度(1=地金を完全に隠す)
 	float m_scaleGlow    = 0.10f;				// 熱い時、黒皮が暗い赤でどれだけ光るか(温度の明るさに対する比。皮は断熱層で地金より暗い)
 	float m_scaleStart   = 0.35f;				// 叩く前から剥がれている薄い皮(マスク灰度)。大=開局から地金が多く見える=斑な黒皮
-	float m_scaleHoldMax = 0.70f;				// 区域が完成するまでの剥がれ具合の上限(0..1)。小=未完成の区域に皮が多く残る=見分けやすい
+	float m_scaleHoldMax = 0.70f;				// 長手セルが完成するまでの剥がれ具合の上限(0..1)。小=未完成の所に皮が多く残る=見分けやすい
+	//--- 打撃の跡の光(2026-10-08): 叩いた所だけが一瞬明るくなる=「今どこを打ったか」を鉄の上で見せる(UI でない)。
+	//    物理の根拠: 塑性変形の仕事は熱に変わる=叩いた所はわずかに温度が上がる(見かけだけ。m_forging の温度は変えない)。
+	float m_impactCoord = 0.0f;					// 最後に打った長手位置(セル単位 0..NL。ForgingSim/描画と同じローカル長手規約)
+	float m_impactTime  = -1000.0f;				// 最後に打った時刻(m_time)
+	float m_impactFlashTime   = 0.35f;			// 光が消えるまでの秒数(F1 Forge)
+	float m_impactFlashHeat   = 0.25f;			// 光る所の見かけの温度の上乗せ(HeatRGB の温度単位。大=白く光る)
+	float m_impactFlashSpread = 1.0f;			// 光の長手方向の広がり(セル単位の標準偏差)
+	float StrikeLenCoord();						// ハンマーの頭が落ちる所 → 刃のローカル長手位置(セル単位 0..NL)
 	static constexpr float FACE_DONE_VOLUME      = 0.8f;	// 面(表/裏)が仕上がった瞬間の「完成」の合図(SE_FACE_DONE)の音量
 	static constexpr float FACE_DONE_FINAL_PITCH = 1.12f;	// 両面とも済んだ(工程の完了)時は一段高く鳴らす(連続撃破音の様に上がっていく)
 	static constexpr float GROOVE_RING_PITCH = 1.12f;		// リズムに乗った打撃の金床音の音程倍率(少し高い=澄んだ「キン」)
@@ -732,7 +746,7 @@ private:
 	int   m_wpN = 0;							// 1段の頂点数
 	bool  m_wpOk = false;						// 読み込み成功&段間で頂点数一致
 	float m_forgeProg = 0.0f;					// 全体進捗 0..1(=各区域の平均。F1のプレビュー用)
-	//--- 分区域進度は m_forging が所有(ForgingSim::NSEG / SegProg / SegDone / AllSegmentsDone)。
+	//--- 成形進度は m_forging が所有(長手セルごとの連続値。区域 NSEG はその集計=HUD/完成判定用)。
 	int   m_aimSeg = 0;							// 現在照準している区域(AimSystemが更新)
 	// 照準している区域番号。AimSystem(射線×区域ボックス)が決めた値をそのまま返す。
 	int   AimSeg() const { return m_aimSeg; }
@@ -1018,16 +1032,17 @@ private:
 	static constexpr float IDEAL_MIN = 0.55f;	// 最適温度帯(下限)
 	static constexpr float IDEAL_MAX = 0.85f;	// 最適温度帯(上限)
 	static constexpr float OVERHEAT  = 0.92f;	// これ以上は過熱(鋼を痛める)
+	static constexpr float FORGE_READY_MARGIN = 0.05f;	// 加熱の行が「済」になるのは緑帯の下端よりこれだけ上(済/未済のチラつき防止)
 	// 淬火できる温度の上限。過熱した鋼を急冷すると結晶が粗く脆くなり、淬割れ(焼き割れ)する。
 	//   → 淬火は「QUENCH_MIN_TEMP 以上、QUENCH_MAX_TEMP 以下」の窓の中だけ(ユーザー同意 2026-10-02)。
 	static constexpr float QUENCH_MAX_TEMP = OVERHEAT;
 	// 開局の鉄の温度 = 適温帯の上限(ユーザー決定)。タイトルで打ち続けていた「熱い鉄」をそのまま受け継ぐ。
 	//   BURN_TEMP 以上なので配方の最初の「加熱」工程は即完了=鍛打から始まる(配方は変えない)。
 	static constexpr float START_HEAT = IDEAL_MAX;
-	// 炭火だけの温度は「燃える」と「過熱」の間でなければならない(=放置で燃え始め、しかし焼けない)。
+	// 炭火だけの温度は過熱より上でなければならない(=炉に置いたままなら上がり続けて過熱する。炉が勝手に温度を保たない)。
 	// 調整で崩したらコンパイルエラーで気付ける様にする。
-	static_assert(COAL_FIRE_TEMP > ForgingSim::BURN_TEMP && COAL_FIRE_TEMP < OVERHEAT,
-	              "COAL_FIRE_TEMP must lie between BURN_TEMP and OVERHEAT");
+	static_assert(COAL_FIRE_TEMP > OVERHEAT && COAL_FIRE_TEMP <= BELLOWS_FIRE_TEMP,
+	              "COAL_FIRE_TEMP must be above OVERHEAT (iron left in the fire keeps heating) and not above the bellows fire");
 	// 開局の温度が燃える温度を下回ると、最初の「加熱」工程が即完了せず「鍛打から開始」が崩れる。
 	static_assert(START_HEAT >= ForgingSim::BURN_TEMP && START_HEAT < OVERHEAT,
 	              "START_HEAT must be burning-hot (skips the first Heat step) but not overheated");

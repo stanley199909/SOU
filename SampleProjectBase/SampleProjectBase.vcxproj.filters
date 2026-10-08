@@ -222,6 +222,9 @@
     <ClCompile Include="Physics\WaterSim.cpp">
       <Filter>ソース ファイル\App\Physics</Filter>
     </ClCompile>
+    <ClCompile Include="Physics\WorkField.cpp">
+      <Filter>ソース ファイル\App\Physics</Filter>
+    </ClCompile>
     <ClCompile Include="Physics\Particles.cpp">
       <Filter>ソース ファイル\App\Physics</Filter>
     </ClCompile>
@@ -384,6 +387,9 @@
       <Filter>ヘッダー ファイル\App\Physics</Filter>
     </ClInclude>
     <ClInclude Include="Physics\WaterSim.h">
+      <Filter>ヘッダー ファイル\App\Physics</Filter>
+    </ClInclude>
+    <ClInclude Include="Physics\WorkField.h">
       <Filter>ヘッダー ファイル\App\Physics</Filter>
     </ClInclude>
     <ClInclude Include="Physics\Particles.h">

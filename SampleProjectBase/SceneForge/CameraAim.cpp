@@ -346,7 +346,7 @@ void SceneForge::BeginExitStation()
 	float horiz = len + m_exitStepBack;							// 目から作業点までの水平距離
 	m_walkPitch = atan2f(target.y - eyeY, horiz);				// 作業点を見下ろす角度
 
-	// 鉄はどの工位でもその場に置いたまま出る(炉でも。炭火だけなら過熱しない温度で止まる)。
+	// 鉄はどの工位でもその場に置いたまま出る(炉でも。炉に置いたままなら上がり続けて過熱する=取り出すのは玩家)。
 	// 持ち出すには、走動中に鉄を見て E で掴む(Carry.cpp)。
 	if (m_walkPitch >  m_walkPitchLim) m_walkPitch =  m_walkPitchLim;
 	if (m_walkPitch < -m_walkPitchLim) m_walkPitch = -m_walkPitchLim;
@@ -893,12 +893,14 @@ void SceneForge::SaveTuning()
 	fprintf(fp, "bladelift %.5f %.5f %.5f\n",  m_hearthLift, m_grindLift, m_troughHover);
 	fprintf(fp, "wheel %.5f %.5f %.5f %.5f\n", m_wheel.pedalImpulse, m_wheel.maxSpeed, m_wheel.friction, m_wheel.bladeDrag);
 	fprintf(fp, "grindsens %.6f\n", m_grindSens);
-	fprintf(fp, "forgework %.5f\n", m_forging.workNeeded);
+	fprintf(fp, "forgestrikes %.5f\n", m_forging.strikesPerFace);
+	fprintf(fp, "grindwork %.5f %.5f\n", m_forging.grindSecondsPerSide, m_forging.grindSpread);
+	fprintf(fp, "strikespread %.5f\n", m_forging.strikeSpread);
+	fprintf(fp, "impactflash %.5f %.5f %.5f\n", m_impactFlashTime, m_impactFlashHeat, m_impactFlashSpread);
 	fprintf(fp, "grindview %.5f\n", m_grindViewYaw);
 	fprintf(fp, "stationfront %d %d\n", m_hearthFrontFlip ? 1 : 0, m_troughFrontFlip ? 1 : 0);
 	fprintf(fp, "hintafter %d\n", m_hintAfterMistakes);
-	fprintf(fp, "hammerhip %.5f %.5f %.5f %.5f %.5f %.5f\n", m_hammerHipOff[0], m_hammerHipOff[1], m_hammerHipOff[2],
-	        m_hammerHipRot[0], m_hammerHipRot[1], m_hammerHipRot[2]);
+	fprintf(fp, "hammerbelt %.5f %.5f %.5f %.5f\n", m_hammerHipOff[0], m_hammerHipOff[1], m_hammerHipOff[2], m_hammerHipYaw);
 	fprintf(fp, "seqfeel %.5f %.5f %.5f %.5f\n", m_seqHandLag, m_seqArcLift, m_seqTimeJitter, m_seqArcJitter);
 	fprintf(fp, "carryavoid %.5f %.5f %.5f %.5f\n", m_carryAvoidMaxRaise, m_carryAvoidMargin, m_carryAvoidLambda, m_carryAvoidMaxPull);
 	fprintf(fp, "hearthlay %.5f %.5f %.5f\n", m_hearthYaw, m_hearthTipSide, m_hearthTipDepth);
@@ -953,7 +955,8 @@ void SceneForge::TuningRefs(std::vector<float*>& out)
 		&m_stationCamDist, &m_stationCamHeight, &m_stationLookLift,
 		&m_hearthLift, &m_grindLift, &m_troughHover,
 		&m_wheel.pedalImpulse, &m_wheel.maxSpeed, &m_wheel.friction, &m_wheel.bladeDrag, &m_grindSens,
-		&m_forging.workNeeded, &m_grindViewYaw,
+		&m_forging.strikesPerFace, &m_grindViewYaw, &m_forging.grindSecondsPerSide, &m_forging.grindSpread, &m_forging.strikeSpread,
+		&m_impactFlashTime, &m_impactFlashHeat, &m_impactFlashSpread,
 		&m_wpHotShade, &m_wpRimK, &m_wpRimPow, &m_wpHotGain,
 		&m_scaleTiling, &m_scaleSoft, &m_scaleOpacity, &m_scaleGlow, &m_scaleStart, &m_scaleHoldMax,
 		// -- Sequence feel / hearth insert --
@@ -1046,13 +1049,15 @@ void SceneForge::LoadTuning()
 		else if (strcmp(key, "bladelift")  == 0) sscanf_s(v, "%f %f %f", &m_hearthLift, &m_grindLift, &m_troughHover);
 		else if (strcmp(key, "wheel")      == 0) sscanf_s(v, "%f %f %f %f", &m_wheel.pedalImpulse, &m_wheel.maxSpeed, &m_wheel.friction, &m_wheel.bladeDrag);
 		else if (strcmp(key, "grindsens")  == 0) sscanf_s(v, "%f", &m_grindSens);
-		else if (strcmp(key, "forgework")  == 0) sscanf_s(v, "%f", &m_forging.workNeeded);
+		else if (strcmp(key, "grindwork")    == 0) sscanf_s(v, "%f %f", &m_forging.grindSecondsPerSide, &m_forging.grindSpread);
+		else if (strcmp(key, "forgestrikes") == 0) sscanf_s(v, "%f", &m_forging.strikesPerFace);	// 旧 forgework(倍率)は意味が変わったので読まない
+		else if (strcmp(key, "strikespread") == 0) sscanf_s(v, "%f", &m_forging.strikeSpread);
+		else if (strcmp(key, "impactflash")  == 0) sscanf_s(v, "%f %f %f", &m_impactFlashTime, &m_impactFlashHeat, &m_impactFlashSpread);
 		else if (strcmp(key, "grindview")  == 0) sscanf_s(v, "%f", &m_grindViewYaw);
 		else if (strcmp(key, "carryavoid") == 0) sscanf_s(v, "%f %f %f %f", &m_carryAvoidMaxRaise, &m_carryAvoidMargin, &m_carryAvoidLambda, &m_carryAvoidMaxPull);	// 旧ファイル(3つ)は引き寄せが既定のまま
 		else if (strcmp(key, "seqfeel")    == 0) sscanf_s(v, "%f %f %f %f", &m_seqHandLag, &m_seqArcLift, &m_seqTimeJitter, &m_seqArcJitter);
 		else if (strcmp(key, "hearthlay")  == 0) sscanf_s(v, "%f %f %f", &m_hearthYaw, &m_hearthTipSide, &m_hearthTipDepth);
-		else if (strcmp(key, "hammerhip")  == 0) sscanf_s(v, "%f %f %f %f %f %f", &m_hammerHipOff[0], &m_hammerHipOff[1], &m_hammerHipOff[2],
-		                                                  &m_hammerHipRot[0], &m_hammerHipRot[1], &m_hammerHipRot[2]);
+		else if (strcmp(key, "hammerbelt") == 0) sscanf_s(v, "%f %f %f %f", &m_hammerHipOff[0], &m_hammerHipOff[1], &m_hammerHipOff[2], &m_hammerHipYaw);	// 旧 hammerhip(構えの回転)は意味が変わったので読まない
 		else if (strcmp(key, "hintafter")  == 0) { sscanf_s(v, "%d", &m_hintAfterMistakes); if (m_hintAfterMistakes < 1) m_hintAfterMistakes = 1; }	// 0 だと最初から出続ける
 		else if (strcmp(key, "stationfront") == 0) { int h = 0, t = 0; sscanf_s(v, "%d %d", &h, &t); m_hearthFrontFlip = (h != 0); m_troughFrontFlip = (t != 0); }
 		else if (strcmp(key, "hotsteel")   == 0) sscanf_s(v, "%f %f %f %f", &m_wpHotShade, &m_wpRimK, &m_wpRimPow, &m_wpHotGain);

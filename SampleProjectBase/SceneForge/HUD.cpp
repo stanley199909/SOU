@@ -691,9 +691,11 @@ void SceneForge::DrawStepTracker()
 
 	// 済んでいないバーは満タンに見せない: 進捗は区域の平均なので、1区域だけ少し足りなくても 99% = 見た目は満タンになり、
 	// 「全部終わったのに進まない(99% で止まる)」と見えた(2026-10-08)。全区域が済んだ時だけ 1、それ以外は UNFINISHED_MAX まで。
+	// 鍛造/研ぎは対象外: 残り作業量の減算(WorkField)で、バーは「済んだ作業 / 全作業」そのもの=満タン=完成が保証される。
 	const float UNFINISHED_MAX = 0.9f;
-	for (int k = 0; k < nSub; ++k)
-		if (subs[k].prog < 1.0f) subs[k].prog = fminf(subs[k].prog, UNFINISHED_MAX);
+	if (nowType != StepName::Forge && nowType != StepName::Grind)
+		for (int k = 0; k < nSub; ++k)
+			if (subs[k].prog < 1.0f) subs[k].prog = fminf(subs[k].prog, UNFINISHED_MAX);
 
 	const int   n      = (int)m_recipe->steps.size();
 	const float row    = disp.y * ROW_RATIO;
@@ -845,21 +847,21 @@ float SceneForge::ReadyTemp(StepName next) const
 {
 	switch (next)
 	{
-	case StepName::Forge:  return IDEAL_MIN;
+	case StepName::Forge:  return IDEAL_MIN + FORGE_READY_MARGIN;	// 緑帯に少し入った所(下の MinWorkTemp との幅=ヒステリシス)
 	case StepName::Quench: return ForgingSim::BURN_TEMP;
 	default:               return ForgingSim::BURN_TEMP;
 	}
 }
 
 //--- 加熱が「済」でなくなる温度 = 次の工程がもうできない冷たさ。
-//    鍛造: 冷打になる温度(COLD_LIMIT) / 焼入れ: 焼きが入らない温度(QUENCH_MIN_TEMP)。
+//    鍛造: 緑帯の下端(IDEAL_MIN。これ未満の打撃は有効でない) / 焼入れ: 焼きが入らない温度(QUENCH_MIN_TEMP)。
 //    ReadyTemp より低い=「済になる温度」と「済でなくなる温度」の間に幅がある(ヒステリシス)。
 //    1つの閾値だと、その前後で温度が揺れた時に取り消し線が毎フレーム付いたり消えたりしてしまう。
 float SceneForge::MinWorkTemp(StepName next) const
 {
 	switch (next)
 	{
-	case StepName::Forge:  return COLD_LIMIT;
+	case StepName::Forge:  return IDEAL_MIN;
 	case StepName::Quench: return QUENCH_MIN_TEMP;
 	default:               return 0.0f;
 	}
@@ -1151,6 +1153,17 @@ void SceneForge::DrawUI()
 					ImGui::TextColored(m_forging.SegDoneOf(side, s) ? DONE_COL : TODO_COL, "%3.0f", m_forging.SegProgOf(side, s) * 100.0f);
 				}
 			}
+			// 長手セルごとの進捗(打撃が実際に書く値)。左=ローカル長手 0 側。今ハンマーの頭がどのセル位置か(head)も出す=端に届くかの確認
+			ImGui::Text("head at cell %.2f / %d", StrikeLenCoord(), ForgingSim::NL);
+			for (int side = 0; side < ForgingSim::NSIDES; ++side)
+			{
+				ImGui::Text("cells %s:", FACE_NAME[side]);
+				for (int i = 0; i < ForgingSim::NL; ++i)
+				{
+					ImGui::SameLine(0.0f, 2.0f);
+					ImGui::TextColored(m_forging.CellDoneOf(side, i) ? DONE_COL : TODO_COL, "%2.0f", fminf(m_forging.CellProgOf(side, i) * 100.0f, 99.0f));	// 2桁に収める(済=緑)
+				}
+			}
 			for (int side = 0; side < ForgingSim::NSIDES; ++side)
 			{
 				ImGui::Text("grind %s:", FACE_NAME[side]);
@@ -1287,7 +1300,13 @@ void SceneForge::DrawUI()
 		{
 			ImGui::SliderFloat("Aim sens",     &m_aimSens,      0.0006f, 0.0050f, "%.4f");	// 低=重い
 			ImGui::SliderFloat("Hammer follow",&m_hammerFollow, 3.0f, 24.0f, "%.1f");		// 低=遅れて重い
-			ImGui::SliderFloat("Forge work",   &m_forging.workNeeded, 0.2f, 1.0f, "%.2f");	// 1面を仕上げるのに要る打撃量(1=元の量)
+			ImGui::SliderFloat("Strikes per face", &m_forging.strikesPerFace, 4.0f, 40.0f, "%.0f");
+			ImGui::SliderFloat("Grind sec per side", &m_forging.grindSecondsPerSide, 3.0f, 60.0f, "%.0f s");	// 片側の刃を研ぎ上げるのに要る有効な研ぎ時間
+			ImGui::SliderFloat("Grind spread", &m_forging.grindSpread, 0.3f, 3.0f, "%.2f cells");	// 砥石の当たる幅(長手)	// 1面を仕上げるのに要る有効な打撃の回数(毎打ちょうど 1/この数 を減らす)
+			ImGui::SliderFloat("Strike spread",&m_forging.strikeSpread, 0.5f, 4.0f, "%.2f cells");	// 一打の成形が長手に広がる幅(小=打った所だけ/大=旧の区域に近い)
+			ImGui::SliderFloat("Impact flash time",   &m_impactFlashTime,   0.05f, 1.0f, "%.2f s");	// 打った所が光っている時間
+			ImGui::SliderFloat("Impact flash heat",   &m_impactFlashHeat,   0.0f,  0.6f, "%.2f");	// 光る所の見かけの温度の上乗せ
+			ImGui::SliderFloat("Impact flash spread", &m_impactFlashSpread, 0.3f,  3.0f, "%.2f cells");
 		}
 
 		// --- Walk / Player: 一人称の走動 ---
@@ -1346,8 +1365,8 @@ void SceneForge::DrawUI()
 			ImGui::SliderFloat("Bob steps per meter",&m_bobPerMeter,   0.5f, 4.0f,  "%.2f");	// 1m で何歩=揺れの細かさ
 			ImGui::SliderFloat("Tongs scale",   &m_tongsScale,   0.3f, 3.0f, "%.2f");	// 台上の火钳に対する大きさ
 			ImGui::TextDisabled("-- hammer on the right hip (when not at the anvil) --");
-			ImGui::SliderFloat3("Hammer hip (R/H/F)", m_hammerHipOff, -1.0f, 1.5f, "%.2f");	// 体から 右/床からの高さ/前
-			ImGui::SliderFloat3("Hammer hip rot",     m_hammerHipRot, -3.15f, 3.15f, "%.2f");	// 向き(Pitch/Yaw/Roll)
+			ImGui::SliderFloat3("Hammer belt (R/H/F)", m_hammerHipOff, -1.0f, 1.5f, "%.2f");	// 腰帯の輪: 体から 右/床からの高さ/前
+			ImGui::SliderFloat("Hammer belt yaw",      &m_hammerHipYaw, -3.15f, 3.15f, "%.2f");	// 垂れた柄の軸まわりの向き
 			ImGui::SliderFloat3("Hip (L/height/F)", m_hipOff, -0.5f, 1.6f, "%.2f");	// 腰の火钳(体から 左/床からの高さ/前)
 		}
 
