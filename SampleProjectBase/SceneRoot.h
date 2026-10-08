@@ -11,9 +11,7 @@ public:
 	void Update(float tick);
 	void Draw();
 	void DrawUI();		// シーン選択パネル＋サブシーンのUI
-	bool isSceneChange();
-	std::string GetSceneName();
-	
+
 private:
 	void ChangeScene();
 	// 鍛冶場の共有プロップ(St...)モデルを「App生存期間ずっと生きる SceneRoot」が所有して
@@ -23,8 +21,7 @@ private:
 
 private:
 	int m_index = 0;
-	std::string m_sceneName;
-	bool m_isChangeScene = false;
+	std::string m_sceneName;	// ログ用(ウィンドウのタイトルには出さない。タイトルは常に "FORGE")
 };
 
 #endif // __SCENE_ROOT_H__

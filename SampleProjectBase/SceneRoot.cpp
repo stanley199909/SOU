@@ -56,7 +56,6 @@ void SceneRoot::ChangeScene()
 		break;
 	}
 	DebugLog::log(DebugLog::INFO_LOG,"SceneName = " + m_sceneName);
-	m_isChangeScene = true;
 }
 
 
@@ -241,7 +240,6 @@ void SceneRoot::Uninit()
 
 void SceneRoot::Update(float tick)
 {
-	m_isChangeScene = false;
 	CameraBase* pCamera = GetObj<CameraBase>("Camera");
 	LightBase* pLight = GetObj<LightBase>("Light");
 
@@ -350,12 +348,3 @@ void SceneRoot::DrawUI()
 	if (m_pSubScene) m_pSubScene->DrawUI();
 }
 
-bool SceneRoot::isSceneChange()
-{
-	return m_isChangeScene;
-}
-
-std::string SceneRoot::GetSceneName()
-{
-	return m_sceneName;
-}

@@ -1,4 +1,4 @@
-#ifndef __DEFINES_H__
+﻿#ifndef __DEFINES_H__
 #define __DEFINES_H__
 
 #include <assert.h>
@@ -6,7 +6,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 
-#define APP_TITLE "SP31 Shader "
+#define APP_TITLE "FORGE"	// window title (fixed: no scene name appended)
 
 // ��ʃT�C�Y
 #define SCREEN_WIDTH (1280)

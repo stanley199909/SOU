@@ -668,6 +668,60 @@ void SceneForge::DrawHammer3D()
 {
 	Model* hammer = GetObj<Model>("MdlHammer");
 	if (!hammer) return;
+	if (HammerOnHip()) { DrawModelWorld(hammer, HammerHipWorld(hammer)); return; }	// 金床を離れたら右腰に下げる
+	DrawModelWorld(hammer, HammerWorld(hammer));
+}
+
+//--- 打撃の火花の出る所 = ハンマーの頭の真下の、鉄の上面。
+//    水平位置は描かれているハンマーの「頭」から求める(照準点やオフセットから推測しない=タイトルとゲームで同じ規則)。
+//    旧: モデル箱の一番低い面 → 打った瞬間は柄の端の方が低く、火花が柄の端(頭の横 0.3m)から出ていた(2026-10-08 F1 十字で確認)。
+XMFLOAT3 SceneForge::HammerStrikePoint()
+{
+	Model* hammer = GetObj<Model>("MdlHammer");
+	if (!hammer) return m_aimWorld;
+	if (!m_hammerHeadReady) { m_hammerHeadLocal = FindHammerHeadLocal(hammer); m_hammerHeadReady = true; }
+	// 反冲(打った瞬間に頭が上へ翻る/後ろへ下がる見た目)を除いた姿勢 = 頭が実際に落ちた所。反冲込みだと弾かれた後の位置から出ていた
+	const bool WITHOUT_RECOIL = false;
+	XMFLOAT3 head; XMStoreFloat3(&head, XMVector3TransformCoord(XMLoadFloat3(&m_hammerHeadLocal), HammerWorld(hammer, WITHOUT_RECOIL)));
+	return XMFLOAT3(head.x, WorkAnchor().y + BladeDepthBelowCentre(), head.z);	// 高さ = 鉄の上面(頭が当たる所)
+}
+
+//--- ハンマーの頭の中心(モデル空間)。柄は細長く頭は太い → 長軸の両端の帯で「長軸に直交する広がり」を比べ、広い方が頭。
+//    その帯の頂点の平均 = 頭の中心。モデルの向きや原点の位置に依らない(別のハンマーに替えても同じ式)。
+XMFLOAT3 SceneForge::FindHammerHeadLocal(Model* hammer)
+{
+	std::vector<XMFLOAT3> v; hammer->AppendLocalVertices(v);
+	XMFLOAT3 mn, mx; hammer->GetLocalAABB(mn, mx);
+	if (v.empty()) return XMFLOAT3((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f, (mn.z + mx.z) * 0.5f);
+	const int la = AimSystem::LongAxis(mn, mx);
+	const float lo = (&mn.x)[la], hi = (&mx.x)[la];
+	const float END_BAND = 0.2f;	// 長軸の両端この割合の帯を「端」とみなす
+	struct Band { XMFLOAT3 sum{ 0, 0, 0 }; int n = 0; XMFLOAT3 bmn{ FLT_MAX, FLT_MAX, FLT_MAX }, bmx{ -FLT_MAX, -FLT_MAX, -FLT_MAX }; };
+	Band ends[2];
+	for (const XMFLOAT3& p : v)
+	{
+		const float t = ((&p.x)[la] - lo) / fmaxf(hi - lo, 1e-6f);
+		const int e = (t < END_BAND) ? 0 : (t > 1.0f - END_BAND ? 1 : -1);
+		if (e < 0) continue;
+		Band& b = ends[e];
+		b.sum.x += p.x; b.sum.y += p.y; b.sum.z += p.z; ++b.n;
+		b.bmn = XMFLOAT3(fminf(b.bmn.x, p.x), fminf(b.bmn.y, p.y), fminf(b.bmn.z, p.z));
+		b.bmx = XMFLOAT3(fmaxf(b.bmx.x, p.x), fmaxf(b.bmx.y, p.y), fmaxf(b.bmx.z, p.z));
+	}
+	auto spread = [&](const Band& b) {	// 長軸に直交する2軸の広がりの積 = 断面の大きさ
+		if (b.n == 0) return 0.0f;
+		float s = 1.0f;
+		for (int a = 0; a < 3; ++a) if (a != la) s *= (&b.bmx.x)[a] - (&b.bmn.x)[a];
+		return s;
+	};
+	const Band& head = (spread(ends[1]) > spread(ends[0])) ? ends[1] : ends[0];
+	if (head.n == 0) return XMFLOAT3((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f, (mn.z + mx.z) * 0.5f);
+	return XMFLOAT3(head.sum.x / head.n, head.sum.y / head.n, head.sum.z / head.n);
+}
+
+//--- 金床で構えている(打っている)ハンマーのワールド行列。
+XMMATRIX SceneForge::HammerWorld(Model* hammer, bool withRecoil)
+{
 
 	// 準心が当たっているセルの真上にハンマーを置く。準心が板の外に出ても、m_aimWorld/m_aimI/J は
 	// 最後に有効だった位置を保持している(UpdateAimは無効時に値を更新しない)ので、そのまま使う=
@@ -679,7 +733,7 @@ void SceneForge::DrawHammer3D()
 	// これで縦の跳ね(m_hammerLift 側)と、後退＋上翻り(ここ)が同じ物理タイミングで起きる。
 	float rp = 0.0f;
 	float vLaunch = m_hammer.LaunchSpeed();		// 打撃直後の初速 v0 = J/m
-	if (vLaunch > 0.0001f && m_hammer.Velocity() > 0.0f)
+	if (withRecoil && vLaunch > 0.0001f && m_hammer.Velocity() > 0.0f)
 	{
 		rp = m_hammer.Velocity() / vLaunch;		// 0..1 に正規化(速度で駆動)
 		if (rp > 1.0f) rp = 1.0f;
@@ -703,6 +757,32 @@ void SceneForge::DrawHammer3D()
 			+ m_hammerStowTilt * sw,											// 置く時は寝かせる
 			m_hammerRot[1], m_hammerRot[2]) *
 		XMMatrixTranslation(pos.x, pos.y, pos.z);
-	world = hammer->GetScaleBaseMatrix() * world;
-	DrawModelWorld(hammer, world);
+	return hammer->GetScaleBaseMatrix() * world;
+}
+
+//--- ハンマーを右腰に下げているか: 遊んでいて、金床で作業していない時(歩いている / 他の工位 / 移動中)。
+//    タイトルでは金床で自動で打っているので金床のまま。
+bool SceneForge::HammerOnHip() const
+{
+	if (m_state != GAME_PLAY) return false;
+	return m_walkMode || Transitioning() || m_station != Station::Anvil;
+}
+
+//--- 右腰のハンマー: 体の右・床からの高さ・前へ m_hammerHipOff の点に、m_hammerHipRot の向きで(体の向きに合わせて回す)。
+//    火钳の左腰(HipPoint)の左右反対。向き/位置は F1「Carry」で合わせる(モデルの軸に依らない様に回転は数値で持つ)。
+XMMATRIX SceneForge::HammerHipWorld(Model* hammer)
+{
+	const XMFLOAT3 f = BodyForward();
+	const XMFLOAT3 r(f.z, 0.0f, -f.x);	// 右(前方を右へ90度)
+	XMFLOAT3 body = m_player.GetPosition();
+	const XMFLOAT3 p(body.x + r.x * m_hammerHipOff[0] + f.x * m_hammerHipOff[2],
+	                 m_walkFloorY + m_hammerHipOff[1],
+	                 body.z + r.z * m_hammerHipOff[0] + f.z * m_hammerHipOff[2]);
+	const float bodyYaw = atan2f(f.x, f.z);
+	XMMATRIX world =
+		XMMatrixScaling(m_hammerScale, m_hammerScale, m_hammerScale) *
+		XMMatrixRotationRollPitchYaw(m_hammerHipRot[0], m_hammerHipRot[1], m_hammerHipRot[2]) *
+		XMMatrixRotationY(bodyYaw) *
+		XMMatrixTranslation(p.x, p.y, p.z);
+	return hammer->GetScaleBaseMatrix() * world;
 }

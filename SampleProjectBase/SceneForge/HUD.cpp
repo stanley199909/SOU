@@ -606,7 +606,10 @@ void SceneForge::DrawPlayUI()
 		if (QuenchStirring()) { hints = QUENCH_STIR_HINTS; nHints = _countof(QUENCH_STIR_HINTS); }	// 淬火中: 離れられない=揺するだけ
 	}
 	const float GUIDE_Y = 0.93f;		// 操作ガイドの縦位置(画面高さ比)
-	DrawKeyHints(hints, nHints, GUIDE_Y);
+	// 今その操作ができない間は出さない(出すと「押せば効く」と誤解させる。ユーザー指摘 2026-10-07):
+	//   翻面中(翻面の操作は上の専用の案内が出る) / 拍子表の再生中(掴む・置くの演出) / 走動⇔工位の移動中
+	const bool inputLocked = (m_flipPhase != FlipPhase::None) || SequencePlaying() || Transitioning();
+	if (!inputLocked) DrawKeyHints(hints, nHints, GUIDE_Y);
 	DrawStirPrompt();	// 淬火で揺する時だけ、大きな動く案内(膜を破るまで)
 	DrawGrindHint();	// 研ぎで同じ誤りをくり返した時だけ、直し方の動く案内
 
@@ -685,6 +688,12 @@ void SceneForge::DrawStepTracker()
 	}
 	else if (nowType == StepName::Quench)
 		subs[nSub++] = { (const char*)u8"冷", QuenchProgress(), true };	// 冷え切った(焼きが入った)割合
+
+	// 済んでいないバーは満タンに見せない: 進捗は区域の平均なので、1区域だけ少し足りなくても 99% = 見た目は満タンになり、
+	// 「全部終わったのに進まない(99% で止まる)」と見えた(2026-10-08)。全区域が済んだ時だけ 1、それ以外は UNFINISHED_MAX まで。
+	const float UNFINISHED_MAX = 0.9f;
+	for (int k = 0; k < nSub; ++k)
+		if (subs[k].prog < 1.0f) subs[k].prog = fminf(subs[k].prog, UNFINISHED_MAX);
 
 	const int   n      = (int)m_recipe->steps.size();
 	const float row    = disp.y * ROW_RATIO;
@@ -1129,6 +1138,28 @@ void SceneForge::DrawUI()
 			}
 			ImGui::SameLine();
 			if (ImGui::Button("Jump to step")) DebugJumpToStep(m_debugJumpIdx);
+
+			// 区域ごとの進捗(鍛造の形 / 研ぎの刃)。済んでいない区域は赤=「どこが残っているか」を確かめる(99% で止まる調査用)
+			const ImVec4 DONE_COL(0.6f, 0.9f, 0.6f, 1.0f), TODO_COL(1.0f, 0.45f, 0.4f, 1.0f);
+			const char* FACE_NAME[ForgingSim::NSIDES] = { "front", "back " };
+			for (int side = 0; side < ForgingSim::NSIDES; ++side)
+			{
+				ImGui::Text("forge %s:", FACE_NAME[side]);
+				for (int s = 0; s < ForgingSim::NSEG; ++s)
+				{
+					ImGui::SameLine();
+					ImGui::TextColored(m_forging.SegDoneOf(side, s) ? DONE_COL : TODO_COL, "%3.0f", m_forging.SegProgOf(side, s) * 100.0f);
+				}
+			}
+			for (int side = 0; side < ForgingSim::NSIDES; ++side)
+			{
+				ImGui::Text("grind %s:", FACE_NAME[side]);
+				for (int s = 0; s < ForgingSim::NSEG; ++s)
+				{
+					ImGui::SameLine();
+					ImGui::TextColored(m_forging.SharpDoneOf(side, s) ? DONE_COL : TODO_COL, "%3.0f", m_forging.SharpRatioOf(side, s) * 100.0f);
+				}
+			}
 		}
 		ImGui::Separator();
 
@@ -1314,6 +1345,9 @@ void SceneForge::DrawUI()
 			ImGui::SliderFloat("Bob side",           &m_bobSideAmp,    0.0f, 0.04f, "%.3f");	// 左右の揺れ幅
 			ImGui::SliderFloat("Bob steps per meter",&m_bobPerMeter,   0.5f, 4.0f,  "%.2f");	// 1m で何歩=揺れの細かさ
 			ImGui::SliderFloat("Tongs scale",   &m_tongsScale,   0.3f, 3.0f, "%.2f");	// 台上の火钳に対する大きさ
+			ImGui::TextDisabled("-- hammer on the right hip (when not at the anvil) --");
+			ImGui::SliderFloat3("Hammer hip (R/H/F)", m_hammerHipOff, -1.0f, 1.5f, "%.2f");	// 体から 右/床からの高さ/前
+			ImGui::SliderFloat3("Hammer hip rot",     m_hammerHipRot, -3.15f, 3.15f, "%.2f");	// 向き(Pitch/Yaw/Roll)
 			ImGui::SliderFloat3("Hip (L/height/F)", m_hipOff, -0.5f, 1.6f, "%.2f");	// 腰の火钳(体から 左/床からの高さ/前)
 		}
 

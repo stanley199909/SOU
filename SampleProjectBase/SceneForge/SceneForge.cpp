@@ -501,9 +501,11 @@ void SceneForge::Strike(float scale)
 {
 	// 1回叩くと火花をまとめて発生(バースト)。量と勢いの物理は Particles が持つ。
 	const int N = (int)(m_burst * scale);
-	// 出る所 = 叩いた所: ハンマーの真下(照準点 m_aimWorld の水平位置)の、刃の上面
-	//   (旧: (0,1,0) のベタ書き=金床がどこにあっても同じ所から出ていた)。上面 = 刃の中心 + 中心→表面の深さ。
-	XMFLOAT3 origin(m_aimWorld.x, WorkAnchor().y + BladeDepthBelowCentre(), m_aimWorld.z);
+	// 出る所 = 叩いた所: 描かれているハンマーの頭の打つ面(HammerStrikePoint)。照準点やオフセットからの推測でなくモデルから。
+	//   (旧: (0,1,0) のベタ書き → 照準点。照準点は m_hammerOff と追従の遅れの分だけ頭とずれ、タイトルで合わなかった)。
+	XMFLOAT3 origin = HammerStrikePoint();
+	m_lastStrikeOrigin = origin;	// F1 のデバッグ表示(洋紅の十字)
+	//   タイトルの自動打ちも同じ Strike() を通る=ゲームとタイトルで火花の出る所の規則が同じ。
 	m_particles.SpawnSparks(origin, N, m_power, scale);
 }
 

@@ -121,7 +121,15 @@ private:
 	void  LoadLayout();						// stage_layout.txt を読み、プロップ/炭の配置を上書き(編集シーンと共有)
 	DirectX::XMMATRIX PropWorld(Prop& p);	// アンカー方式のワールド行列(地面に自動設置)
 	void  DrawScenery();		// 装飾モデルをまとめて描画
-	void  DrawHammer3D();		// 3Dハンマー(蓄力で上がり打撃で振り下ろす)
+	void  DrawHammer3D();		// 3Dハンマー(蓄力で上がり打撃で振り下ろす。金床を離れたら右腰)
+	DirectX::XMMATRIX HammerWorld(Model* hammer, bool withRecoil = true);	// 金床で構える/打つハンマーの行列(描画と火花で共用。火花は反冲無しの落ちた所)
+	DirectX::XMMATRIX HammerHipWorld(Model* hammer);	// 右腰に下げたハンマーの行列
+	DirectX::XMFLOAT3 HammerStrikePoint();				// ハンマーの頭の真下の鉄の上面(打撃の火花の出る所)
+	DirectX::XMFLOAT3 m_lastStrikeOrigin = { 0, 0, 0 };	// 最後に打撃の火花が出た点(F1 で十字を描く)
+	DirectX::XMFLOAT3 m_hammerHeadLocal = { 0, 0, 0 };	// ハンマーの頭の中心(モデル空間。初回に頂点から求めて覚える)
+	bool  m_hammerHeadReady = false;
+	DirectX::XMFLOAT3 FindHammerHeadLocal(Model* hammer);	// 長軸の両端で断面の広い方 = 頭
+	bool  HammerOnHip() const;							// 右腰に下げているか(金床で作業していない時)
 	int   BuildBarMesh();		// 高さ場 m_h[][] から3D鉄板の頂点を生成(戻り値=頂点数)
 	void  Draw3DBillet();		// 3Dの光る鉄板を描画
 	void DrawHeatGauge();	// 温度ゲージ(HUD)
@@ -542,6 +550,9 @@ private:
 	static constexpr float TONGS_JAW_CENTER_FRAC = 0.5f;	// 挟む点 = 口の先端→鋲 のこの割合の所
 	void  InitTongsGeometry();						// 上の値を火钳モデルから求める(Init で1回)
 	float m_hipOff[3]     = { 0.28f, 0.95f, 0.12f };	// 腰の火钳の位置(体から 左/床からの高さ/前, world)
+	// 右腰のハンマー(ユーザー要望 2026-10-08: 金床を離れてもハンマーが金床に残って見えた → 左腰=火钳 / 右腰=ハンマー)。F1「Carry」で合わせる
+	float m_hammerHipOff[3] = { 0.28f, 0.95f, 0.12f };	// 体から 右/床からの高さ/前(m)
+	float m_hammerHipRot[3] = { 3.14f, -0.2f, -1.58f };	// 向き(rad, Pitch/Yaw/Roll。体の向きに対して)。既定は金床で構える向き
 	DirectX::XMFLOAT3 HeldPoint();					// 手に持った鉄の中心(挟む点から m_heldDir へずらした所)。m_heldDir も更新
 	DirectX::XMFLOAT3 HeldGrip();					// 火钳が鉄を挟む点(カメラ基準)
 	bool  CameraBasis(DirectX::XMVECTOR& eye, DirectX::XMVECTOR& fwd, DirectX::XMVECTOR& right, DirectX::XMVECTOR& up);	// 今のカメラの位置と向き

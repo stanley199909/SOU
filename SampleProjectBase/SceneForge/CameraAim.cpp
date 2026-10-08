@@ -800,7 +800,22 @@ void SceneForge::DrawDebugBoxes()
 	Geometory::SetColor(XMFLOAT4(1.0f, 0.9f, 0.2f, 1.0f));
 	DrawBoxEdges(bc);
 
+	// 最後に打撃の火花が出た点(洋紅の十字)と、今のハンマーの頭の打つ面(水色の十字)。
+	//   火花の出る所と叩いた所が合っているかを確かめる(タイトルでずれて見えた調査用)。
+	const float CROSS = 0.08f;	// 十字の半分の長さ(m)
+	auto cross = [&](const XMFLOAT3& p, const XMFLOAT4& col)
+	{
+		Geometory::SetColor(col);
+		Geometory::AddLine(XMFLOAT3(p.x - CROSS, p.y, p.z), XMFLOAT3(p.x + CROSS, p.y, p.z));
+		Geometory::AddLine(XMFLOAT3(p.x, p.y - CROSS, p.z), XMFLOAT3(p.x, p.y + CROSS, p.z));
+		Geometory::AddLine(XMFLOAT3(p.x, p.y, p.z - CROSS), XMFLOAT3(p.x, p.y, p.z + CROSS));
+	};
+	cross(m_lastStrikeOrigin, XMFLOAT4(1.0f, 0.2f, 1.0f, 1.0f));
+	cross(HammerStrikePoint(), XMFLOAT4(0.3f, 0.9f, 1.0f, 1.0f));
+
+	SetDepthTest(DEPTH_DISABLE);	// 物の中でも見える(透視)
 	Geometory::DrawLines();
+	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
 }
 
 //====================================================================================
@@ -882,6 +897,8 @@ void SceneForge::SaveTuning()
 	fprintf(fp, "grindview %.5f\n", m_grindViewYaw);
 	fprintf(fp, "stationfront %d %d\n", m_hearthFrontFlip ? 1 : 0, m_troughFrontFlip ? 1 : 0);
 	fprintf(fp, "hintafter %d\n", m_hintAfterMistakes);
+	fprintf(fp, "hammerhip %.5f %.5f %.5f %.5f %.5f %.5f\n", m_hammerHipOff[0], m_hammerHipOff[1], m_hammerHipOff[2],
+	        m_hammerHipRot[0], m_hammerHipRot[1], m_hammerHipRot[2]);
 	fprintf(fp, "seqfeel %.5f %.5f %.5f %.5f\n", m_seqHandLag, m_seqArcLift, m_seqTimeJitter, m_seqArcJitter);
 	fprintf(fp, "carryavoid %.5f %.5f %.5f %.5f\n", m_carryAvoidMaxRaise, m_carryAvoidMargin, m_carryAvoidLambda, m_carryAvoidMaxPull);
 	fprintf(fp, "hearthlay %.5f %.5f %.5f\n", m_hearthYaw, m_hearthTipSide, m_hearthTipDepth);
@@ -1034,6 +1051,8 @@ void SceneForge::LoadTuning()
 		else if (strcmp(key, "carryavoid") == 0) sscanf_s(v, "%f %f %f %f", &m_carryAvoidMaxRaise, &m_carryAvoidMargin, &m_carryAvoidLambda, &m_carryAvoidMaxPull);	// 旧ファイル(3つ)は引き寄せが既定のまま
 		else if (strcmp(key, "seqfeel")    == 0) sscanf_s(v, "%f %f %f %f", &m_seqHandLag, &m_seqArcLift, &m_seqTimeJitter, &m_seqArcJitter);
 		else if (strcmp(key, "hearthlay")  == 0) sscanf_s(v, "%f %f %f", &m_hearthYaw, &m_hearthTipSide, &m_hearthTipDepth);
+		else if (strcmp(key, "hammerhip")  == 0) sscanf_s(v, "%f %f %f %f %f %f", &m_hammerHipOff[0], &m_hammerHipOff[1], &m_hammerHipOff[2],
+		                                                  &m_hammerHipRot[0], &m_hammerHipRot[1], &m_hammerHipRot[2]);
 		else if (strcmp(key, "hintafter")  == 0) { sscanf_s(v, "%d", &m_hintAfterMistakes); if (m_hintAfterMistakes < 1) m_hintAfterMistakes = 1; }	// 0 だと最初から出続ける
 		else if (strcmp(key, "stationfront") == 0) { int h = 0, t = 0; sscanf_s(v, "%d %d", &h, &t); m_hearthFrontFlip = (h != 0); m_troughFrontFlip = (t != 0); }
 		else if (strcmp(key, "hotsteel")   == 0) sscanf_s(v, "%f %f %f %f", &m_wpHotShade, &m_wpRimK, &m_wpRimPow, &m_wpHotGain);

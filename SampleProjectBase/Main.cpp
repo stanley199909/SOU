@@ -27,7 +27,7 @@ HRESULT Init(HWND hWnd, UINT width, UINT height)
 	// シーン作成
 	g_pScene = std::make_shared<SceneRoot>();
 	g_pScene->Init();
-	SetWindowText(hWnd, (APP_TITLE + g_pScene->GetSceneName()).c_str());
+	SetWindowText(hWnd, APP_TITLE);	// 作品名だけ(シーン名は付けない=切り替えても変わらない)
 
 	// 初期リソース作成
 	auto rtv = g_pScene->CreateObj<RenderTarget>("RTV");
@@ -68,10 +68,6 @@ void Update(HWND hWnd, float tick)
 	if (IsKeyTrigger(VK_F1)) DebugUI::Toggle();	// F1でデバッグUIの表示切替
 	g_pScene->_update(tick);
 	g_pPost->Update(tick);
-
-	if (g_pScene->isSceneChange()) {
-		SetWindowText(hWnd, (APP_TITLE + g_pScene->GetSceneName()).c_str());
-	}
 }
 
 void Draw()
