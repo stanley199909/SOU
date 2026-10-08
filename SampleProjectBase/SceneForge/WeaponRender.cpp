@@ -291,10 +291,23 @@ XMMATRIX SceneForge::WeaponRot() const
 	// 砥石の研ぎ角も同じ回し方(長軸まわり)。F の裏返しは同じ軸での半回転を足す。
 	else if ((m_workAt == Station::Trough && m_quenchTurn > 0.0f) || (m_workAt == Station::Grindstone && (m_grindAngle != 0.0f || m_grindFlipRoll != 0.0f)))
 	{
-		const float angle = (m_workAt == Station::Trough) ? m_quenchTurn * QUENCH_TURN_ANGLE : m_grindFlipRoll + m_grindAngle;	// 砥石: 裏返し(半回転) + 研ぎ角
 		const int la = AimSystem::LongAxis(m_wpMin, m_wpMax);
 		const XMVECTOR local = XMVectorSet(la == 0 ? 1.0f : 0.0f, la == 1 ? 1.0f : 0.0f, la == 2 ? 1.0f : 0.0f, 0.0f);
-		r = r * XMMatrixRotationAxis(XMVector3TransformNormal(local, r), angle);
+		const XMVECTOR axisW = XMVector3TransformNormal(local, r);	// 今の長軸(ワールド)
+		float angle;
+		if (m_workAt == Station::Trough) angle = m_quenchTurn * QUENCH_TURN_ANGLE;
+		else
+		{
+			// 研ぎ角の向きを画面に対して一定にする: 長軸のワールドの向きは「どちらの端から置いたか(m_restFlip)」などで
+			//   毎回 +StationRight にも -StationRight にもなる → 同じ角度でも傾く向きが局ごとに逆だった(2026-10-08 F5)。
+			//   長軸が -StationRight を向いている時は角度の符号を反す=回転は常に +StationRight まわり=マウス上で同じ側が上がる。
+			//   裏返し(半回転)は同じ軸まわりなので、傾く向きには影響しない。
+			const XMFLOAT3 sr = StationRight();
+			const float along = XMVectorGetX(XMVector3Dot(axisW, XMLoadFloat3(&sr)));
+			const float tiltSign = (along < 0.0f ? -1.0f : 1.0f) * GRIND_TILT_DIR;
+			angle = m_grindFlipRoll + tiltSign * m_grindAngle;	// 砥石: 裏返し(半回転) + 研ぎ角
+		}
+		r = r * XMMatrixRotationAxis(axisW, angle);
 	}
 	return r;
 }

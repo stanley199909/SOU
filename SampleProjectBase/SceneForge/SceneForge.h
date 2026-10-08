@@ -246,6 +246,7 @@ private:
 	static constexpr float GRIND_ANGLE_MAX    = 0.80f;	// 傾けられる限界(rad, 約46°)
 	static constexpr float GRIND_ANGLE_FOLLOW = 14.0f;	// 刃が目標を追う速さ(Damp率, 1/秒)
 	static constexpr float GRIND_IDEAL_ANGLE  = 0.35f;	// 正しい研ぎ角(rad, 約20°)
+	static constexpr float GRIND_TILT_DIR     = 1.0f;	// 研ぎ角で傾く向き(画面に対して一定。+1/-1。逆に見えたら符号を反す)
 	static constexpr float GRIND_ANGLE_TOL    = 0.20f;	// 正しい角からこれだけ外れると研げなくなる(rad, 約11°)
 	float GrindAngleEfficiency() const;				// 研ぎの効率 0..1(正しい角で 1、TOL 外れで 0)
 	int   GrindSide() const;							// 今研いでいる刃の面(0 = 表 / 1 = 裏)= 砥石へ向いている面(WeaponRender.cpp)
