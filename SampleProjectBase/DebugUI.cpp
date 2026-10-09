@@ -75,7 +75,7 @@ void DebugUI::Init(HWND hWnd, ID3D11Device* device, ID3D11DeviceContext* context
 	//   新しい文言で ? が出たら、その漢字を JP_EXTRA_CHARS に足すだけでよい。
 	//   (全CJK範囲を焼くと2万字超=アトラスが数十MBになるので、必要な字だけ足す)
 	//   記号も同じ: 「…」(U+2026, 一般句読点) は日本語範囲の外 → 独白の「…」が ? になっていた(2026-10-07)。
-	const char* JP_EXTRA_CHARS = (const char*)u8"叩掴…";
+	const char* JP_EXTRA_CHARS = (const char*)u8"叩掴…①②③▼▲一上下中位体作使先光入全内冶冷出刃分前力動十印反右合回囲場変完定対小少左常床度当形待意成所押揺操散方早時最案槽次歩残水決注温溜火炉焼熱画皮目直石研砥範終続緑置耳自花行裏見角計詳踏近返通進運過選金鉄鍛長限離青面黒④キー了戻";
 	static ImVector<ImWchar> s_jpRanges;	// フォントアトラスを Build するまで生きている必要がある=static
 	{
 		ImFontGlyphRangesBuilder rb;

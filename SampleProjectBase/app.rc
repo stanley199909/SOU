@@ -1,0 +1,5 @@
+// Resources embedded in the exe. Kept ASCII-only so the resource compiler reads it as-is.
+#include "resource.h"
+
+// The first ICON resource is also what Explorer / the desktop shortcut shows for the exe.
+IDI_APPICON ICON "forge.ico"

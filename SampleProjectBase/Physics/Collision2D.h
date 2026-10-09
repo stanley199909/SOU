@@ -11,9 +11,10 @@
 //       * Hull:    a free-standing prop (anvil, bucket...) is roughly convex -> the 2D
 //                  CONVEX HULL of its vertices projected onto the floor. Cheap, tight.
 //       * Segment: a building is concave (a room!) - a hull would fill the whole room.
-//                  Instead the mesh is SLICED by a horizontal plane at waist height; the
-//                  cut is the floor plan as line segments. Openings at that height (a
-//                  doorway) produce no segments, so they are passable automatically.
+//                  Instead the mesh is SLICED by horizontal planes over the body's height
+//                  (several planes, unioned); the cuts are the floor plan as line segments.
+//                  An opening at every height (a doorway) produces no segments, so it is
+//                  passable automatically.
 //                  This is the 2D version of per-triangle ("complex") collision.
 //     Both are built automatically from the model: no hand-placed boxes.
 //   - Response = push-out: after moving, if the circle overlaps a proxy it is pushed

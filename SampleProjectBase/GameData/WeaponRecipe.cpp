@@ -35,7 +35,7 @@ const WeaponRecipe ShortSword = {
     "Short Sword",
     {
         { StepName::Heat,   (const char*)u8"加熱",   (const char*)u8"鉄を炉に入れ、火花が散るまで熱する" },
-        { StepName::Forge,  (const char*)u8"鍛造",   (const char*)u8"金床で、赤いうちに叩いて形を作る（F で裏返す）" },
+        { StepName::Forge,  (const char*)u8"鍛造",   (const char*)u8"金床で、赤いうちに叩いて形を作る（Fキーで裏返す）" },
         { StepName::Grind,  (const char*)u8"研ぎ",   (const char*)u8"砥石で刃を研ぐ" },
         { StepName::Heat,   (const char*)u8"再加熱", (const char*)u8"もう一度、火花が散るまで熱する" },
         { StepName::Quench, (const char*)u8"焼入れ", (const char*)u8"燃える刃を水槽に沈める" },

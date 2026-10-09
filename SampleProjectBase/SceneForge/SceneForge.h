@@ -718,6 +718,24 @@ private:
 	void  ClosePause();
 	void  UpdatePause();
 	void  DrawPauseMenu();						// HUD.cpp
+	// 羊皮紙の選択パネル(一時停止メニューとタイトルのモード選択で共用)。クリックされた項目の番号を返す(無ければ -1)。
+	//   sel = 今選んでいる項目(マウスのホバーで書き換わる)。centerY = パネルの中心の縦位置(画面高さ比)。
+	int   DrawChoicePanel(const char* head, const char* const* labels, int n, int& sel, float centerY, bool dimBack);
+
+	//--- チュートリアル(2026-10-09 ユーザー要望: 初めての人向け)。タイトルで「チュートリアル / 通常モード」を選ぶ。
+	//    チュートリアルの時だけ: 右の説明パネル / 刃の未完成の所を青く光らせる / 温度ゲージの「ここで叩く」/ 研ぎの角度計 /
+	//    研ぎの誤りの案内をすぐ出す。通常モードの遊び方・判定は一切変えない(表示を足すだけ)。
+	enum class ModeItem { Tutorial, Normal, Count };	// 並び順 = 選択パネルの上から
+	bool  m_tutorial       = false;				// この回はチュートリアルか(タイトルで選んだ値。次に選ぶまで保つ)
+	bool  m_modeSelectOpen = false;				// タイトルでモード選択を開いているか
+	int   m_modeSel        = 0;					// 選んでいる項目
+	int   m_modeRequest    = -1;				// 決定された項目(描画側のクリック or キー)。次の UpdateTitle で実行
+	const char* TutorialTip();					// 今の状況の説明文(チュートリアルでなければ nullptr)
+	void  DrawTutorialPanel();					// 右の説明パネル
+	void  DrawGrindAngleMeter();				// 研ぎの角度計(緑 = 研げる角度 / 印 = 今の角度)
+	bool  TutorialAtAnvil() const;				// チュートリアルで金床の工位にいて鍛造できる状態か(高亮を出す)
+	static constexpr float TUTORIAL_HI_STRENGTH = 0.55f;	// 未完成の所を青く光らせる強さ(0..1)
+	static constexpr float TUTORIAL_HI_PULSE_HZ = 1.2f;	// その明滅の速さ(回/秒)
 
 	//--- 調整用パラメータ(F1デバッグでスライダ変更可)
 	float m_strikeCDMax = 1.25f;	// 打撃後クールダウン(秒)

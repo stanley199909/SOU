@@ -1,0 +1,24 @@
+FORGE - Credits / クレジット
+==================================================
+
+■ 効果音 / Sound Effects (要クレジット / attribution required)
+
+- "Rubbing" by ZijunSANG
+  https://freesound.org/s/798312/
+  License: CC BY-NC 4.0 (https://creativecommons.org/licenses/by-nc/4.0/)
+  使用箇所: 工程リストの取り消し線を消す音 (Assets/Sound/SE/eraser.wav に加工)
+
+- "extinguishing fire" by soundslikewillem
+  https://freesound.org/s/399548/
+  License: CC BY-NC 4.0 (https://creativecommons.org/licenses/by-nc/4.0/)
+  使用箇所: 焼入れ (Assets/Sound/SE/quench.wav に加工)
+
+※ NC = 非営利のみ。商用化する場合はこの2つを差し替えること。
+
+■ クレジット不要の素材 / No attribution required (参考)
+
+- freesound.org (CC0): "Metal Grinding-Sharpening" by sentryx86 / "Writing Short with Pencil" by WaltzOfTheWifi
+- Pixabay (Pixabay Content License): BGM・効果音 (tunetank / dragon-studio / soundreality / freesound_community)
+- Poly Haven (CC0): 岩壁テクスチャ
+- Kenney (CC0): 操作キーのアイコン
+- MM Blacksmith Pack / Fantasy Props MegaKit: 購入素材 (各ライセンスに従う)

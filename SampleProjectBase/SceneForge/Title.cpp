@@ -26,6 +26,7 @@ void SceneForge::ResetTitleStage()
 	m_autoTimer = 0.0f;
 	m_introPhase = IntroPhase::None;
 	m_introTimer = 0.0f;
+	m_modeSelectOpen = false;	// タイトルに戻った時はモード選択を閉じた状態から(SPACE でまた開く)
 }
 
 //--- 導入の段階を進める(ユーザーの演出指示: 一つ終わってから次へ)。

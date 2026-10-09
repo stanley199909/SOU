@@ -249,6 +249,7 @@
     <ClInclude Include="Physics\ForgingSim.h" />
     <ClInclude Include="Physics\WaterSim.h" />
     <ClInclude Include="Physics\WorkField.h" />
+    <ClInclude Include="resource.h" />
     <ClInclude Include="Physics\Particles.h" />
     <ClInclude Include="Physics\GrindWheel.h" />
     <ClInclude Include="Physics\Collision2D.h" />
@@ -359,6 +360,12 @@
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
     </FxCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="app.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="forge.ico" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

@@ -385,6 +385,17 @@ void SceneForge::DrawHeatGauge()
 			dl->AddImage((ImTextureID)marker->GetResource(), ImVec2(mx - mw * 0.5f, tipY - mh), ImVec2(mx + mw * 0.5f, tipY),
 			             ImVec2(0, 0), ImVec2(1, 1), TINT);
 		}
+		// チュートリアル: 緑の帯の下に「ここで叩く」(この温度の時だけ有効な打撃)。上は指針が動くので下に置く
+		if (TutorialAtAnvil())
+		{
+			const float LABEL_RATIO = 0.024f, GAP = 0.3f;	// 文字の高さ / 外框の下端から離す量(文字の高さ比)
+			const float lpx = disp.y * LABEL_RATIO;
+			ImFont* f = DebugUI::FontJPFor(lpx);
+			const char* label = (const char*)u8"▲ ここで叩く";
+			const ImVec2 sz = f->CalcTextSizeA(lpx, FLT_MAX, 0.0f, label);
+			const float cxg = (heatX(IDEAL_MIN) + heatX(IDEAL_MAX)) * 0.5f;
+			dl->AddText(f, lpx, ImVec2(cxg - sz.x * 0.5f, fy1 + lpx * GAP), IM_COL32(150, 235, 150, 255), label);
+		}
 		return;
 	}
 
@@ -442,6 +453,16 @@ void SceneForge::DrawTitleUI()
 		alpha = Lerp::Linear(1.0f, 0.0f, fminf(m_introTimer / m_logoFadeTime, 1.0f));
 	DrawTitleLogo(alpha);
 	// 開始プロンプトは緩やかに明滅させて「操作可能」を伝える
+	if (m_modeSelectOpen)
+	{
+		static const char* LABELS[(int)ModeItem::Count] = { (const char*)u8"チュートリアル", (const char*)u8"通常モード" };
+		static const char* DESCS[(int)ModeItem::Count]  = { (const char*)u8"はじめての方へ。操作と叩く場所を、画面で詳しく案内します", (const char*)u8"案内は最小限。自分の目と耳で鍛冶を進めます" };
+		const float PANEL_CENTER_Y = 0.70f, DESC_Y = 0.90f, DESC_SCALE = 0.8f;
+		const int clicked = DrawChoicePanel((const char*)u8"モードを選ぶ", LABELS, (int)ModeItem::Count, m_modeSel, PANEL_CENTER_Y, false);
+		if (clicked >= 0) m_modeRequest = clicked;	// 実行は UpdateTitle
+		CenterText(DESCS[m_modeSel], DESC_Y, DESC_SCALE, IM_COL32(255, 236, 196, 235), DebugUI::FontJP());
+		return;
+	}
 	float p = (0.6f + 0.4f * sinf(m_time * 3.0f)) * alpha;
 	CenterText("PRESS  SPACE  TO  START", 0.86f, 1.15f, IM_COL32(255, 255, 255, (int)(255 * p)), body);
 }
@@ -473,6 +494,8 @@ void SceneForge::DrawPlayUI()
 	// 工程リスト(左)と、走動中に次に向かう点の目印(3D の上)
 	DrawStepTracker();
 	DrawObjectiveMarker();
+	DrawTutorialPanel();	// チュートリアルだけ: 右の説明パネル(通常モードでは何も描かない)
+	if (m_tutorial && AtStation(Station::Grindstone) && !m_clearDecided) DrawGrindAngleMeter();
 
 	// 案内文(宏観チュートリアル=「今何をするか」)。工程と状況で変わる(UpdateGuide)。
 	//   基本の文言は配方(GameData/WeaponRecipe)が持つ=換武器で自動的に差し替わる。
@@ -642,21 +665,22 @@ void SceneForge::DrawStepTracker()
 	auto JP = [](float px) { return DebugUI::FontJPFor(px); };	// 見出し/工程名/表裏で大きさが違う→それぞれ一番近い実寸
 
 	// --- 羊皮紙パネル ---
+	const float TRACKER_SCALE   = 0.8f;	// パネル全体の大きさ(1 = 初版)。視野を遮らない様に小さく(2026-10-09 ユーザー要望)
 	const float PANEL_X_RATIO   = 0.015f;	// パネルの左端(画面幅比)
 	const float PANEL_Y_RATIO   = 0.22f;	// パネルの上端(画面高さ比)
-	const float PANEL_W_RATIO   = 0.22f;	// パネルの幅(画面幅比)。狭すぎると上辺中央の飾りが横に潰れる
-	const float FRAME_CORNER_RATIO = 0.085f;	// 画面上の隅の大きさ(画面高さ比)
+	const float PANEL_W_RATIO   = 0.22f * TRACKER_SCALE;	// パネルの幅(画面幅比)。狭すぎると上辺中央の飾りが横に潰れる
+	const float FRAME_CORNER_RATIO = 0.085f * TRACKER_SCALE;	// 画面上の隅の大きさ(画面高さ比)
 	const float INSET_TOP       = 0.95f;	// 中身の上端=上辺の飾りの下(隅の大きさに対する比)
 	const float INSET_BOTTOM    = 0.75f;	// 中身の下端から下辺まで(同)
 	const float INSET_SIDE      = 0.60f;	// 中身の左右の余白(同)。枠の二重線の内側
 
 	// --- 行 ---
-	const float ROW_RATIO     = 0.050f;	// 行の間隔
-	const float TEXT_RATIO    = 0.030f;	// 工程名の文字の高さ
-	const float HEAD_RATIO    = 0.026f;	// 見出し「工程」の文字の高さ
+	const float ROW_RATIO     = 0.050f * TRACKER_SCALE;	// 行の間隔
+	const float TEXT_RATIO    = 0.030f * TRACKER_SCALE;	// 工程名の文字の高さ
+	const float HEAD_RATIO    = 0.026f * TRACKER_SCALE;	// 見出し「工程」の文字の高さ
 	const float HEAD_GAP      = 1.1f;	// 見出しから1行目までの間隔(行単位)
-	const float DOT_RATIO     = 0.0065f;	// 丸印の半径
-	const float TEXT_GAP_RATIO= 0.012f;	// 丸と工程名の間(画面高さ比)
+	const float DOT_RATIO     = 0.0065f * TRACKER_SCALE;	// 丸印の半径
+	const float TEXT_GAP_RATIO= 0.012f * TRACKER_SCALE;	// 丸と工程名の間(画面高さ比)
 	const float NOW_DOT_SCALE = 1.3f;	// 「今」の丸は少し大きく
 	const float LINE_W        = 1.5f;	// 輪・取り消し線の太さ(px)
 	const float PULSE_SEC     = 1.2f;	// 工程が変わった直後、今の工程を明滅させる長さ
@@ -669,11 +693,11 @@ void SceneForge::DrawStepTracker()
 
 	// --- 今の工程の下の進捗バー(工程の中の進み具合=「止まって見えない」様に) ---
 	//   鍛造=表/裏の2本(今上の面を濃く) / 研ぎ=刃の1本。どこを叩け等は出さない(面全体の割合だけ)。
-	const float SUB_ROW_RATIO  = 0.030f;	// 進捗バー1本分の行の高さ
-	const float SUB_TEXT_RATIO = 0.022f;	// 「表/裏/刃」の文字の高さ
-	const float BAR_W_RATIO    = 0.085f;	// バーの長さ(画面幅比)
-	const float BAR_H_RATIO    = 0.010f;	// バーの太さ(画面高さ比)。細すぎると紙の模様に紛れて見えなかった
-	const float BAR_GAP_RATIO  = 0.012f;	// 文字とバーの間(画面高さ比)
+	const float SUB_ROW_RATIO  = 0.030f * TRACKER_SCALE;	// 進捗バー1本分の行の高さ
+	const float SUB_TEXT_RATIO = 0.022f * TRACKER_SCALE;	// 「表/裏/刃」の文字の高さ
+	const float BAR_W_RATIO    = 0.085f * TRACKER_SCALE;	// バーの長さ(画面幅比)
+	const float BAR_H_RATIO    = 0.010f * TRACKER_SCALE;	// バーの太さ(画面高さ比)。細すぎると紙の模様に紛れて見えなかった
+	const float BAR_GAP_RATIO  = 0.012f * TRACKER_SCALE;	// 文字とバーの間(画面高さ比)
 	const ImU32 BAR_BG_COL     = IM_COL32(60, 42, 28, 110);	// 紙に引いた溝(空でも「ここにバーがある」と分かる濃さ)
 	const ImU32 BAR_EDGE_COL   = IM_COL32(60, 42, 28, 200);	// 溝の輪郭(インクの線)
 	const ImU32 BAR_IDLE_COL   = INK_PENDING;					// 今は下を向いている面の進み(普通のインク。旧: 薄れたインクで見えにくかった)
@@ -689,7 +713,7 @@ void SceneForge::DrawStepTracker()
 	}
 	else if (nowType == StepName::Grind)
 	{
-		// 両側の刃(F で裏返して研ぐ面を変える)。今研いでいる面を濃く
+		// 両側の刃(Fキーで裏返して研ぐ面を変える)。今研いでいる面を濃く
 		subs[nSub++] = { (const char*)u8"表", m_forging.SharpProgress(0), GrindSide() == 0 };
 		subs[nSub++] = { (const char*)u8"裏", m_forging.SharpProgress(1), GrindSide() == 1 };
 	}
@@ -803,18 +827,18 @@ const char* SceneForge::GuideFor(Station& goal) const
 		}
 		if (heat < MinWorkTemp(st.type)) { goal = Station::Hearth; return (const char*)u8"鉄が冷めた。炉で熱し直す"; }
 		if (m_forging.SideDone(m_forging.Side()) && !m_forging.BothSidesDone())
-			return (const char*)u8"この面は仕上がった。F で裏返す";
+			return (const char*)u8"この面は仕上がった。Fキーで裏返す";
 		return st.instruction;
 
 	case StepName::Grind:
 	{
-		// 「F で裏返す」は、今研いでいる面が仕上がっていて、もう片方が残っている時だけ(鍛造と同じ判断)。
+		// 「Fキーで裏返す」は、今研いでいる面が仕上がっていて、もう片方が残っている時だけ(鍛造と同じ判断)。
 		//   裏返した後(今の面がまだ)は普段の案内に戻る=文が変わるので案内は淡出→淡入する(2026-10-07: 裏返しても消えなかった)。
 		const float DONE = 1.0f;
 		const int  side = GrindSide();
 		const bool thisDone  = m_forging.SharpProgress(side)     >= DONE;
 		const bool otherDone = m_forging.SharpProgress(1 - side) >= DONE;
-		if (thisDone && !otherDone) return (const char*)u8"この面の刃は仕上がった。F で裏返す";
+		if (thisDone && !otherDone) return (const char*)u8"この面の刃は仕上がった。Fキーで裏返す";
 		return st.instruction;
 	}
 
@@ -1097,9 +1121,9 @@ void SceneForge::DrawResultUI()
 	CenterText("Sound: ZijunSANG, soundslikewillem (freesound.org, CC BY-NC 4.0)", CREDIT_Y, CREDIT_SCALE, IM_COL32(200, 190, 170, 170), body);
 }
 
-//--- 一時停止メニュー: 画面を暗くし、中央に羊皮紙のパネル(工程リストと同じ見た目)。項目はマウスのホバーで選び、クリックで決定。
-//    実行は UpdatePause(次の Update)=描画の途中で状態を変えない。寸法は画面比(解像度非依存)。
-void SceneForge::DrawPauseMenu()
+//--- 羊皮紙の選択パネル(一時停止メニュー / タイトルのモード選択)。工程リストと同じ見た目。
+//    項目はマウスのホバーで選び、クリックで決定(戻り値)。実行は呼び出し側の Update=描画の途中で状態を変えない。寸法は画面比。
+int SceneForge::DrawChoicePanel(const char* head, const char* const* labels, int n, int& sel, float centerY, bool dimBack)
 {
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
 	ImDrawList* dl = ImGui::GetForegroundDrawList();
@@ -1117,16 +1141,14 @@ void SceneForge::DrawPauseMenu()
 	const ImU32 INK_HEAD = IM_COL32( 60,  38,  22, 255);		// 工程リストと同じインク
 	const ImU32 INK_ITEM = IM_COL32( 60,  42,  28, 220);
 	const ImU32 INK_SEL  = IM_COL32(150,  32,  18, 255);		// 選択中 = 朱(工程リストの「今」と同じ)
-	static const char* LABELS[(int)PauseItem::Count] = {
-		(const char*)u8"ゲームを続ける", (const char*)u8"タイトルへ戻る", (const char*)u8"ゲームを終了する" };
 
-	dl->AddRectFilled(ImVec2(0, 0), disp, DIM_COL);
+	if (dimBack) dl->AddRectFilled(ImVec2(0, 0), disp, DIM_COL);
 
 	const float corner = disp.y * CORNER_RATIO;
 	const float row    = disp.y * ROW_RATIO;
 	const float panelW = disp.x * PANEL_W_RATIO;
-	const float panelH = corner * INSET_TOP + row * HEAD_GAP + row * (int)PauseItem::Count + corner * INSET_BOTTOM;
-	const ImVec2 pa((disp.x - panelW) * 0.5f, (disp.y - panelH) * 0.5f);
+	const float panelH = corner * INSET_TOP + row * HEAD_GAP + row * n + corner * INSET_BOTTOM;
+	const ImVec2 pa((disp.x - panelW) * 0.5f, disp.y * centerY - panelH * 0.5f);
 	const ImVec2 pb(pa.x + panelW, pa.y + panelH);
 	DrawParchment(dl, m_uiFrame.get(), pa, pb, corner);
 
@@ -1135,33 +1157,161 @@ void SceneForge::DrawPauseMenu()
 	{
 		const float px = disp.y * HEAD_RATIO;
 		ImFont* f = DebugUI::FontJPFor(px);
-		const char* head = (const char*)u8"一時停止";
 		const ImVec2 sz = f->CalcTextSizeA(px, FLT_MAX, 0.0f, head);
 		dl->AddText(f, px, ImVec2(cx - sz.x * 0.5f, cy), INK_HEAD, head);
 	}
 	cy += row * HEAD_GAP;
 
+	int clicked = -1;
 	const ImVec2 mouse = ImGui::GetIO().MousePos;
 	const float  ipx   = disp.y * ITEM_RATIO;
 	ImFont* f = DebugUI::FontJPFor(ipx);
-	for (int i = 0; i < (int)PauseItem::Count; ++i, cy += row)
+	for (int i = 0; i < n; ++i, cy += row)
 	{
 		// 当たり判定 = パネルの幅いっぱい × 1行(文字の上だけでなく行のどこでも選べる)
 		const ImVec2 ra(pa.x + corner * INSET_BOTTOM, cy - (row - ipx) * 0.5f), rb(pb.x - corner * INSET_BOTTOM, ra.y + row);
 		const bool hover = mouse.x >= ra.x && mouse.x <= rb.x && mouse.y >= ra.y && mouse.y <= rb.y;
-		if (hover) m_pauseSel = i;
-		if (hover && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) m_pauseRequest = (PauseItem)i;
+		if (hover) sel = i;
+		if (hover && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) clicked = i;
 
-		const bool sel = (i == m_pauseSel);
-		const ImVec2 sz = f->CalcTextSizeA(ipx, FLT_MAX, 0.0f, LABELS[i]);
+		const bool isSel = (i == sel);
+		const ImVec2 sz = f->CalcTextSizeA(ipx, FLT_MAX, 0.0f, labels[i]);
 		const float tx = cx - sz.x * 0.5f;
-		dl->AddText(f, ipx, ImVec2(tx, cy), sel ? INK_SEL : INK_ITEM, LABELS[i]);
-		if (sel)
+		dl->AddText(f, ipx, ImVec2(tx, cy), isSel ? INK_SEL : INK_ITEM, labels[i]);
+		if (isSel)
 		{
 			const float m = disp.y * MARK_RATIO, my = cy + ipx * 0.5f, mx = tx - m * (1.0f + MARK_GAP);
 			dl->AddTriangleFilled(ImVec2(mx - m, my - m), ImVec2(mx - m, my + m), ImVec2(mx + m * 0.6f, my), INK_SEL);
 		}
 	}
+	return clicked;
+}
+
+//--- 一時停止メニュー: 画面を暗くし、中央に選択パネル。クリックは m_pauseRequest へ(実行は UpdatePause)。
+void SceneForge::DrawPauseMenu()
+{
+	static const char* LABELS[(int)PauseItem::Count] = {
+		(const char*)u8"ゲームを続ける", (const char*)u8"タイトルへ戻る", (const char*)u8"ゲームを終了する" };
+	const float CENTER_Y = 0.5f;
+	const int clicked = DrawChoicePanel((const char*)u8"一時停止", LABELS, (int)PauseItem::Count, m_pauseSel, CENTER_Y, true);
+	if (clicked >= 0) m_pauseRequest = (PauseItem)clicked;
+}
+
+//--- チュートリアル: 金床の工位で鍛造できる状態か(高亮・「ここで叩く」を出す条件)。
+bool SceneForge::TutorialAtAnvil() const
+{
+	return m_tutorial && m_state == GAME_PLAY && !m_walkMode && !Transitioning() && !m_carrying
+	    && m_station == Station::Anvil && m_workAt == Station::Anvil && m_flipPhase == FlipPhase::None && !m_clearDecided;
+}
+
+//--- チュートリアルの説明文: 今の状況で「何をするか・どの操作で・どこを見るか」を具体的に(通常モードの案内文より詳しく)。
+const char* SceneForge::TutorialTip()
+{
+	if (!m_tutorial || m_state != GAME_PLAY || m_clearDecided || Transitioning() || SequencePlaying()) return nullptr;
+	const float heat = m_forging.Heat();
+	if (m_flipPhase != FlipPhase::None)
+		return (const char*)u8"火ばさみで刃を裏返す。\n① 左クリックで刃を掴む\n② マウスを左右に動かして刃を回す\n③ 左クリックで、その面に決める\n④ もう一度 Fキーを押して火ばさみを戻すと、裏返し完了";
+	if (m_walkMode)
+		return m_carrying ? (const char*)u8"刃を運んでいる。\n画面の ▼ の印へ歩き、Eキーで置く。\n金床=叩く / 炉=熱する / 砥石=研ぐ / 水槽=焼入れ" : (const char*)u8"WASDキーで歩き、マウスで見回す。\n画面の ▼ の印が次の行き先。\n近づいて Eキーで使う(刃は Eキーで掴んで運ぶ)。";
+	switch (m_station)
+	{
+	case Station::Anvil:
+	{
+		if (heat < IDEAL_MIN) return (const char*)u8"鉄が冷えて、温度ゲージの緑より下がった。\n冷えた鉄は叩いても形が変わらない。\nEキーで離れ、刃を掴んで炉へ運ぼう。";
+		if (heat > IDEAL_MAX) return (const char*)u8"熱すぎる。\n温度ゲージの印が緑の範囲に下がるまで、少し待とう。";
+		const int side = m_forging.Side();
+		if (m_forging.SideDone(side) && !m_forging.SideDone(1 - side)) return (const char*)u8"この面は完成！\nFキーで裏返して、反対の面を叩こう。";
+		return (const char*)u8"左クリック長押しで力を溜め、離すと叩く。\nマウスの上下でハンマーの位置を動かす。\n青く光る所(まだ黒皮が残る所)を叩こう。\n温度ゲージが緑の時だけ形が変わる。";
+	}
+	case Station::Hearth:
+	{
+		// 次に使う熱さ: 研ぎまで進んでいれば焼入れ(火花が散るまで) / まだなら鍛造(緑の範囲)
+		const bool forQuench = StepReached(StepName::Grind);
+		if (heat > OVERHEAT) return (const char*)u8"過熱している！\nすぐに Eキーで炉から出そう。";
+		if (heat >= (forQuench ? ForgingSim::BURN_TEMP : IDEAL_MIN + FORGE_READY_MARGIN)) return (const char*)u8"十分に熱くなった。\nEキーで炉から出し、刃を掴んで次の場所へ運ぼう。";
+		return forQuench ? (const char*)u8"焼入れの前に、もう一度熱する。\nRキー長押しでふいごを踏む。\n刃から火花が散るまで熱したら、Eキーで出そう。" : (const char*)u8"Rキー長押しでふいごを踏むと、早く熱くなる。\n温度ゲージの印が緑の範囲に入るまで待とう。\n入れたままだと過熱するので注意。";
+	}
+	case Station::Grindstone:
+	{
+		if (m_forging.SharpProgress(GrindSide()) >= 1.0f && !m_forging.AllSharp()) return (const char*)u8"この面は研ぎ終わった。\nFキーで裏返して、反対の刃を研ごう。";
+		if (m_wheel.Speed01() < GRIND_WORK_MIN_SPEED) return (const char*)u8"右クリック(または Spaceキー)を一定のリズムで押して、\nペダルを踏み、砥石を回し続けよう。";
+		return (const char*)u8"左クリック長押しで刃を砥石に当てる。\nマウスの上下で角度を変え、下の角度計の緑に合わせる。\nマウスの左右で刃全体を研ごう。";
+	}
+	case Station::Trough:
+		return QuenchStirring() ? (const char*)u8"マウスを上下に動かして、水の中で刃を揺すろう。\n揺するほど早く冷える。" : (const char*)u8"左クリックで刃を水に入れて焼入れする。\n(冷えすぎていると焼きが入らないので、炉で熱し直す)";
+	default: return nullptr;
+	}
+}
+
+//--- 右の説明パネル(工程リストと同じ羊皮紙。左右対称に置く)。文は折り返して枠に収める。
+void SceneForge::DrawTutorialPanel()
+{
+	const char* tip = TutorialTip();
+	if (!tip) return;
+	ImVec2 disp = ImGui::GetIO().DisplaySize;
+	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	const float PANEL_RIGHT_RATIO = 0.985f;	// パネルの右端(画面幅比)= 工程リストの左端の左右対称
+	const float PANEL_Y_RATIO     = 0.22f;	// 上端(工程リストと揃える)
+	const float PANEL_W_RATIO     = 0.21f;
+	const float CORNER_RATIO      = 0.065f;
+	const float INSET_TOP = 0.95f, INSET_BOTTOM = 0.75f, INSET_SIDE = 0.60f;
+	const float HEAD_RATIO = 0.021f, TEXT_RATIO = 0.019f, HEAD_GAP = 1.6f, LINE_SPACING = 1.35f;
+	const ImU32 INK_HEAD = IM_COL32(150, 32, 18, 255);	// 見出し = 朱(チュートリアルだと分かる)
+	const ImU32 INK_TEXT = IM_COL32( 50, 34, 22, 255);
+
+	const float corner = disp.y * CORNER_RATIO;
+	const float panelW = disp.x * PANEL_W_RATIO;
+	const float wrapW  = panelW - corner * INSET_SIDE * 2.0f;
+	const float hpx = disp.y * HEAD_RATIO, tpx = disp.y * TEXT_RATIO;
+	ImFont* hf = DebugUI::FontJPFor(hpx);
+	ImFont* tf = DebugUI::FontJPFor(tpx);
+
+	// 行ごとに折り返して高さを測る(改行 \n で区切った各行)
+	std::vector<std::string> lines;
+	for (const char* p = tip; ; )
+	{
+		const char* e = strchr(p, '\n');
+		lines.emplace_back(p, e ? e : p + strlen(p));
+		if (!e) break;
+		p = e + 1;
+	}
+	float textH = 0.0f;
+	for (const std::string& l : lines) textH += tf->CalcTextSizeA(tpx, FLT_MAX, wrapW, l.c_str()).y * LINE_SPACING;
+	const float panelH = corner * INSET_TOP + hpx * HEAD_GAP + textH + corner * INSET_BOTTOM;
+	const ImVec2 pa(disp.x * PANEL_RIGHT_RATIO - panelW, disp.y * PANEL_Y_RATIO);
+	const ImVec2 pb(pa.x + panelW, pa.y + panelH);
+	DrawParchment(dl, m_uiFrame.get(), pa, pb, corner);
+
+	const float x = pa.x + corner * INSET_SIDE;
+	float y = pa.y + corner * INSET_TOP;
+	dl->AddText(hf, hpx, ImVec2(x, y), INK_HEAD, (const char*)u8"チュートリアル");
+	y += hpx * HEAD_GAP;
+	for (const std::string& l : lines)
+	{
+		dl->AddText(tf, tpx, ImVec2(x, y), INK_TEXT, l.c_str(), nullptr, wrapW);
+		y += tf->CalcTextSizeA(tpx, FLT_MAX, wrapW, l.c_str()).y * LINE_SPACING;
+	}
+}
+
+//--- 研ぎの角度計(チュートリアルだけ): 0..GRIND_ANGLE_MAX の横棒。緑 = 研げる角度(効率 > 0)、白い印 = 今の角度。
+void SceneForge::DrawGrindAngleMeter()
+{
+	ImVec2 disp = ImGui::GetIO().DisplaySize;
+	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	const float X0_RATIO = 0.38f, X1_RATIO = 0.62f, Y_RATIO = 0.68f, H_RATIO = 0.016f, LABEL_RATIO = 0.024f;
+	const float x0 = disp.x * X0_RATIO, x1 = disp.x * X1_RATIO, y = disp.y * Y_RATIO, h = disp.y * H_RATIO;
+	auto lerpX = [&](float a) { return x0 + (x1 - x0) * fminf(fmaxf(a / GRIND_ANGLE_MAX, 0.0f), 1.0f); };
+	dl->AddRectFilled(ImVec2(x0, y), ImVec2(x1, y + h), IM_COL32(20, 16, 12, 200), 4.0f);
+	const ImU32 green = IM_COL32(90, 180, 90, 230);
+	dl->AddRectFilled(ImVec2(lerpX(GRIND_IDEAL_ANGLE - GRIND_ANGLE_TOL), y), ImVec2(lerpX(GRIND_IDEAL_ANGLE + GRIND_ANGLE_TOL), y + h), green, 4.0f);
+	const float mx = lerpX(fabsf(m_grindAngle));
+	const float MARK_OVER = 0.6f;	// 印が棒からはみ出す量(棒の高さ比)
+	dl->AddLine(ImVec2(mx, y - h * MARK_OVER), ImVec2(mx, y + h * (1.0f + MARK_OVER)), IM_COL32(255, 255, 255, 255), 3.0f);
+	const float lpx = disp.y * LABEL_RATIO;
+	ImFont* f = DebugUI::FontJPFor(lpx);
+	const char* label = (const char*)u8"研ぐ角度";
+	const ImVec2 sz = f->CalcTextSizeA(lpx, FLT_MAX, 0.0f, label);
+	dl->AddText(f, lpx, ImVec2((x0 + x1 - sz.x) * 0.5f, y - lpx * 1.4f), IM_COL32(255, 236, 196, 240), label);
 }
 
 void SceneForge::DrawUI()

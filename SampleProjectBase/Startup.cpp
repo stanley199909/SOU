@@ -1,4 +1,5 @@
 ﻿#include <windows.h>
+#include "resource.h"	// IDI_APPICON
 #include "Defines.h"
 #include "Main.h"
 #include <stdio.h>
@@ -20,10 +21,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	_CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
 
 	// �R���\�[������
+#ifdef _DEBUG	// 調試用のコンソール窓は Debug ビルドだけ(配布する Release 版では黒い窓を出さない)
 	AllocConsole();
 	FILE* fp;
 	// �W���o�͂̊��蓖��
 	freopen_s(&fp, "CON", "w", stdout);
+#endif
 
 	//--- �ϐ��錾
 	WNDCLASSEX wcex;
@@ -37,8 +40,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	wcex.lpfnWndProc = WndProc;
 	wcex.style = CS_CLASSDC | CS_DBLCLKS;
 	wcex.cbSize = sizeof(WNDCLASSEX);
-	wcex.hIcon = LoadIcon(NULL, IDI_APPLICATION);
-	wcex.hIconSm = wcex.hIcon;
+	// アプリのアイコン(app.rc に埋め込んだ forge.ico)。大=Alt+Tab 等 / 小=タイトルバーとタスクバー
+	wcex.hIcon   = (HICON)LoadImage(hInstance, MAKEINTRESOURCE(IDI_APPICON), IMAGE_ICON, GetSystemMetrics(SM_CXICON),   GetSystemMetrics(SM_CYICON),   0);
+	wcex.hIconSm = (HICON)LoadImage(hInstance, MAKEINTRESOURCE(IDI_APPICON), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0);
 	wcex.hCursor = LoadCursor(NULL, IDC_ARROW);
 	wcex.hbrBackground = (HBRUSH)GetStockObject(WHITE_BRUSH);
 
@@ -113,7 +117,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	timeEndPeriod(1);
 	Uninit();
 	// �W���o�̓N���[�Y
+#ifdef _DEBUG
 	fclose(fp);
+#endif
 	UnregisterClass(wcex.lpszClassName, hInstance);
 
 	return 0;

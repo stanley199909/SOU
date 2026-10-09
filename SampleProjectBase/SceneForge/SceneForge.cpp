@@ -807,13 +807,27 @@ void SceneForge::FinishGame()
 //--- タイトル: 雰囲気で自動的に火花を出しつつ、SPACEで開始
 void SceneForge::UpdateTitle(float /*tick*/)
 {
-	// 黒転じは使わない: タイトルはゲーム世界そのもの。SPACE → ロゴ淡出 → カメラが金床へ → 鍛打(Title.cpp UpdateIntro)。
-	if (m_introPhase == IntroPhase::None && IsKeyTrigger(VK_SPACE) && !m_fade.IsBusy())
+	// 黒転じは使わない: タイトルはゲーム世界そのもの。
+	// SPACE → モード選択(チュートリアル / 通常モード) → 決定 → ロゴ淡出 → カメラが金床へ → 鍛打(Title.cpp UpdateIntro)。
+	if (m_introPhase != IntroPhase::None || m_fade.IsBusy()) return;
+	if (!m_modeSelectOpen)
 	{
-		m_introPhase = IntroPhase::LogoFade;
-		m_introTimer = 0.0f;
-		Audio::Play(Audio::SE_TITLE_FADE, TITLE_FADE_SE_VOLUME);
+		if (IsKeyTrigger(VK_SPACE)) { m_modeSelectOpen = true; m_modeSel = (int)ModeItem::Tutorial; m_modeRequest = -1; }
+		return;	// 開いたフレームは決定を読まない(同じ SPACE で即決定しない様に)
 	}
+	const int N = (int)ModeItem::Count;
+	if (IsKeyTrigger(VK_ESCAPE)) { m_modeSelectOpen = false; return; }	// 選ばずに戻る
+	if (IsKeyTrigger(VK_UP)   || IsKeyTrigger('W')) m_modeSel = (m_modeSel + N - 1) % N;
+	if (IsKeyTrigger(VK_DOWN) || IsKeyTrigger('S')) m_modeSel = (m_modeSel + 1) % N;
+	if (IsKeyTrigger(VK_RETURN) || IsKeyTrigger(VK_SPACE)) m_modeRequest = m_modeSel;
+	if (m_modeRequest < 0) return;
+
+	m_tutorial       = (m_modeRequest == (int)ModeItem::Tutorial);
+	m_modeSelectOpen = false;
+	m_modeRequest    = -1;
+	m_introPhase = IntroPhase::LogoFade;
+	m_introTimer = 0.0f;
+	Audio::Play(Audio::SE_TITLE_FADE, TITLE_FADE_SE_VOLUME);
 }
 
 //--- 鎚の横位置を平滑追従: 準心が格子単位で跳ぶのを Lerp::Damp で滑らかに。
@@ -1247,7 +1261,8 @@ void SceneForge::UpdateGrind(float tick, bool inputOn)
 
 void SceneForge::CountGrindMistake(int& count, GrindHint hint)
 {
-	if (++count >= m_hintAfterMistakes) m_grindHint = hint;
+	const int need = m_tutorial ? 1 : m_hintAfterMistakes;	// チュートリアルは1回目の誤りから直し方を見せる
+	if (++count >= need) m_grindHint = hint;
 }
 
 void SceneForge::ClearGrindHint()

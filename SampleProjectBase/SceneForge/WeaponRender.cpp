@@ -443,6 +443,10 @@ void SceneForge::BuildWeaponMorph()
 	const float MIN_FLASH_TIME = 0.01f, MIN_FLASH_SPREAD = 0.1f;	// 0 割りの防止
 	const float flashLife = 1.0f - (m_time - m_impactTime) / fmaxf(m_impactFlashTime, MIN_FLASH_TIME);	// 1=打った瞬間 → 0
 	XMFLOAT4 flashCol = HeatRGB(fminf(m_forging.Heat() + m_impactFlashHeat, 1.0f), 0.0f);
+	// チュートリアルの「まだ叩く所」の高亮(青)。明滅の強さはフレームごとに1回だけ求める
+	const bool  tutorialHi    = TutorialAtAnvil();
+	const XMFLOAT3 TUTORIAL_HI_COL(0.35f, 0.85f, 1.0f);	// 熱い鋼の橙と取り違えない青
+	const float tutorialPulse = TUTORIAL_HI_STRENGTH * (0.6f + 0.4f * sinf(m_time * XM_2PI * TUTORIAL_HI_PULSE_HZ));
 
 	// 進捗 p(0..1) → 段チェーン(stage_0..final)上の頂点 i の補間位置/法線(ローカル)。
 	auto morphAt = [&](int i, float p, XMVECTOR& outPos, XMVECTOR& outNrm)
@@ -574,6 +578,19 @@ void SceneForge::BuildWeaponMorph()
 		// 既定は熱色のみ(KCD式=「叩く場所」を示さない)。Pキーでデバッグ可視化ONの時だけ
 		// 「今照準している区域」を青緑で薄く塗る(叩く指示ではなく開発用)。
 		XMFLOAT4 col = heat;
+		// チュートリアル: 上を向いた面のまだ完成していない所を青く明滅させる(=どこを叩けば良いか)。通常モードでは出さない。
+		if (tutorialHi && playing)
+		{
+			const float cc = AimSystem::SegCoordLocal(a0, m_wpMin, m_wpMax, NL) - 0.5f;
+			int c0 = (int)floorf(cc); const float t = cc - c0;
+			const int ca = c0 < 0 ? 0 : (c0 >= NL ? NL - 1 : c0), cb = (c0 + 1) >= NL ? NL - 1 : (c0 + 1 < 0 ? 0 : c0 + 1);
+			const int up = m_forging.Side();
+			const float todo = (m_forging.CellDoneOf(up, ca) ? 0.0f : 1.0f) * (1.0f - t) + (m_forging.CellDoneOf(up, cb) ? 0.0f : 1.0f) * t;
+			const float w = todo * tutorialPulse;
+			col.x += (TUTORIAL_HI_COL.x - col.x) * w;
+			col.y += (TUTORIAL_HI_COL.y - col.y) * w;
+			col.z += (TUTORIAL_HI_COL.z - col.z) * w;
+		}
 		if (flash > 0.0f)
 		{
 			col.x += (flashCol.x - col.x) * flash;
