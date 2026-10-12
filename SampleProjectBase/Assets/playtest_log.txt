@@ -1,0 +1,3 @@
+2026-10-12 00:51  tutorial  total 300.7s (budget 180s)  | 加熱 0.0s (move 0.0s)  | 鍛造 158.7s (move 74.2s)  | 研ぎ 74.9s (move 12.3s)  | 再加熱 43.4s (move 36.8s)  | 焼入れ 23.7s (move 11.9s)
+2026-10-12 15:53  tutorial  total 284.2s (budget 180s)  | 加熱 0.0s (move 0.0s)  | 鍛造 108.5s (move 29.8s)  | 研ぎ 118.6s (move 13.3s)  | 再加熱 24.8s (move 19.3s)  | 焼入れ 32.3s (move 14.5s)
+2026-10-12 23:37  normal  total 221.7s (budget 180s)  | 加熱 0.0s (move 0.0s)  | 鍛造 95.3s (move 25.7s)  | 研ぎ 71.5s (move 12.1s)  | 再加熱 32.7s (move 23.2s)  | 焼入れ 22.3s (move 10.1s)

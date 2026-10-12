@@ -19,6 +19,10 @@ FORGE - Credits / クレジット
 
 - freesound.org (CC0): "Metal Grinding-Sharpening" by sentryx86 / "Writing Short with Pencil" by WaltzOfTheWifi
 - Pixabay (Pixabay Content License): BGM・効果音 (tunetank / dragon-studio / soundreality / freesound_community)
+- "Generic Metallic Sound 1" — Sound Effect by freesound_community from Pixabay
+  https://pixabay.com/users/freesound_community-46691455/ (sound id 94328)
+  License: Pixabay Content License (クレジット任意。感謝を込めて記載)
+  使用箇所: チュートリアルで操作を覚えた時の確認音 (Assets/Sound/SE/learned.wav に加工: 先頭/末尾の無音を除去・モノラル化・-2.2dB・WAV化)
 - Poly Haven (CC0): 岩壁テクスチャ
 - Kenney (CC0): 操作キーのアイコン
 - MM Blacksmith Pack / Fantasy Props MegaKit: 購入素材 (各ライセンスに従う)

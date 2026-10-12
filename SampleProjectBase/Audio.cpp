@@ -389,6 +389,28 @@ namespace
 			}
 			break;
 		}
+		case Audio::SE_LEARNED:
+		{
+			// 仮の確認音(ユーザーが素材を選ぶまで): 上がる2音の短いチャイム。
+			//   SE_SUCCESS(完成の3音)より短く小さく=「小さな達成」。基音に1オクターブ上を少し混ぜて鈴の様な響きに。
+			const float NOTE[2]   = { 880.0f, 1318.51f };	// A5 → E6(完全5度上=明るく区切りが付く)
+			const float NOTE_DUR  = 0.12f;	// 1音の長さ
+			const float OCTAVE_MIX= 0.25f;	// 1オクターブ上の倍音の混ぜ具合
+			const float ATTACK    = 80.0f;	// 立ち上がり(大=速い)
+			const float DECAY     = 9.0f;	// 減衰(大=短い)
+			const float LEVEL     = 0.22f;
+			int per = (int)(sr * NOTE_DUR);
+			w.resize(per * 2);
+			for (int k = 0; k < 2; ++k)
+			for (int i = 0; i < per; ++i)
+			{
+				float t   = (float)i / sr;
+				float env = (1.0f - expf(-t * ATTACK)) * expf(-t * DECAY);
+				float ph  = 6.2832f * NOTE[k] * t;
+				w[k * per + i] = (sinf(ph) + OCTAVE_MIX * sinf(2.0f * ph)) * env * LEVEL;
+			}
+			break;
+		}
 		default: break;
 		}
 		ToPCM16(w, s.data);
@@ -439,6 +461,7 @@ namespace Audio
 			"Assets/Sound/SE/title_fade.wav",	// SE_TITLE_FADE(ロゴ淡出。無ければ無音)
 			"Assets/Sound/SE/pencil.wav",		// SE_PENCIL(取り消し線を引く。無ければ合成音)
 			"Assets/Sound/SE/eraser.wav",		// SE_ERASER(取り消し線を消す。無ければ合成音)
+			"Assets/Sound/SE/learned.wav",		// SE_LEARNED(操作を覚えた確認音。無ければ合成音)
 			"Assets/Sound/BGM/title_bgm.wav",	// BGM_TITLE(工場環境音。無ければ無音)
 			"Assets/Sound/BGM/play_bgm.wav",	// BGM_PLAY(medieval。無ければ無音)
 			"Assets/Sound/BGM/result_bgm.wav",	// BGM_RESULT(無ければ無音)

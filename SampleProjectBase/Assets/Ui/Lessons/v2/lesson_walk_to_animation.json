@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "lesson": "walk_to",
+  "canvas": {
+    "width": 512,
+    "height": 512
+  },
+  "playback": "step",
+  "loop": true,
+  "coordinate_system": "top-left origin; x right; y down; pixels; tilt radians clockwise",
+  "transform_order": "rotate pose around pivot, then apply dx/dy; base never transformed",
+  "compositing": {
+    "mode": "source-over",
+    "clearance_pixels": 0
+  },
+  "meaning": "左右脚交替向前迈步，朝前方固定的倒三角目的地标记走。",
+  "frames": [
+    {
+      "base": "lesson_walk_to_base.png",
+      "pose": "lesson_walk_to_pose1.png",
+      "duration_seconds": 0.55,
+      "dx": 0,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        256,
+        320
+      ]
+    },
+    {
+      "base": "lesson_walk_to_base.png",
+      "pose": "lesson_walk_to_pose2.png",
+      "duration_seconds": 0.55,
+      "dx": 0,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        256,
+        320
+      ]
+    }
+  ]
+}

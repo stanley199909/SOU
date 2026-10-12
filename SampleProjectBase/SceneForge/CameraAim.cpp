@@ -333,8 +333,9 @@ void SceneForge::BeginExitStation()
 	CameraBase* cam = GetObj<CameraBase>("Camera");
 	if (!cam || Transitioning()) return;
 	BeginTransCommon(cam, m_transFromEye, m_transFromFwd);
+	++m_leaveCount;	// 操作の案内: 工位を離れた(LessonMetric: LeaveCold / TakeOut)
 
-	// 退出先 = 工位の視点から、作業点と反対側へ m_exitStepBack だけ下がった床の上。作業点の方を向く。
+	// 退出先 =工位の視点から、作業点と反対側へ m_exitStepBack だけ下がった床の上。作業点の方を向く。
 	//   位置は工位カメラ/作業点から算出=配置を変えても「工位の一歩手前」に立つ。
 	XMFLOAT3 eye, target; StationView(m_station, eye, target);
 	float dx = target.x - eye.x, dz = target.z - eye.z;
@@ -878,7 +879,7 @@ void SceneForge::SaveTuning()
 	fprintf(fp, "wpscale %.5f\n",    m_wpScale);
 	fprintf(fp, "wpoff %.5f %.5f %.5f\n", m_wpOff[0], m_wpOff[1], m_wpOff[2]);
 	// -- 翻面 --
-	fprintf(fp, "flipsens %.6f\n",   m_flipSens);
+	fprintf(fp, "flipturn %.4f\n",   m_flipTurnSec);
 	fprintf(fp, "tongslean %.5f\n",  m_tongsLean);
 	fprintf(fp, "gripdolly %.5f\n",  m_gripDolly);
 	fprintf(fp, "griplambda %.5f\n", m_gripLambda);
@@ -899,7 +900,7 @@ void SceneForge::SaveTuning()
 	fprintf(fp, "impactflash %.5f %.5f %.5f\n", m_impactFlashTime, m_impactFlashHeat, m_impactFlashSpread);
 	fprintf(fp, "grindview %.5f\n", m_grindViewYaw);
 	fprintf(fp, "stationfront %d %d\n", m_hearthFrontFlip ? 1 : 0, m_troughFrontFlip ? 1 : 0);
-	fprintf(fp, "hintafter %d\n", m_hintAfterMistakes);
+	fprintf(fp, "playtesttimer %d\n", m_showPlaytestTimer ? 1 : 0);
 	fprintf(fp, "hammerbelt %.5f %.5f %.5f %.5f\n", m_hammerHipOff[0], m_hammerHipOff[1], m_hammerHipOff[2], m_hammerHipYaw);
 	fprintf(fp, "seqfeel %.5f %.5f %.5f %.5f\n", m_seqHandLag, m_seqArcLift, m_seqTimeJitter, m_seqArcJitter);
 	fprintf(fp, "carryavoid %.5f %.5f %.5f %.5f\n", m_carryAvoidMaxRaise, m_carryAvoidMargin, m_carryAvoidLambda, m_carryAvoidMaxPull);
@@ -947,7 +948,7 @@ void SceneForge::TuningRefs(std::vector<float*>& out)
 		&m_wpYaw, &m_wpPitch, &m_wpRoll, &m_wpScale,
 		&m_wpOff[0], &m_wpOff[1], &m_wpOff[2],
 		// -- Flip --
-		&m_flipSens, &m_tongsLean, &m_gripDolly, &m_gripLambda,
+		&m_flipTurnSec, &m_tongsLean, &m_gripDolly, &m_gripLambda,
 		&m_hammerStowOff[0], &m_hammerStowOff[1], &m_hammerStowOff[2], &m_hammerStowTilt,
 		// -- Station transition --
 		&m_transSpeed, &m_exitStepBack, &m_lookPad,
@@ -1036,7 +1037,7 @@ void SceneForge::LoadTuning()
 		else if (strcmp(key, "wproll")     == 0) sscanf_s(v, "%f", &m_wpRoll);
 		else if (strcmp(key, "wpscale")    == 0) sscanf_s(v, "%f", &m_wpScale);
 		else if (strcmp(key, "wpoff")      == 0) sscanf_s(v, "%f %f %f", &m_wpOff[0], &m_wpOff[1], &m_wpOff[2]);
-		else if (strcmp(key, "flipsens")   == 0) sscanf_s(v, "%f", &m_flipSens);
+		else if (strcmp(key, "flipturn")   == 0) sscanf_s(v, "%f", &m_flipTurnSec);	// 旧 flipsens(マウスで回す感度)は操作の変更で廃止=読まない
 		else if (strcmp(key, "tongslean")  == 0) sscanf_s(v, "%f", &m_tongsLean);
 		else if (strcmp(key, "gripdolly")  == 0) sscanf_s(v, "%f", &m_gripDolly);
 		else if (strcmp(key, "griplambda") == 0) sscanf_s(v, "%f", &m_gripLambda);
@@ -1058,7 +1059,7 @@ void SceneForge::LoadTuning()
 		else if (strcmp(key, "seqfeel")    == 0) sscanf_s(v, "%f %f %f %f", &m_seqHandLag, &m_seqArcLift, &m_seqTimeJitter, &m_seqArcJitter);
 		else if (strcmp(key, "hearthlay")  == 0) sscanf_s(v, "%f %f %f", &m_hearthYaw, &m_hearthTipSide, &m_hearthTipDepth);
 		else if (strcmp(key, "hammerbelt") == 0) sscanf_s(v, "%f %f %f %f", &m_hammerHipOff[0], &m_hammerHipOff[1], &m_hammerHipOff[2], &m_hammerHipYaw);	// 旧 hammerhip(構えの回転)は意味が変わったので読まない
-		else if (strcmp(key, "hintafter")  == 0) { sscanf_s(v, "%d", &m_hintAfterMistakes); if (m_hintAfterMistakes < 1) m_hintAfterMistakes = 1; }	// 0 だと最初から出続ける
+		else if (strcmp(key, "playtesttimer") == 0) { int on = 0; sscanf_s(v, "%d", &on); m_showPlaytestTimer = (on != 0); }
 		else if (strcmp(key, "stationfront") == 0) { int h = 0, t = 0; sscanf_s(v, "%d %d", &h, &t); m_hearthFrontFlip = (h != 0); m_troughFrontFlip = (t != 0); }
 		else if (strcmp(key, "hotsteel")   == 0) sscanf_s(v, "%f %f %f %f", &m_wpHotShade, &m_wpRimK, &m_wpRimPow, &m_wpHotGain);
 		else if (strcmp(key, "forgescale") == 0) sscanf_s(v, "%f %f %f %f %f %f", &m_scaleTiling, &m_scaleSoft, &m_scaleOpacity, &m_scaleGlow, &m_scaleStart, &m_scaleHoldMax);	// 足りない旧ファイルは残りが既定のまま

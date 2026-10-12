@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "lesson": "grind_flip",
+  "canvas": {
+    "width": 512,
+    "height": 512
+  },
+  "playback": "step",
+  "loop": true,
+  "coordinate_system": "top-left origin; x right; y down; pixels; tilt radians clockwise",
+  "transform_order": "rotate pose around pivot, then apply dx/dy; base never transformed",
+  "compositing": {
+    "mode": "source-over",
+    "clearance_pixels": 0
+  },
+  "meaning": "手直接握刀：平面→约45度→刃线→约135度→另一面；手腕同时翻转。",
+  "frames": [
+    {
+      "base": "lesson_grind_flip_base.png",
+      "pose": "lesson_grind_flip_pose1.png",
+      "duration_seconds": 0.8,
+      "dx": 0,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        197,
+        257
+      ]
+    },
+    {
+      "base": "lesson_grind_flip_base.png",
+      "pose": "lesson_grind_flip_pose2.png",
+      "duration_seconds": 0.15,
+      "dx": 0,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        197,
+        257
+      ]
+    },
+    {
+      "base": "lesson_grind_flip_base.png",
+      "pose": "lesson_grind_flip_pose3.png",
+      "duration_seconds": 0.15,
+      "dx": 0,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        197,
+        257
+      ]
+    },
+    {
+      "base": "lesson_grind_flip_base.png",
+      "pose": "lesson_grind_flip_pose4.png",
+      "duration_seconds": 0.15,
+      "dx": 0,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        197,
+        257
+      ]
+    },
+    {
+      "base": "lesson_grind_flip_base.png",
+      "pose": "lesson_grind_flip_pose5.png",
+      "duration_seconds": 1.5,
+      "dx": 0,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        197,
+        257
+      ]
+    }
+  ],
+  "note": "五格为绕刀自身长轴的半圈，tilt保持0；不是画面内转一圈。"
+}

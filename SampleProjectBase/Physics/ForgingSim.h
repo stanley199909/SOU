@@ -66,7 +66,7 @@ public:
     void  AddHeat(float amount); // +heat from the forge, -heat lost to a strike (clamped 0..1)
     void  SetHeat(float heat);   // set directly (clamped 0..1). For the opening: the iron is already hot on the anvil
     float Heat() const { return m_heat; }
-    float coolRate = 0.008f;     // natural cooling speed (/sec). ~65 s from burning (0.87) to too cold (0.35). Tunable
+    float coolRate = 0.006f;     // natural cooling speed (/sec). Was 0.008; x0.75 on 2026-10-12 so the iron stays in the forging band longer (see SceneForge IDEAL_MIN). Tunable
     // Valid strikes (hot enough, not overheated, on unfinished metal) one face needs. Every
     // such strike removes exactly 1/strikesPerFace of the face's work. Tunable
     // (the forge step was too long next to heat/grind/quench in the 2026-10-02 playtest).

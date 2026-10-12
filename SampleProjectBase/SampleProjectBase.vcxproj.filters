@@ -177,6 +177,9 @@
     <ClCompile Include="SceneForge\HUD.cpp">
       <Filter>ソース ファイル\App\Scene\SceneForge</Filter>
     </ClCompile>
+    <ClCompile Include="SceneForge\Tutorial.cpp">
+      <Filter>ソース ファイル\App\Scene\SceneForge</Filter>
+    </ClCompile>
     <ClCompile Include="SceneForge\CameraAim.cpp">
       <Filter>ソース ファイル\App\Scene\SceneForge</Filter>
     </ClCompile>
@@ -208,6 +211,9 @@
       <Filter>ソース ファイル\App\GameLogic</Filter>
     </ClCompile>
     <ClCompile Include="GameLogic\ScreenFade.cpp">
+      <Filter>ソース ファイル\App\GameLogic</Filter>
+    </ClCompile>
+    <ClCompile Include="GameLogic\InputActions.cpp">
       <Filter>ソース ファイル\App\GameLogic</Filter>
     </ClCompile>
     <ClCompile Include="GameData\WeaponRecipe.cpp">
@@ -375,6 +381,9 @@
       <Filter>ヘッダー ファイル\App\GameLogic</Filter>
     </ClInclude>
     <ClInclude Include="GameLogic\ScreenFade.h">
+      <Filter>ヘッダー ファイル\App\GameLogic</Filter>
+    </ClInclude>
+    <ClInclude Include="GameLogic\InputActions.h">
       <Filter>ヘッダー ファイル\App\GameLogic</Filter>
     </ClInclude>
     <ClInclude Include="GameData\WeaponRecipe.h">

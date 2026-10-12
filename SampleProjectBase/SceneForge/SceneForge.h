@@ -57,7 +57,7 @@ public:
 	bool  m_clearDecided = false;				// クリアが確定した(最後の工程の取り消せない演出に入った)。true の間 HUD を全部消す
 	void  SetLetterbox(float t01);				// 終幕: 上下の黒帯が入る進み 0..1(同上)
 	void  AdvanceStep();						// 次の工程へ進む(配方の順序で遷移。無ければ完成)
-	void  DebugJumpToStep(int idx);				// 【デバッグ】配方の idx 番目の工程から始める(前の工程は済ませた状態で、その工位に立つ。F1 最上段)
+	void  StartAtStep(int idx, bool placeNow);	// 配方の idx 番目の工程から始める(前の工程は済ませた状態)。placeNow=その工位に即座に立つ(F1 の Jump) / false=導入カメラで入る(チュートリアルの課程)
 	int   m_debugJumpIdx = 0;					// F1 で選んでいる工程
 	const StepSetting& CurrentStep() const;		// 今実行中の工程設定(HUD が instruction を表示)
 	bool  StepReached(StepName type) const;		// 配方でその種類の工程まで進んだか(今その工程 or もう済んだ)
@@ -240,7 +240,14 @@ private:
 	int   m_grindFace        = 0;					// 今研いでいる面(0 = 表 / 1 = 裏)。F で切り替え
 	bool  m_grindFaceInit    = false;				// この回で砥石に置いた最初に「表を砥石へ」を済ませたか(StartGame で false)
 	float m_grindFlipRoll    = 0.0f;				// 裏返しの見た目の回転(rad。m_grindFace × π へ追従)
-	static constexpr float GRIND_FLIP_LAMBDA = 10.0f;	// 裏返しの速さ(Damp率, 1/秒)
+	static constexpr float GRIND_FLIP_LAMBDA = 10.0f;	// 裏返さない時に清潔な角へ落ち着く速さ(Damp率, 1/秒)
+	//    研ぎの裏返しも金床と同じ「F を押し続ける」(2026-10-12 統一。旧=1回押しで即切替=同じ F なのに操作が違った)。
+	//    押した長さ m_grindFlipHold が半回転の再生位置。押している間 +dt / 離すと −dt×FLIP_REWIND_RATE で戻る。
+	//    刃は手に持っている(火钳の運鏡が無い)ので、半回転だけ=短い。
+	bool  m_grindFlipping    = false;				// 裏返しの途中(押している or 巻き戻している)
+	float m_grindFlipHold    = 0.0f;				// 再生位置(秒)。GRIND_FLIP_SEC で裏返り切る
+	float m_grindFlipStart   = 0.0f;				// 押し始めた時の回転(=今の面の清潔な角)
+	static constexpr float GRIND_FLIP_SEC = 0.6f;	// 押し続けて裏返り切るまでの秒
 	float m_grindAngleTarget = 0.0f;				// マウスで決めた傾きの目標(刃は少し遅れて追う)
 	static constexpr float GRIND_ANGLE_SENS   = 0.004f;	// マウス 1px → 傾き(rad)
 	static constexpr float GRIND_ANGLE_MAX    = 0.80f;	// 傾けられる限界(rad, 約46°)
@@ -709,7 +716,25 @@ private:
 	float m_camSway    = 0.30f;					// マウスに応じた視点の揺れ幅
 	bool  m_cursorShown = true;					// OSカーソルの表示状態(PLAY中は隠す)
 	//--- 一時停止メニュー(ESC。2026-10-08 ユーザー要望)。開いている間は世界の更新を止める。
-	enum class PauseItem { Resume, Title, Quit, Count, None = -1 };	// 並び順 = メニューの上から
+	enum class PauseItem { Resume, Options, Title, Quit, Count, None = -1 };	// 並び順 = メニューの上から
+
+	//--- 設定(一時停止メニューの「設定」。2026-10-12 ユーザー要望: F1 と分けて、玩家が自分で調整できる所)
+	//    今は「教学アニメの速さ」だけ。段階の中から選ぶ(◀ ▶)。選んでいる間は横に瞄準の指示図を実際の速さで動かして見せる。
+	//    保存 = Assets/options.txt(調整値 forge_tuning.txt とは別=玩家の好み)。
+	enum class OptionItem { LessonSpeed, Back, Count };
+	bool  m_optionsOpen    = false;				// 設定の画面を開いているか(一時停止の中)
+	int   m_optionsSel     = 0;					// 選んでいる行
+	int   m_optionsRequest = -1;				// 決定された行(描画側のクリック / キー)。UpdateOptions で実行
+	int   m_optionsStep    = 0;					// 描画側の ◀/▶ のクリック(−1 / +1)。UpdateOptions で実行
+	static constexpr float LESSON_SPEED_STEPS[] = { 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f };	// 選べる速さ(倍)
+	static constexpr int   LESSON_SPEED_DEFAULT = 2;	// 既定 = 1.0 倍
+	int   m_lessonSpeedIdx = LESSON_SPEED_DEFAULT;
+	float LessonSpeed() const { return LESSON_SPEED_STEPS[m_lessonSpeedIdx]; }
+	float m_lessonClock    = 0.0f;				// 教学アニメの時計(秒)= 経過 × 速さ。一時停止中も進む(設定の見本が動く)
+	void  UpdateOptions();
+	void  DrawOptionsMenu();
+	void  LoadOptions();
+	void  SaveOptions() const;
 	bool      m_paused       = false;
 	int       m_pauseSel     = 0;					// 今選んでいる項目(マウスのホバー / 上下キー)
 	PauseItem m_pauseRequest = PauseItem::None;	// 決定された項目(描画側のクリック or キー)。次の UpdatePause で実行
@@ -720,7 +745,8 @@ private:
 	void  DrawPauseMenu();						// HUD.cpp
 	// 羊皮紙の選択パネル(一時停止メニューとタイトルのモード選択で共用)。クリックされた項目の番号を返す(無ければ -1)。
 	//   sel = 今選んでいる項目(マウスのホバーで書き換わる)。centerY = パネルの中心の縦位置(画面高さ比)。
-	int   DrawChoicePanel(const char* head, const char* const* labels, int n, int& sel, float centerY, bool dimBack);
+	//   marks = 項目ごとの右端の印(nullptr = 無し): 0 = 無し / 1 = ○(まだ) / 2 = ○に✓(済)。チュートリアルの課程の一覧が使う。
+	int   DrawChoicePanel(const char* head, const char* const* labels, int n, int& sel, float centerY, bool dimBack, const int* marks = nullptr);
 
 	//--- チュートリアル(2026-10-09 ユーザー要望: 初めての人向け)。タイトルで「チュートリアル / 通常モード」を選ぶ。
 	//    チュートリアルの時だけ: 右の説明パネル / 刃の未完成の所を青く光らせる / 温度ゲージの「ここで叩く」/ 研ぎの角度計 /
@@ -730,9 +756,39 @@ private:
 	bool  m_modeSelectOpen = false;				// タイトルでモード選択を開いているか
 	int   m_modeSel        = 0;					// 選んでいる項目
 	int   m_modeRequest    = -1;				// 決定された項目(描画側のクリック or キー)。次の UpdateTitle で実行
-	const char* TutorialTip();					// 今の状況の説明文(チュートリアルでなければ nullptr)
-	void  DrawTutorialPanel();					// 右の説明パネル
 	void  DrawGrindAngleMeter();				// 研ぎの角度計(緑 = 研げる角度 / 印 = 今の角度)
+
+	//--- チュートリアルの課程(2026-10-12 ユーザーの絵): タイトル → チュートリアル → 課程の一覧(鍛造/研ぎ/焼入れ, ○/✓)。
+	//    1つ選ぶと、その工程の所からその工程だけを遊ぶ(操作の案内つき)。終わると「レッスン完了」→ 一覧へ戻り ✓ が付く。
+	//    課程の区切りは配方のデータ(WeaponRecipe::courses)。済んだ課程はファイルに保存(次に起動しても ✓ のまま)。
+	int   m_courseIdx        = -1;				// 遊んでいる課程(-1 = 通常の一通り)
+	bool  m_courseSelectOpen = false;			// タイトルで課程の一覧を開いているか
+	int   m_courseSel        = 0;				// 一覧で選んでいる行(最後の行 = 戻る)
+	int   m_courseRequest    = -1;				// 決定された行(描画側のクリック or キー)。次の UpdateTitle で実行
+	std::vector<bool> m_courseDone;				// 課程ごとの済(✓)
+	bool  m_courseComplete   = false;			// 今の課程を終えて「レッスン完了」を見せている
+	float m_courseCompleteAt = 0.0f;			// その時刻(m_time)
+	static constexpr float COURSE_DONE_SHOW_SEC = 2.5f;	// 「レッスン完了」を見せてから一覧へ戻るまでの秒
+	void  CompleteCourse();						// 課程の最後の工程が済んだ: ✓ を付けて保存し「レッスン完了」
+	void  ReturnToTitle(bool openCourses);		// 黒幕の裏でタイトルへ(一時停止の「タイトルへ」と課程の完了で共通)
+	void  LoadCourseProgress();					// Assets/tutorial_progress.txt から ✓ を読む
+	void  SaveCourseProgress() const;
+	void  DrawCourseComplete();					// 「レッスン完了」の羊皮紙
+
+	//--- プレイテスト計時(2026-10-11 ユーザー要望): 工程ごとの所要時間を測る=時間配分(タイムバジェット)を決める材料。
+	//    「感覚」でなく計測で、どこに時間が掛かっているか(操作か / 歩きか)を見る。遊び方・判定は一切変えない(測って見せるだけ)。
+	//    時間は「世界が動いている間」だけ数える: 一時停止・F1・画面フェード・導入カメラの間は止まる。
+	static constexpr float PLAYTEST_BUDGET_SEC = 180.0f;	// 1プレイの目標時間(3分。2026-10-11 決定。後で伸ばす予定)
+	struct StepTime
+	{
+		float total = 0.0f;		// その工程に居た時間(秒)
+		float move  = 0.0f;		// うち「歩く+工位への出入り」の時間(秒)=操作していない移動の時間
+	};
+	std::vector<StepTime> m_stepTimes;			// 配方の工程と同じ数(StartGame で作り直す)
+	bool  m_showPlaytestTimer = false;			// F1 最上段で切替。F1 を閉じても表示は残る(試遊してもらう時に出しておく)。調整値と一緒に保存
+	void  TickPlaytestTimer(float dt);			// 今の工程に時間を足す(毎フレーム, Update)
+	void  DrawPlaytestTimer();					// 右下の羊皮紙: 工程ごとの時間 / 合計と目標
+	void  WritePlaytestLog() const;				// 完成時に1行追記(Assets/playtest_log.txt)=何回分も後で見比べられる
 	bool  TutorialAtAnvil() const;				// チュートリアルで金床の工位にいて鍛造できる状態か(高亮を出す)
 	static constexpr float TUTORIAL_HI_STRENGTH = 0.55f;	// 未完成の所を青く光らせる強さ(0..1)
 	static constexpr float TUTORIAL_HI_PULSE_HZ = 1.2f;	// その明滅の速さ(回/秒)
@@ -798,33 +854,43 @@ private:
 	float m_flipAngle = 0.0f;					// 現在の回転角(rad)。0=表が上, π=裏が上
 	static constexpr float FLIP_TURN_LAMBDA = 8.0f;	// 定面後、清潔な角(0/π)へ落ち着く速さ(Damp率, 1/秒)
 
-	//--- 翻面の子状態機(鍛打工程の内部。玩家が随時 F で起動)。命名 enum + switch(軽量な下層FSM)。
-	//    None=鍛打中 / TongsOut=火钳を取り出す運鏡(約2.5s) / Ready=火钳待命(F=戻す, 左键=夹む)
-	//    Gripping=铁を夹む運鏡(約1s) / Flipping=マウス左右で铁を翻す(左键=面を確定) / PutBack=火钳を戻す運鏡
-	//    入力の規則: 運鏡ビート(TongsOut/Gripping/PutBack)は「再生中の動画」=取り消し不可。
-	//    その間のキー/マウスは読んで捨てる(後で暴発しない)。入力を受けるのは Ready/Flipping だけ。
-	enum class FlipPhase { None, TongsOut, Ready, Gripping, Flipping, PutBack };
+	//--- 翻面の子状態機(鍛打工程の内部)。命名 enum + switch(軽量な下層FSM)。
+	//    操作は「F を押し続ける」だけ(2026-10-12 試遊で変更。旧=F で入る→左クリックで掴む→マウスで回す→…で迷う人が多かった)。
+	//    参考=『鬼武者 Way of the Sword』の剛力: 押している間だけ動作が進み、離すと動作が自然に巻き戻る。最後まで押し切ると完成の動作。
+	//    仕組み: 押した長さ m_flipHold(秒)を「動作の再生位置」にする。押している間は増え、離すと減る(巻き戻し)。
+	//      火钳へ振り向く→手に取る→刃を掴む→半回転 の全部が m_flipHold の関数=同じ値なら同じ画(前にも後ろにも滑らかに動く)。
+	//      [0, TONGS)           火钳へ振り向いて手に取り、刃の方へ戻る(FLIP_TONGS_OUT_TIME)
+	//      [TONGS, TONGS+GRIP)  刃へ寄って掴む(FLIP_GRIP_TIME)
+	//      [TONGS+GRIP, 全長]    半回転(m_flipTurnSec)。半分を越えると面が替わる
+	//      0 まで巻き戻った → 何も無かった事に(None) / 全長に達した → 裏返し完成 → 火钳を戻す(PutBack: 時間で進む・巻き戻せない完成の動作)
+	//    None=鍛打中 / Holding=押している or 巻き戻している途中 / PutBack=完成して火钳を戻す運鏡
+	enum class FlipPhase { None, Holding, PutBack };
+	enum class FlipBeat  { Tongs, Grip, Turn };		// Holding の中のどの区間か(案内文・運鏡が使う。m_flipHold から決まる)
 	FlipPhase m_flipPhase = FlipPhase::None;
-	float m_flipTimer = 0.0f;					// 運鏡ビート(TongsOut/Gripping/PutBack)の経過秒
-	void  UpdateFlip(float tick, bool inputOn);	// 翻面子状態機を駆動(運鏡ビート＋マウス翻し)
-	bool  FlipIsCutscene() const;				// 今が取り消し不可の運鏡ビートか(入力を捨てる区間)
-	static constexpr float FLIP_TONGS_OUT_TIME = 2.5f;	// 火钳を取り出す運鏡の長さ(秒。慢=映画的)
-	static constexpr float FLIP_GRIP_TIME      = 1.0f;	// 铁を夹む運鏡の長さ(秒)
+	float m_flipTimer = 0.0f;					// PutBack の経過秒
+	float m_flipHold  = 0.0f;					// 動作の再生位置(秒)。押している間 +dt / 離すと −dt×FLIP_REWIND_RATE
+	float m_flipStartAngle = 0.0f;				// 押し始めた時の刃の角度(=今の面の清潔な角)。巻き戻すとここへ戻る
+	void  UpdateFlip(float tick, bool inputOn);	// 翻面子状態機を駆動(押した長さ→再生位置→画)
+	float FlipHoldTotal() const { return FLIP_TONGS_OUT_TIME + FLIP_GRIP_TIME + m_flipTurnSec; }	// 押し切るまでの秒
+	FlipBeat CurrentFlipBeat() const;			// 今の再生位置がどの区間か
+	static constexpr float FLIP_TONGS_OUT_TIME = 2.5f;	// 火钳へ振り向いて手に取る区間の長さ(秒。慢=映画的)
+	static constexpr float FLIP_GRIP_TIME      = 1.0f;	// 刃を掴む区間の長さ(秒)
 	static constexpr float FLIP_PUTBACK_TIME   = 2.0f;	// 火钳を戻す運鏡の長さ(秒)
+	static constexpr float FLIP_REWIND_RATE    = 2.0f;	// 離した時の巻き戻りの速さ(押して進む速さの何倍)。速め=「やめた」がすぐ分かる
 	//--- 翻す手感(F1「Flip」で調整・forge_tuning.txt に保存)
-	float m_flipSens     = 0.0002f;				// マウス横移動→刃の回転(1pxあたり何半回転, 1:1 raw)。小=大きく振らないと回らない=重さ
+	float m_flipTurnSec  = 0.8f;				// F を押し続けて半回転(裏返る)するのに掛かる秒。大=重い鉄をゆっくり返す
 
 	//--- 翻面の運鏡(火钳アニメの代替)。カメラは2つの「寄り」を重み付きで混ぜる:
 	//    tongs=左腰に掛けた火钳(HipPoint)の方へ振り向く / grip=刃(砧面アンカー)へ寄って見下ろす。
 	//    目標点は体の位置/アンカーから取る=配置を変えても運鏡が自動で追従(座標のベタ書き無し)。
-	float m_camTongsW = 0.0f;					// 火钳方向への重み 0..1(TongsOut/PutBack の曲線で決まる)
-	float m_camGripW  = 0.0f;					// 刃への寄りの重み 0..1(Gripping で上がり、Ready で戻る)
+	float m_camTongsW = 0.0f;					// 火钳方向への重み 0..1(Tongs 区間 / PutBack の曲線で決まる)
+	float m_camGripW  = 0.0f;					// 刃への寄りの重み 0..1(Grip 区間で上がり、完成後に戻る)
 	bool  m_tongsInHand = false;				// 翻面で火钳を手に取っている(=腰の火钳モデルを描かない)
 	float m_tongsLean = 0.20f;					// 火钳へ振り向く時、カメラ本体も寄る割合(体を傾ける)
 	float m_gripDolly = 0.30f;					// 夹む時、カメラ本体が刃へ寄る割合
 	float m_gripLambda = 5.0f;					// 寄り→元の視点へ戻る速さ(Damp率, 1/秒)
 	//--- 翻面中はハンマーを置く(火钳に持ち替える)。重み 0=構え / 1=置いた。
-	//    TongsOut の「振り向く」区間で置き、PutBack の「戻る」区間で取り上げる(火钳運鏡と同じ時間割)。
+	//    Tongs 区間の「振り向く」所で置き、PutBack の「戻る」区間で取り上げる(火钳運鏡と同じ時間割)。
 	float m_hammerStowW = 0.0f;
 	float m_hammerStowOff[3] = { 0.45f, -0.55f, -0.25f };	// 置いた位置=構え位置からのずれ(F1「Flip」で調整)
 	float m_hammerStowTilt = 1.2f;				// 置く時に寝かせる角度(rad。錘頭の pitch に加算)
@@ -1036,34 +1102,180 @@ private:
 		const char* label;						// 何が起きるか(UTF-8)
 	};
 	void  DrawKeyHints(const KeyHint* hints, int count, float yRatio, float alpha = 1.0f);	// 中央揃えで1行に並べる
-	//--- 淬火で揺する操作の大きな動く案内: マウスの絵が上下に動き、上下の矢印が動く向きに合わせて光る(動画型の操作案内)。
-	//    蒸気の膜を破るまで(=操作を覚えるまで)だけ出し、破れたら淡出する。小さな操作ガイド(画面下)は残る。
-	float m_stirPromptAlpha = 0.0f;
-	void  DrawStirPrompt();
-	enum class MouseAxis { Vertical, Horizontal };
-	void  DrawMousePrompt(MouseAxis axis, int towards, float alpha);	// 動くマウスの案内(towards: 0 往復 / −1 上・左 / +1 下・右)
-	//--- 研ぎの自適応の案内(ユーザー要望 2026-10-07): 同じ誤りを m_hintAfterMistakes 回くり返したら直し方を見せる。
-	//    上手な人には出ない=邪魔をしない。正しくできた(研げた)瞬間に消え、回数も 0 に戻る。
-	enum class GrindHint { None, TiltUp, TiltDown, Slide };
-	GrindHint m_grindHint      = GrindHint::None;	// 今出す案内
-	GrindHint m_grindHintShown = GrindHint::None;	// 淡出中も描く為に、最後に出した案内を覚えておく
-	float m_grindHintAlpha     = 0.0f;
-	int   m_grindFlatMistakes  = 0;					// 「寝かせすぎ」をくり返した回数
-	int   m_grindSteepMistakes = 0;					// 「立てすぎ」〃
-	int   m_grindDoneMistakes  = 0;					// 「研ぎ上がった所を研ぐ」〃
-	int   m_hintAfterMistakes  = 2;					// 何回くり返したら案内を出すか(F1 Stations。tuning キー hintafter)
-	void  DrawGrindHint();
-	void  CountGrindMistake(int& count, GrindHint hint);	// 誤りを1回数え、規定回数に達したら案内を出す
-	void  ClearGrindHint();							// 正しくできた: 案内を消し、回数を 0 に戻す
+
+	//====================================================================
+	//  操作の案内(チュートリアル / 救急)。データ駆動 = 下の LESSONS 表(Tutorial.cpp)。2026-10-12 阶段 C
+	//    1つの「課(Lesson)」= 動く絵(何をするか) + 一言 + 「できた」の量 + 救急の条件。
+	//    表の順番 = 優先順位。今の状況で要る課(LessonActive)のうち、表で一番上の物を1つだけ出す。
+	//    ・チュートリアル: まだ覚えていない課を順に教える(できるまで出し続ける。他の操作は止めない=軟性)。
+	//                      長く進まなければ絵が脈打って注意を引く(アイドルヒント)。
+	//    ・救急(両モード): 覚えた後 / 通常モードでも、同じ誤りを繰り返す・長く進まない時だけ出す。正しくできたら消える。
+	//    「できた」は課ごとの単調に増える量(LessonMetric: 有効打の数 / ふいごを踏んだ秒 / 裏返した回数 …)で測る。
+	//    新しい工程(焼き戻し・試し斬り等)の課 = 表に行を足し、LessonActive/LessonMetric に case を足すだけ。
+	//====================================================================
+	enum class LessonId
+	{
+		Flip, LeaveCold, Aim, Strike, ReadGauge, HitScale,		// 金床
+		TakeOut, Bellows, WaitHot,								// 炉
+		GripIron, PutDown, WalkTo,								// 走動・搬運
+		GrindFlip, GrindRun, GrindAngle, GrindSlide,			// 砥石(GrindRun = 左の長押しと右の連打を同時に)
+		Plunge, Stir,											// 水槽
+		Count
+	};
+	enum class LessonAnim		// 課の動く絵の種類(同じ操作は同じ絵)
+	{
+		MouseVertical,			// マウスを上下に動かす
+		StrikeHold,				// 左ボタンを押し続けて溜める → 離す
+		HoldKey,				// キーを押し続ける(輪が溜まる)。キーは LessonDef::key
+		FlipHold,				// 裏返し: F を押し続ける(押している間は実際の進み)
+		PressKey,				// キーを1回押す(押下を繰り返す)。キーは LessonDef::key
+		PointGauge,				// 温度ゲージの目指す範囲を囲み、上から矢印で指す(範囲は LessonGaugeRange)
+		PointUp,				// 上(刃)を矢印で指す
+		Walk,					// WASD で歩く
+		MouseHorizontal,		// マウスを左右に動かす
+		GrindAngle,				// 研ぎの角度: マウス上下(救急の時は直す向きの矢印だけ明るい)
+		GrindFlipHold,			// 砥石の裏返し: F を押し続ける(押している間は実際の進み)
+		GrindRun,				// 砥石: 左の長押し + 右の連打 を並べ、今できている方を薄くする(できていない方が目立つ)
+	};
+	struct LessonDef
+	{
+		LessonId    id;
+		LessonAnim  anim;
+		const char* key;			// HoldKey 等で使うキーの絵(拡張子なし)。不要なら nullptr
+		const char* text;			// 絵の下の一言(日本語)
+		float       need;			// 「できた」とみなす LessonMetric の増え量
+		float       rescueIdle;		// 救急: この秒数、状況が続いて進まなければ出す(0 = 使わない)
+		int         rescueMistakes;	// 救急: この回数、誤りを重ねたら出す(0 = 使わない)
+		bool        remind = false;	// 「思い出させる」課: 覚えた後(と通常モード)は、場面の中で LessonMetric が止まった時だけ出し、
+		                           	//   進めば黙って消える(弾ける演出・確認音・救急の待ち時間なし)。砥石の基本操作の様に、止めると困る操作用
+	};
+	static const LessonDef LESSONS[];	// 表(Tutorial.cpp)。順番 = LessonId の順 = 優先順位
+	struct LessonState
+	{
+		bool  learned   = false;		// チュートリアルで覚えたか(この回)
+		bool  based     = false;		// 教え始めの量を取ったか
+		float base      = 0.0f;			// 教え始め / 救急を出した時の LessonMetric(ここからの増えで「できた」を測る)
+		float lastMetric= 0.0f;			// 前フレームの LessonMetric(増えた=進んだ → idle を 0 に)
+		float idle      = 0.0f;			// 状況が続いているのに進んでいない秒
+		int   mistakes  = 0;			// 救急の為に数える誤りの回数
+		float lastMistakeAt = -1000.0f;	// 最後に誤った時刻(LESSON_MISTAKE_FORGET_SEC 誤らなければ回数を 0 に戻す)
+		bool  rescue    = false;		// 救急を出している
+		float alpha     = 0.0f;			// 表示の濃さ(淡入/淡出)
+		float popAt     = -1000.0f;		// 「できた」の弾ける演出と確認音の時刻(m_time)= できた瞬間 + LESSON_POP_DELAY
+		bool  popVisible= false;		// できた瞬間に見えていた=弾ける演出と確認音を出す(見えていない課は黙って済ます)
+		bool  soundDone = true;			// 確認音を鳴らし終えたか(popAt に1回だけ)
+		float lastActiveAt = -1000.0f;	// 最後に場面が合っていた時刻(m_time)。出している課を少しの間残す為
+		float rescueClearedAt = -1000.0f;	// 最後に救急が消えた時刻。直後に同じ救急を出さない(弾ける+確認音の繰り返しを防ぐ)
+	};
+	LessonState m_lessons[(int)LessonId::Count];
+	int   m_lessonShown = -1;			// 今出している課(-1 = 無し)。UpdateLessons が決め、DrawLessonPrompts が描く
+	bool  m_lessonShownRescue = false;	// それは救急か(false = チュートリアルの教え)
+	bool  LessonActive(LessonId id) const;		// 今の状況でその課が意味を持つか(工位・温度・面…)
+	float LessonMetric(LessonId id) const;		// その課の「正しくできた」量(単調に増える)
+	void  NoteLessonMistake(LessonId id);		// 遊びのコードが誤りを報告する(空振り / 完成済みの所を叩く …)
+	void  UpdateLessons(float dt);				// 毎フレーム(Update): 進み/放置/救急/覚えた/確認音 と、出す課を決める
+	void  PopLesson(LessonState& l);			// 「できた」: 弾ける演出と確認音を予約
+	void  DrawLessonPrompts();					// 出している課の絵と一言(弾ける演出を含む)
+	void  DrawLessonAnim(const LessonDef& d, float alpha, float scale, unsigned int tint);	// 課の絵を種類で描き分け
+	//--- 温度ゲージの位置(DrawHeatGauge と課の「ゲージを指す」で共有=指す所とゲージが必ず一致)
+	static constexpr float HEAT_TRACK_W_RATIO = 0.46f;	// 槽の幅(画面幅比)。画面中央に置く。槽の左端=温度0 / 右端=温度1
+	static constexpr float HEAT_TRACK_H_RATIO = 0.026f;	// 槽の高さ(画面高さ比)
+	static constexpr float HEAT_TRACK_Y_RATIO = 0.80f;	// 槽の上端(画面高さ比)
+	// できてから「弾ける+確認音」までの間。叩いた瞬間にできる(金床の音と重なる)ので、少し遅らせて「カン！…チーン」と聞かせる。
+	static constexpr float LESSON_POP_DELAY   = 0.2f;
+	static constexpr float LESSON_NUDGE_SEC   = 8.0f;	// チュートリアル: この秒数進まなければ絵を脈打たせる(アイドルヒント)
+	// 出している課は、場面が合わなくなってもこの秒数は残す(2026-10-12 不具合: 砥石の回転が閾値の前後を行き来し、
+	//   ペダル ↔ 刃を当てる の案内が踏む度に入れ替わって、弾ける演出と確認音が何度も出た)。
+	static constexpr float LESSON_HOLD_SEC    = 1.5f;
+	static constexpr float LESSON_RESCUE_COOLDOWN = 8.0f;	// 救急が消えてから、同じ救急をまた出せるまでの秒
+	// 誤りの回数を忘れるまでの秒: この間に次の誤りが無ければ 0 から数え直す=「続けて間違えている」時だけ救急を出す
+	//   (2026-10-12: 回数が減らず、ずっと前の誤りと足されて、探っている途中に研ぎの案内が出ていた)
+	static constexpr float LESSON_MISTAKE_FORGET_SEC = 5.0f;
+	bool  LessonGaugeRange(LessonId id, float& lo, float& hi) const;	// PointGauge で囲む温度の範囲(無ければ false)
+	bool  FocusOnGuideTarget() const;			// 走動中、行き先(鉄 or 工位)を見ていて E が効くか
+	int   m_leaveCount  = 0;					// 工位を離れた回数(LessonMetric: LeaveCold / TakeOut)
+	int   m_gripCount   = 0;					// 鉄を掴んだ回数(GripIron)
+	int   m_putCount    = 0;					// 鉄を工位に置いた回数(PutDown)
+	int   m_reachCount  = 0;					// 歩いて行き先に着いた(E が効く様になった)回数(WalkTo)
+	int   m_heatReadyCount = 0;				// 炉の中で目指す温度に達した回数(WaitHot)
+	bool  m_prevFocusGoal = false;				// 前フレーム行き先を見ていたか(着いた瞬間を数える)
+	bool  m_prevHeatReady = false;				// 前フレーム炉の中で目指す温度に達していたか(達した瞬間を数える)
+	float m_aimTravel = 0.0f;					// 狙いを動かした量の累計(LessonMetric: Aim)
+	float m_lastAimRail = -1.0f;				// 前フレームの狙い(累計を出す為)
+	int   m_validStrikes = 0;					// 有効打の数(LessonMetric: Strike)
+	float m_bellowsTime  = 0.0f;				// ふいごを踏んだ秒の累計(LessonMetric: Bellows)
+	int   m_flipCount    = 0;					// 金床で裏返した回数(LessonMetric: Flip)
+	float m_grindRunTime   = 0.0f;				// 左の長押し + 研げる速さで回っている砥石 で研いでいた秒(GrindRun)
+	float m_grindGoodStreak= 0.0f;				// 使える角度で途切れずに研げている秒(今の続き)
+	int   m_grindAngleHolds = 0;				// 使える角度を GRIND_ANGLE_HOLD_SEC 途切れずに保てた回数(GrindAngle の「できた」量。通り過ぎるだけでは増えない)
+	static constexpr float GRIND_ANGLE_HOLD_SEC = 1.5f;	// 角度の課: これだけ途切れずに使える角度で研げたら「できた」
+	bool  GrindRunning() const;					// 今、研げている(左を押していて、砥石が研げる速さで回っている)
+	void  DrawGrindRunLesson(float alpha, float scale, unsigned int tint);	// 左の長押し + 右の連打(できている方を薄く)
+	float m_grindSlideTravel = 0.0f;			// 当てたまま刃を滑らせた量(GrindSlide)
+	int   m_grindFlipCount = 0;					// 砥石で裏返した回数(GrindFlip)
+	bool  m_grindTooFlat   = false;				// 最後の角度の誤りは「寝かせすぎ」か(救急の矢印の向き)
+	int   m_plungeCount    = 0;					// 刃を水に入れた回数(Plunge)
+	float m_stirTravel     = 0.0f;				// 水の中で揺すった量(m。Stir)
+	//--- 走動の行き先の目印を点滅させる(2026-10-12 ユーザー決定): 同じ行き先へ歩き出してから WALK_BLINK_AFTER 秒着かなければ ▼と名前が点滅。
+	float m_walkGoalTime = 0.0f;				// 今の行き先へ向かっている秒(行き先が変わる/工位に入ると 0)
+	const char* m_walkGoalLabel = nullptr;		// 前フレームの行き先の名前(変わったら計り直し)
+	static constexpr float WALK_BLINK_AFTER = 5.0f;
+	static constexpr float WALK_BLINK_HZ    = 2.0f;	// 点滅の速さ(回/秒)
+	float HearthTargetTemp() const;				// 炉で目指す温度(焼入れ前なら火花の温度、鍛造中なら作業できる温度)
+	void  DrawHoldKeyLesson(const char* key, float alpha, float scale, unsigned int tint);	// キーを押し続ける(押下→溜まる輪)
+	void  DrawStrikeHoldLesson(float alpha, float scale, unsigned int tint);	// 左ボタンを押し続けて溜める → 離す
+	void  DrawTapKeyLesson(const char* key, float alpha, float scale, unsigned int tint);	// キーを押す(押下→離すを繰り返す)
+	void  DrawGaugePointLesson(float lo, float hi, float alpha, float scale);	// 温度ゲージの範囲を囲んで指す
+	void  DrawPointUpLesson(float alpha, float scale, unsigned int tint);		// 上(刃)を指す
+	void  DrawWalkLesson(float alpha, float scale, unsigned int tint);		// WASD
+	DirectX::XMFLOAT2 LessonCenter(LessonAnim anim) const;	// 課の絵の中心(画面上 px)。WASD だけ左下、他は中央の刃の下
+	bool  DrawLessonPicture(LessonId id, float centerX, float centerY, float alpha, float scale, unsigned int tint);	// 指示図(何をするか)。表に無い課は false
+	//--- 指示図の表(データ。Tutorial.cpp)。1コマ = 台(base)+ 姿勢(pose)の2層。コマを跳ばして止める(リミテッドアニメ)。
+	//    コマごとに台も姿勢も替えられる(例: 氧化皮を叩くと台が「斑が1つ減った絵」に替わる)。
+	//    姿勢の層は少しずらす/傾けることもできる(瞄準: 同じ手の絵を刃に沿って跳ばす)。
+	//    形式は ChatGPT の書き出し(Assets/UI/Lessons/v2/ANIMATION_FORMAT.md と各 *_animation.json)と同じ。
+	struct LessonPictFrame
+	{
+		const char* base;	// 台の画像(LESSON_PICT_DIR からのファイル名)。動かさない
+		const char* pose;	// 姿勢の画像(手と道具)
+		float hold;			// このコマで止まる秒(補間しない)
+		float dx, dy;		// 姿勢の層のずれ(図の原寸 = 512px の座標で)
+		float tilt;			// 姿勢の層の傾き(rad。正 = 時計回り。支点 pivot のまわり)
+		float pivotX, pivotY;	// 傾きの支点(原寸の座標)。道具の当たる所(鎚頭など)にすると、傾けても狙いが外れない
+	};
+	struct LessonPicture
+	{
+		static const int MAX_FRAMES = 6;
+		LessonId        id;
+		float           halo;			// 姿勢の層の周りの暗い縁(原寸 px。0 = 無し)。道具と刃の線がくっつく図だけ使う
+		int             frameCount;
+		LessonPictFrame frames[MAX_FRAMES];
+	};
+	static const LessonPicture LESSON_PICTURES[];
+	void  DrawMouseAxisLesson(bool vertical, int towards, float alpha, float scale, unsigned int tint);	// マウスを上下/左右に(towards: 0 往復 / −1 上・左 / +1 下・右)
+	void  DrawFlipHoldPrompt(float alpha, float scale, unsigned int tint, const char* label);	// 裏返し: F + 押した長さの輪(離すと減る)
+	void  DrawHoldProgressPrompt(const char* key, float fill01, bool pressed, const char* label, float alpha, float scale, unsigned int tint);	// 長押しの進み(共通の見た目)。label=nullptr で一言なし
+	bool  LessonDrawsFlip() const { return m_lessonShown == (int)LessonId::Flip; }	// 裏返しの輪を課が描いている(DrawPlayUI が重ねない)
+	bool  LessonDrawsGrindFlip() const { return m_lessonShown == (int)LessonId::GrindFlip; }	// 砥石の裏返しも同じ
 	bool  GuideTarget(DirectX::XMFLOAT3& pos, const char*& label);	// 走動中に次に向かう点(鉄 or 工位)。無ければ false
 	void  DrawObjectiveMarker();					// 向かう点の上に目印。画面外なら画面端に矢印(オフスクリーンインジケーター)
 
 	//--- 温度パラメータ(加熱速度は上の COAL_HEAT_RATE / BELLOWS_HEAT_RATE)
 	// 打撃CDは調整しやすいようメンバー変数(m_strikeCDMax)。自然冷却速度は m_forging.coolRate
-	static constexpr float IDEAL_MIN = 0.55f;	// 最適温度帯(下限)
+	// 緑帯に「実際に居られる時間」を2倍に(2026-10-12 試遊: 皆が短すぎると感じた。ユーザー決定=帯の幅と冷え方を半々で):
+	//   時間 ∝ 帯の幅 / 冷える速さ。帯を 1.5 倍(0.30 → 0.45, 下へ広げる)× 冷え方を 0.75 倍(coolRate / STRIKE_COOL)= 1.5 / 0.75 = 2 倍。
+	//   上へは広げられない(すぐ上が過熱 OVERHEAT。START_HEAT=IDEAL_MAX は BURN_TEMP 以上の制約もある)ので下限を下げる。
+	//   下限は冷打の線(COLD_LIMIT)より上に保つ=「緑の外の冷たい鉄」はまだ残る。
+	static constexpr float IDEAL_MIN = 0.40f;	// 最適温度帯(下限)。旧 0.55
 	static constexpr float IDEAL_MAX = 0.85f;	// 最適温度帯(上限)
 	static constexpr float OVERHEAT  = 0.92f;	// これ以上は過熱(鋼を痛める)
 	static constexpr float FORGE_READY_MARGIN = 0.05f;	// 加熱の行が「済」になるのは緑帯の下端よりこれだけ上(済/未済のチラつき防止)
+	// 炉で「十分に熱い」= 金床へ戻ってよい温度(2026-10-12 ユーザーが温度ゲージに印を付けて決定: 緑帯の上の方〜過熱の手前)。
+	//   緑帯に入った所(ReadyTemp)でも叩けるが、すぐ冷めて叩ける回数が少ない → ここまで待つ様に案内する。
+	//   案内の段階: 〜ReadyTemp「赤くなるまで熱する」/ 〜FORGE_FULL_TEMP「叩けるがもう少し待つ」/ それ以上「十分。金床へ」
+	static constexpr float FORGE_FULL_TEMP = 0.80f;
+	static_assert(FORGE_FULL_TEMP > IDEAL_MIN + FORGE_READY_MARGIN && FORGE_FULL_TEMP < OVERHEAT,
+	              "FORGE_FULL_TEMP must be above the 'can strike' line and below overheating");
 	// 淬火できる温度の上限。過熱した鋼を急冷すると結晶が粗く脆くなり、淬割れ(焼き割れ)する。
 	//   → 淬火は「QUENCH_MIN_TEMP 以上、QUENCH_MAX_TEMP 以下」の窓の中だけ(ユーザー同意 2026-10-02)。
 	static constexpr float QUENCH_MAX_TEMP = OVERHEAT;
@@ -1080,8 +1292,9 @@ private:
 
 	//--- 打撃パラメータ
 	static constexpr float CHARGE_RATE = 1.6f;	// 蓄力速度(/秒, 満蓄力まで約0.6秒)
-	static constexpr float STRIKE_COOL = 0.02f;	// 1打ごとに下がる温度(燃える温度から約25打で冷たくなる)
+	static constexpr float STRIKE_COOL = 0.015f;	// 1打ごとに下がる温度。旧 0.02 × 0.75(緑帯に居られる時間を延ばす。上の IDEAL_MIN の説明)
 	static constexpr float COLD_LIMIT  = 0.35f;	// これ未満は冷たすぎ(ほぼ変形せず割れる)
+	static_assert(IDEAL_MIN > COLD_LIMIT, "the forging band must start above the cold-strike line");	// 緑帯を下へ広げても冷打の線は越えない
 	static constexpr float CADENCE_MIN = 0.45f;	// 良い打撃間隔の下限(これより速いと駄目)
 	static constexpr float CADENCE_MAX = 1.00f;	// 良い打撃間隔の上限(これより遅いと駄目)
 	static constexpr int   GROOVE_HITS = 2;		// この回数だけ良いテンポが続くと効率アップ

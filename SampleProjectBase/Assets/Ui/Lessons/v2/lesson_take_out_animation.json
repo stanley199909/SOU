@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "lesson": "take_out",
+  "canvas": {
+    "width": 512,
+    "height": 512
+  },
+  "playback": "step",
+  "loop": true,
+  "coordinate_system": "top-left origin; x right; y down; pixels; tilt radians clockwise",
+  "transform_order": "rotate pose around pivot, then apply dx/dy; base never transformed",
+  "compositing": {
+    "mode": "source-over",
+    "clearance_pixels": 0
+  },
+  "meaning": "火钳夹着火中的刀→把同一把刀向右上方取出，离开火焰。",
+  "frames": [
+    {
+      "base": "lesson_take_out_base.png",
+      "pose": "lesson_take_out_pose1.png",
+      "duration_seconds": 0.8,
+      "dx": 0,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        205,
+        265
+      ]
+    },
+    {
+      "base": "lesson_take_out_base2.png",
+      "pose": "lesson_take_out_pose2.png",
+      "duration_seconds": 1.3,
+      "dx": 0,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        205,
+        265
+      ]
+    }
+  ],
+  "note": "炉与火焰位置固定。base/base2仅遮挡留白不同，避免火焰透过空心刀身；按每格base播放。"
+}

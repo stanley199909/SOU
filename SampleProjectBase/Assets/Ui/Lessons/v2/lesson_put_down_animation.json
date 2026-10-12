@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "lesson": "put_down",
+  "canvas": {
+    "width": 512,
+    "height": 512
+  },
+  "playback": "step",
+  "loop": true,
+  "coordinate_system": "top-left origin; x right; y down; pixels; tilt radians clockwise",
+  "transform_order": "rotate pose around pivot, then apply dx/dy; base never transformed",
+  "compositing": {
+    "mode": "source-over",
+    "clearance_pixels": 0
+  },
+  "meaning": "拿着铁条→放到台面→张开钳口松开。",
+  "frames": [
+    {
+      "base": "lesson_put_down_base.png",
+      "pose": "lesson_put_down_pose1.png",
+      "duration_seconds": 0.7,
+      "dx": 0,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        292,
+        305
+      ]
+    },
+    {
+      "base": "lesson_put_down_base.png",
+      "pose": "lesson_put_down_pose2.png",
+      "duration_seconds": 0.3,
+      "dx": 0,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        292,
+        305
+      ]
+    },
+    {
+      "base": "lesson_put_down_base.png",
+      "pose": "lesson_put_down_pose3.png",
+      "duration_seconds": 1.2,
+      "dx": 0,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        292,
+        305
+      ]
+    }
+  ],
+  "note": "中间格表示先夹紧再提起、先落稳再松开；循环末尾直接重置为第一格。"
+}

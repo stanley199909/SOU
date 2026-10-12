@@ -1,6 +1,6 @@
 #include "QuenchStep.h"
 #include "SceneForge/SceneForge.h"
-#include "Input.h"
+#include "InputActions.h"
 
 void QuenchStep::OnEntry()
 {
@@ -14,7 +14,7 @@ void QuenchStep::OnUpdate(float dt)
     case Phase::Hold:
         // Quench only when standing at the trough. TryQuench checks the temperature window
         // (refused with a line from the smith). Sound + steam come later, at water contact.
-        if (m_forge->AtStation(Station::Trough) && IsKeyTrigger(VK_LBUTTON) && m_forge->TryQuench())
+        if (m_forge->AtStation(Station::Trough) && InputActions::Pressed(Action::Use) && m_forge->TryQuench())
             Next(Phase::Turn);
         break;
 

@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "lesson": "stir",
+  "canvas": {
+    "width": 512,
+    "height": 512
+  },
+  "playback": "step",
+  "loop": true,
+  "coordinate_system": "top-left origin; x right; y down; pixels; tilt radians clockwise",
+  "transform_order": "rotate pose around pivot, then apply dx/dy; base never transformed",
+  "compositing": {
+    "mode": "source-over",
+    "clearance_pixels": 0
+  },
+  "meaning": "刀保持插在水中，上下摆动，刀周围气泡换位。",
+  "frames": [
+    {
+      "base": "lesson_stir_base.png",
+      "pose": "lesson_stir_pose1.png",
+      "duration_seconds": 0.3,
+      "dx": 0,
+      "dy": -18,
+      "tilt": 0,
+      "pivot": [
+        245,
+        260
+      ]
+    },
+    {
+      "base": "lesson_stir_base2.png",
+      "pose": "lesson_stir_pose2.png",
+      "duration_seconds": 0.3,
+      "dx": 0,
+      "dy": 18,
+      "tilt": 0,
+      "pivot": [
+        245,
+        260
+      ]
+    }
+  ],
+  "motion_range": {
+    "dy_min": -18,
+    "dy_max": 18,
+    "travel_pixels": 36
+  },
+  "waterline_y": 299,
+  "blade_tip_y_at_rest": 390,
+  "basin_floor_y": 422,
+  "note": "节奏课按用户要求两格等时0.3秒。最高格刀尖372>水面299，最低格408<槽底422，不出水也不撞底。"
+}

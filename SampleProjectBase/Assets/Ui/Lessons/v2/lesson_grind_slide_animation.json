@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "lesson": "grind_slide",
+  "canvas": {
+    "width": 512,
+    "height": 512
+  },
+  "playback": "step",
+  "loop": true,
+  "coordinate_system": "top-left origin; x right; y down; pixels; tilt radians clockwise",
+  "transform_order": "rotate pose around pivot, then apply dx/dy; base never transformed",
+  "compositing": {
+    "mode": "source-over",
+    "clearance_pixels": 0
+  },
+  "meaning": "刀尖段→中段→刀根段→回到中段；整条刃依次通过砥石接触处。",
+  "frames": [
+    {
+      "base": "lesson_grind_slide_base.png",
+      "pose": "lesson_grind_slide_pose1.png",
+      "duration_seconds": 0.4,
+      "dx": 60,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        197,
+        257
+      ]
+    },
+    {
+      "base": "lesson_grind_slide_base2.png",
+      "pose": "lesson_grind_slide_pose2.png",
+      "duration_seconds": 0.4,
+      "dx": 0,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        197,
+        257
+      ]
+    },
+    {
+      "base": "lesson_grind_slide_base3.png",
+      "pose": "lesson_grind_slide_pose3.png",
+      "duration_seconds": 0.4,
+      "dx": -60,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        197,
+        257
+      ]
+    },
+    {
+      "base": "lesson_grind_slide_base2.png",
+      "pose": "lesson_grind_slide_pose2.png",
+      "duration_seconds": 0.8,
+      "dx": 0,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        197,
+        257
+      ]
+    }
+  ],
+  "contact_point": [
+    197,
+    257
+  ],
+  "note": "pose1/2/3的刀与手完全相同，仅火花在源图里反向偏移，抵消dx后仍停在砥石接触处。"
+}

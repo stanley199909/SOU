@@ -24,6 +24,7 @@ namespace Audio
 		SE_TITLE_FADE,	// タイトルのロゴが淡出する時の効果音(一回。ユーザーが素材を用意。無ければ無音)
 		SE_PENCIL,	// 工程リスト: 取り消し線を引く「シャッ」(鉛筆が紙を走る)。無ければ合成音
 		SE_ERASER,	// 工程リスト: 取り消し線を消す「ゴシゴシ」(消しゴム)。無ければ合成音
+		SE_LEARNED,	// チュートリアル: 操作を覚えた瞬間の確認音(短く明るい1音)。Assets/Sound/SE/learned.wav があればそれ、無ければ合成音
 		// ※BGM_* は必ず最後にまとめる(IsBgm が BGM_TITLE..BGM_RESULT の範囲で判定する)
 		BGM_TITLE,	// タイトル画面BGM(TITLE状態でループ)
 		BGM_PLAY,	// ゲーム中BGM(PLAY状態でループ)

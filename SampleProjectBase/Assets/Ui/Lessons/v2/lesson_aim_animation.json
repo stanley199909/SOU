@@ -1,0 +1,14 @@
+{
+  "canvas_size": 512,
+  "base": "lesson_aim_base.png",
+  "moving": "lesson_aim_hand.png",
+  "centered_hammer_x": 176.5,
+  "offset_x": 0,
+  "offset_y_min": -56,
+  "offset_y_max": 56,
+  "period_seconds": 3.2,
+  "preview_frame_ms": 40,
+  "clearance_pixels": 6,
+  "motion": "dy = -amplitude * cos(2*pi*time/period); move entire hand layer; base is fixed",
+  "compositing": "Multiply base alpha by (1 - dilated moving alpha), then draw moving layer."
+}

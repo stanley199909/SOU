@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "lesson": "leave_cold",
+  "canvas": {
+    "width": 512,
+    "height": 512
+  },
+  "playback": "step",
+  "loop": true,
+  "coordinate_system": "top-left origin; x right; y down; pixels; tilt radians clockwise",
+  "transform_order": "rotate pose around pivot, then apply dx/dy; base never transformed",
+  "compositing": {
+    "mode": "source-over",
+    "clearance_pixels": 0
+  },
+  "meaning": "刀留在铁砧的画面建立当前位置，随后出现指向炉火的箭头：离开金床回炉加热。",
+  "frames": [
+    {
+      "base": "lesson_leave_cold_base.png",
+      "pose": "lesson_leave_cold_pose1.png",
+      "duration_seconds": 0.9,
+      "dx": 0,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        256,
+        256
+      ]
+    },
+    {
+      "base": "lesson_leave_cold_base.png",
+      "pose": "lesson_leave_cold_pose2.png",
+      "duration_seconds": 1.4,
+      "dx": 0,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        256,
+        256
+      ]
+    }
+  ],
+  "limitation": "单色图不独立说明冷却原因；需要当前课程上下文。"
+}

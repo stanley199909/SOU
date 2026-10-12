@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "lesson": "bellows",
+  "canvas": {
+    "width": 512,
+    "height": 512
+  },
+  "playback": "step",
+  "loop": true,
+  "coordinate_system": "top-left origin; x right; y down; pixels; tilt radians clockwise",
+  "transform_order": "rotate pose around pivot, then apply dx/dy; base never transformed",
+  "compositing": {
+    "mode": "source-over",
+    "clearance_pixels": 0
+  },
+  "meaning": "脚抬起、风箱张开→脚压下风箱、送风、火焰变大。",
+  "frames": [
+    {
+      "base": "lesson_bellows_base.png",
+      "pose": "lesson_bellows_pose1.png",
+      "duration_seconds": 0.8,
+      "dx": 0,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        175,
+        310
+      ]
+    },
+    {
+      "base": "lesson_bellows_base.png",
+      "pose": "lesson_bellows_pose2.png",
+      "duration_seconds": 0.65,
+      "dx": 0,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        175,
+        310
+      ]
+    }
+  ]
+}

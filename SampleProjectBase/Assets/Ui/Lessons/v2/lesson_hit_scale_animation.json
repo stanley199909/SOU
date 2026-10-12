@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "lesson": "hit_scale",
+  "canvas": {
+    "width": 512,
+    "height": 512
+  },
+  "playback": "step",
+  "loop": true,
+  "coordinate_system": "top-left origin; x right; y down; pixels; tilt radians clockwise",
+  "transform_order": "rotate pose around pivot, then apply dx/dy; base never transformed",
+  "compositing": {
+    "mode": "source-over",
+    "clearance_pixels": 0
+  },
+  "meaning": "侧视：举锤→击中斜线氧化皮、碎片飞出→退锤并展示中间干净区域。",
+  "frames": [
+    {
+      "base": "lesson_hit_scale_base.png",
+      "pose": "lesson_hit_scale_pose1.png",
+      "duration_seconds": 0.9,
+      "dx": 0,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        245,
+        268
+      ]
+    },
+    {
+      "base": "lesson_hit_scale_base2.png",
+      "pose": "lesson_hit_scale_pose2.png",
+      "duration_seconds": 0.25,
+      "dx": 0,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        245,
+        268
+      ]
+    },
+    {
+      "base": "lesson_hit_scale_base2.png",
+      "pose": "lesson_hit_scale_pose3.png",
+      "duration_seconds": 1.4,
+      "dx": 0,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        245,
+        268
+      ]
+    }
+  ],
+  "scale_representation": "三组粗斜线阴影代表氧化皮；击中后中间一组消失，左右两组仍在。"
+}

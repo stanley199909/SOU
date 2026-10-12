@@ -39,13 +39,26 @@ struct StepSetting
     const char* instruction; // macro tutorial line shown on the HUD this step (UTF-8)
 };
 
+// One tutorial course (lesson) = a slice of the recipe's steps, played on its own.
+// The player picks it from the course list; the game starts at firstStep (earlier
+// steps are treated as already done) and the course is complete once lastStep is
+// finished. The slice is data, so a new weapon brings its own courses.
+struct TutorialCourse
+{
+    const char* label;     // name in the course list (UTF-8)
+    const char* desc;      // one line shown under the list while it is selected (UTF-8)
+    int         firstStep; // index into steps: where the course starts
+    int         lastStep;  // index into steps: the course ends when this step is done
+};
+
 // A weapon = an ordered list of steps. Pure data.
 // The same step type may appear more than once (e.g. Heat before forging AND
 // before quenching): one state class, reused by the data.
 struct WeaponRecipe
 {
-    const char*              name;
-    std::vector<StepSetting> steps;
+    const char*                 name;
+    std::vector<StepSetting>    steps;
+    std::vector<TutorialCourse> courses;   // tutorial mode: the lesson list for this weapon
 };
 
 // Map a StepName to the string key the step machine registers under.

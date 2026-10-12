@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "lesson": "grind_angle",
+  "canvas": {
+    "width": 512,
+    "height": 512
+  },
+  "playback": "step",
+  "loop": true,
+  "coordinate_system": "top-left origin; x right; y down; pixels; tilt radians clockwise",
+  "transform_order": "rotate pose around pivot, then apply dx/dy; base never transformed",
+  "compositing": {
+    "mode": "source-over",
+    "clearance_pixels": 0
+  },
+  "meaning": "太平、火花少→太陡、火花少→合适角度、火花多。",
+  "frames": [
+    {
+      "base": "lesson_grind_angle_base.png",
+      "pose": "lesson_grind_angle_pose_few.png",
+      "duration_seconds": 0.65,
+      "dx": 0,
+      "dy": 0,
+      "tilt": 0.08,
+      "pivot": [
+        197,
+        257
+      ]
+    },
+    {
+      "base": "lesson_grind_angle_base2.png",
+      "pose": "lesson_grind_angle_pose_few.png",
+      "duration_seconds": 0.65,
+      "dx": 0,
+      "dy": 0,
+      "tilt": -0.48,
+      "pivot": [
+        197,
+        257
+      ]
+    },
+    {
+      "base": "lesson_grind_angle_base3.png",
+      "pose": "lesson_grind_angle_pose_many.png",
+      "duration_seconds": 1.4,
+      "dx": 0,
+      "dy": 0,
+      "tilt": -0.18,
+      "pivot": [
+        197,
+        257
+      ]
+    }
+  ],
+  "contact_point": [
+    197,
+    257
+  ],
+  "note": "三个tilt为图示角度，不是游戏角度阈值；base变体仅预留刀的遮挡间隙，砥石不移动。"
+}

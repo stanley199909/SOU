@@ -1,5 +1,5 @@
 ﻿#include "Player.h"
-#include "Input.h"
+#include "InputActions.h"	// 歩く/使う は動作(Action)で聞く
 #include <math.h>
 
 using namespace DirectX;
@@ -7,10 +7,6 @@ using namespace DirectX::SimpleMath;
 
 namespace
 {
-	// 互動キー: 可互動状態のとき、これを押すと工程状態への遷移を要求する。
-	// KCDのF互動に倣う。既存の Q=淬火 / R=加熱 / 左クリック=打撃 と衝突しない様に E を選択(調整可)。
-	constexpr BYTE INTERACT_KEY = 'E';
-
 	// プレイヤ当たり判定ボックスの基準サイズ(単位)。人一人ぶんの占有(幅0.6/高1.7/奥0.6)。
 	const XMFLOAT3 PLAYER_BOX_SIZE = XMFLOAT3(0.6f, 1.7f, 0.6f);
 
@@ -44,12 +40,8 @@ void Player::Move(float tick)
 	// --- 入力から移動方向を求める(一人称の前後左右) ---
 	// f=前後(W/S), s=左右ストレイフ(A/D)。向き m_yaw を基準にするので、
 	// 相機/マウスで向きを変えれば「見ている方向へ歩く」になる(向きの接続はStep2)。
-	float f = 0.0f;
-	float s = 0.0f;
-	if (IsKeyPress('W')) f += 1.0f;	// 前
-	if (IsKeyPress('S')) f -= 1.0f;	// 後
-	if (IsKeyPress('D')) s += 1.0f;	// 右
-	if (IsKeyPress('A')) s -= 1.0f;	// 左
+	const float f = InputActions::MoveY();	// 前 + / 後 −(キーの割り当ては InputActions の表)
+	const float s = InputActions::MoveX();	// 右 + / 左 −
 
 	if (f == 0.0f && s == 0.0f) return;	// 移動入力なし
 
@@ -111,6 +103,6 @@ Box& Player::GetBox()
 
 bool Player::WantInteract() const
 {
-	// 可互動 かつ 互動キーが「押された瞬間」(edge)。長押しで連発しない様 IsKeyTrigger を使う。
-	return m_canInteract && IsKeyTrigger(INTERACT_KEY);
+	// 可互動 かつ「使う」が押された瞬間(edge)。長押しで連発しない様 Pressed を使う。
+	return m_canInteract && InputActions::Pressed(Action::Interact);
 }

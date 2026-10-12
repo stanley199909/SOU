@@ -180,6 +180,7 @@
     <ClCompile Include="GameLogic\Lerp.cpp" />
     <ClCompile Include="GameLogic\HingedDoor.cpp" />
     <ClCompile Include="GameLogic\ScreenFade.cpp" />
+    <ClCompile Include="GameLogic\InputActions.cpp" />
     <ClCompile Include="GameData\WeaponRecipe.cpp" />
     <ClCompile Include="Physics\HammerPhysics.cpp" />
     <ClCompile Include="Physics\ForgingSim.cpp" />
@@ -198,6 +199,7 @@
     <ClCompile Include="SceneForge\WeaponRender.cpp" />
     <ClCompile Include="SceneForge\Scenery.cpp" />
     <ClCompile Include="SceneForge\HUD.cpp" />
+    <ClCompile Include="SceneForge\Tutorial.cpp" />
     <ClCompile Include="SceneForge\CameraAim.cpp" />
     <ClCompile Include="SceneForge\Interaction.cpp" />
     <ClCompile Include="SceneForge\Collision.cpp" />
@@ -244,6 +246,7 @@
     <ClInclude Include="GameLogic\Lerp.h" />
     <ClInclude Include="GameLogic\HingedDoor.h" />
     <ClInclude Include="GameLogic\ScreenFade.h" />
+    <ClInclude Include="GameLogic\InputActions.h" />
     <ClInclude Include="GameData\WeaponRecipe.h" />
     <ClInclude Include="Physics\HammerPhysics.h" />
     <ClInclude Include="Physics\ForgingSim.h" />

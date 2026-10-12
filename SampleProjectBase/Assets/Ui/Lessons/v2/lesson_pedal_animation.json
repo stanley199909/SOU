@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "lesson": "pedal",
+  "canvas": {
+    "width": 512,
+    "height": 512
+  },
+  "playback": "step",
+  "loop": true,
+  "coordinate_system": "top-left origin; x right; y down; pixels; tilt radians clockwise",
+  "transform_order": "rotate pose around pivot, then apply dx/dy; base never transformed",
+  "compositing": {
+    "mode": "source-over",
+    "clearance_pixels": 0
+  },
+  "meaning": "脚在细长踏杆上反复踩下、抬起；连杆驱动砥石轮。",
+  "frames": [
+    {
+      "base": "lesson_pedal_base.png",
+      "pose": "lesson_pedal_pose1.png",
+      "duration_seconds": 0.35,
+      "dx": 0,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        123,
+        336
+      ]
+    },
+    {
+      "base": "lesson_pedal_base.png",
+      "pose": "lesson_pedal_pose2.png",
+      "duration_seconds": 0.35,
+      "dx": 0,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        123,
+        336
+      ]
+    }
+  ],
+  "note": "节奏课按用户要求等时0.35秒，不延长末格；base包含固定踏杆和连杆。"
+}

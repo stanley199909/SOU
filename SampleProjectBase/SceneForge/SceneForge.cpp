@@ -12,6 +12,7 @@
 #include "Model.h"
 #include "Geometory.h"
 #include "Input.h"
+#include "InputActions.h"	// ゲームの操作は動作(Action)で聞く(キーの割り当ては表=データ)
 #include "DebugUI.h"
 #include "Defines.h"
 #include "Audio.h"
@@ -446,6 +447,8 @@ void SceneForge::Init()
 	InitTongsGeometry();		// 火钳モデルの形(口の端・挟む点・輪の向き)を読む(Carry.cpp)
 	CottageRender::Load();
 	LoadTuning();	// F1で調整したハンマー/カメラ値(forge_tuning.txt)を復元
+	LoadCourseProgress();	// チュートリアルの済んだ課程(✓)
+	LoadOptions();			// 玩家の設定(教学アニメの速さ)
 	BuildPropHulls();	// 衝突の凸包: 配置(LoadLayout)と床の高さ(LoadTuning)が決まった後=背丈以下の頂点を選べる
 	// Layout/tuning must be loaded before assigning the walking spawn height.
 	m_player.Init(DirectX::XMFLOAT3(0.0f, m_walkFloorY, -2.0f), 0.0f);
@@ -542,8 +545,8 @@ void SceneForge::StartGame()
 	m_overheatWarned = false;
 	m_burnSparkAcc = 0.0f;
 	m_wheel.Reset();						// 砥石は止まっている
-	ClearGrindHint(); m_grindPress = 0.0f;
-	m_grindU = 0.5f; m_grindFace = 0; m_grindFaceInit = false; m_grindFlipRoll = 0.0f; m_grindSparkAcc = 0.0f; m_grindVol = 0.0f; m_grindAngle = m_grindAngleTarget = 0.0f;
+	m_grindPress = 0.0f;
+	m_grindU = 0.5f; m_grindFace = 0; m_grindFaceInit = false; m_grindFlipRoll = 0.0f; m_grindFlipping = false; m_grindFlipHold = 0.0f; m_grindSparkAcc = 0.0f; m_grindVol = 0.0f; m_grindAngle = m_grindAngleTarget = 0.0f;
 	m_plunge = 0.0f; m_quenchTurn = 0.0f; m_agitate = 0.0f; m_quenchContact = false; m_clearDecided = false; m_letterbox = 0.0f; m_boil = 0.0f; m_boilStage = BoilStage::None; m_waterSim.Reset(); m_prevAgitate = 0.0f; m_bubbleAcc = 0.0f;
 	m_stirTarget = 0.0f; m_filmBreak = 0.0f; m_filmTime = 0.0f; m_stir01 = 0.0f; m_quenchStartHeat = 0.0f;	// 淬火/終幕の演出も解除
 	if (m_burnSndOn)  { Audio::Stop(Audio::SE_BURN_LOOP);  m_burnSndOn  = false; }
@@ -571,6 +574,15 @@ void SceneForge::StartGame()
 	m_stepIdx = 0;
 	m_stepChangedAt = m_time;	// 指引 UI: 最初の案内文も淡入させる
 	m_trackerRows.clear();		// 工程リストの済状態を作り直す(UpdateTracker が配方の工程数で用意する)
+	m_stepTimes.assign(m_recipe->steps.size(), StepTime{});	// プレイテスト計時も 0 から
+	for (LessonState& l : m_lessons) l = LessonState{};		// 操作の案内は毎回最初から(新しい人が遊ぶ)
+	m_lessonShown = -1; m_lessonShownRescue = false;
+	m_aimTravel = 0.0f; m_lastAimRail = -1.0f; m_validStrikes = 0; m_bellowsTime = 0.0f; m_flipCount = 0;	// 案内の「できた」量
+	m_leaveCount = 0; m_gripCount = 0; m_putCount = 0; m_reachCount = 0; m_heatReadyCount = 0;
+	m_prevFocusGoal = false; m_prevHeatReady = false;
+	m_grindRunTime = 0.0f; m_grindGoodStreak = 0.0f; m_grindAngleHolds = 0; m_grindSlideTravel = 0.0f; m_grindFlipCount = 0;
+	m_grindTooFlat = false; m_plungeCount = 0; m_stirTravel = 0.0f;
+	m_walkGoalTime = 0.0f; m_walkGoalLabel = nullptr;
 	StopSequence();				// 前の回の拍子表が途中なら打ち切る
 	m_stepMachine.ChangeState(StepKey(m_recipe->steps[0].type));
 }
@@ -601,16 +613,54 @@ bool SceneForge::StepReached(StepName type) const
 //--- 次の工程へ進む。配方(データ)が順序の正。最後の工程を越えたら完成(淬火済み)へ。
 void SceneForge::AdvanceStep()
 {
+	if (m_courseComplete) return;	// 課程を終えた後は進めない(最後の工程の状態は完了条件を満たしたまま毎フレーム呼んでくる)
 	++m_stepIdx;
 	m_stepChangedAt = m_time;	// 指引 UI: 新しい案内文を淡入+工程リストで強調
-	if (!m_recipe || m_stepIdx >= (int)m_recipe->steps.size()) { FinishGame(); return; }
+	// チュートリアルの課程: その課程の最後の工程が済んだら、次の工程へ進まず「レッスン完了」
+	if (m_recipe && m_courseIdx >= 0 && m_courseIdx < (int)m_recipe->courses.size() && m_stepIdx > m_recipe->courses[m_courseIdx].lastStep)
+	{
+		CompleteCourse();
+		return;
+	}
+	if (!m_recipe || m_stepIdx >= (int)m_recipe->steps.size()) { WritePlaytestLog(); FinishGame(); return; }
 	m_stepMachine.ChangeState(StepKey(m_recipe->steps[m_stepIdx].type));
 }
 
-//--- 【デバッグ】工程へ直接飛ぶ(淬火などを最初から通さずに試す為。F1 最上段の「Jump to step」)。
+//--- プレイテスト計時: 今の工程に dt を足す。歩いている/工位へ出入りしている間は move にも足す
+//    (= 工程の時間のうち、何割が「操作」でなく「移動」か が分かる)。
+void SceneForge::TickPlaytestTimer(float dt)
+{
+	if (m_stepIdx < 0 || m_stepIdx >= (int)m_stepTimes.size()) return;	// 完成後(工程の外)は数えない
+	StepTime& t = m_stepTimes[m_stepIdx];
+	t.total += dt;
+	if (m_walkMode || Transitioning()) t.move += dt;
+}
+
+//--- 完成した1プレイ分を1行追記する。形式: 日時 / モード / 合計 / 工程ごとの「時間(うち移動)」。
+//    追記(上書きしない)=何人分・何回分も溜まり、調整の前後を見比べられる。
+void SceneForge::WritePlaytestLog() const
+{
+	if (!m_recipe) return;
+	FILE* fp = nullptr;
+	if (fopen_s(&fp, "Assets/playtest_log.txt", "a") != 0 || !fp) return;
+	SYSTEMTIME now; GetLocalTime(&now);
+	float total = 0.0f;
+	for (const StepTime& t : m_stepTimes) total += t.total;
+	fprintf(fp, "%04d-%02d-%02d %02d:%02d  %s  total %.1fs (budget %.0fs)",
+		now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute,
+		m_tutorial ? "tutorial" : "normal", total, PLAYTEST_BUDGET_SEC);
+	for (size_t i = 0; i < m_stepTimes.size() && i < m_recipe->steps.size(); ++i)
+		fprintf(fp, "  | %s %.1fs (move %.1fs)", m_recipe->steps[i].label, m_stepTimes[i].total, m_stepTimes[i].move);	// label は UTF-8
+	fprintf(fp, "\n");
+	fclose(fp);
+}
+
+//--- 配方の idx 番目の工程から始める。F1 の「Jump to step」(試す為)と、チュートリアルの課程(その工程だけを遊ぶ)が使う。
 //    新しい一局として始め直し(StartGame)、配方で前にある工程を「済」にしてから、その工程・その工位から始める。
 //    温度はその工程を試せる値にする: 加熱 = 冷えた鉄 / 鍛造・研磨 = 開始時の熱 / 淬火 = 淬火できる窓の真ん中。
-void SceneForge::DebugJumpToStep(int idx)
+//    placeNow = true : その工位に即座に立つ(F1。過渡アニメ無し)
+//               false: 鉄だけその工位に置き、呼び出し側が BeginEnterStation で導入カメラを動かす(タイトルから入る)
+void SceneForge::StartAtStep(int idx, bool placeNow)
 {
 	if (!m_recipe || idx < 0 || idx >= (int)m_recipe->steps.size()) return;
 	StartGame();
@@ -635,17 +685,94 @@ void SceneForge::DebugJumpToStep(int idx)
 
 	m_stepIdx = idx;
 	m_stepChangedAt = m_time;
-	m_trackerRows.clear();
+	// 工程リストの「済」を今の状態で初めから揃えておく(線は引き終わった状態・音なし)。
+	//   空にしておくと、次の UpdateTracker が前の工程を「今まさに済になった」と見て、取り消し線の音(SE_PENCIL)を一斉に鳴らした
+	//   (2026-10-12 不具合: チュートリアルの研ぎ/焼入れの課程に入った瞬間に完成の音)。changedAt は既定(ずっと前)=アニメも無し。
+	m_trackerRows.assign(m_recipe->steps.size(), TrackerRow{});
+	for (int i = 0; i < (int)m_trackerRows.size(); ++i) m_trackerRows[i].completed = RowCompleted(i, false);
 	m_stepMachine.ChangeState(StepKey(type));
 
-	// その工程の工位に鉄を置き、玩家もそこで作業中にする(歩いて運ぶ手間を省く。過渡アニメ無し)
+	// その工程の工位に鉄を置く。placeNow なら玩家もそこで作業中にする(歩いて運ぶ手間を省く。過渡アニメ無し)
 	const Station s = StepStation(type);
-	m_workAt = s; m_station = s;
+	m_workAt = s;
+	m_canStrike = false;
+	if (!placeNow) return;	// 導入カメラ(BeginEnterStation)が工位へ連れて行く
+	m_station = s;
 	SetupStationView(s);
 	m_walkMode = false;
 	m_modeTrans = ModeTrans::None;
 	m_lookYaw = 0.0f; m_lookPitch = 0.0f;
-	m_canStrike = false;
+}
+
+//====================================================================
+//  チュートリアルの課程
+//====================================================================
+static const char* COURSE_PROGRESS_PATH = "Assets/tutorial_progress.txt";
+
+//--- 課程の最後の工程が済んだ: ✓ を付けて保存し、「レッスン完了」を見せる(COURSE_DONE_SHOW_SEC 後に一覧へ。Update)。
+void SceneForge::CompleteCourse()
+{
+	const float DONE_VOLUME = 0.8f;
+	m_courseComplete   = true;
+	m_courseCompleteAt = m_time;
+	m_clearDecided     = true;	// HUD を消して「レッスン完了」だけを見せる
+	if (m_courseIdx >= 0 && m_courseIdx < (int)m_courseDone.size()) m_courseDone[m_courseIdx] = true;
+	SaveCourseProgress();
+	Audio::Play(Audio::SE_SUCCESS, DONE_VOLUME);
+}
+
+//--- 黒幕の裏でタイトルへ戻る(一時停止の「タイトルへ戻る」と課程の完了で共通)。途中の工程の状態も片付ける。
+//    openCourses = 課程の一覧を開いた状態で戻る(次の課程を選びやすい様に、今の次の課程を選んでおく)。
+void SceneForge::ReturnToTitle(bool openCourses)
+{
+	m_fade.Transition([this, openCourses] {
+		StopSequence();							// 拍子表の途中なら打ち切る(鉄の姿勢の上書きも解除)
+		m_modeTrans = ModeTrans::None;
+		m_flipPhase = FlipPhase::None;
+		m_camTongsW = 0.0f; m_camGripW = 0.0f; m_hammerStowW = 0.0f; m_tongsInHand = false;
+		// 鳴り続ける音を止める(FinishGame と同じ。旧: 一時停止からタイトルへ戻ると炉/燃焼/研ぎの音が残り得た)
+		if (m_heatSndOn)  { Audio::Stop(Audio::SE_FORGE_LOOP); m_heatSndOn  = false; }
+		if (m_burnSndOn)  { Audio::Stop(Audio::SE_BURN_LOOP);  m_burnSndOn  = false; }
+		if (m_grindSndOn) { Audio::Stop(Audio::SE_GRIND_LOOP); m_grindSndOn = false; }
+		const int nextCourse = m_courseIdx + 1;
+		m_state = GAME_TITLE;
+		ResetTitleStage();						// 金床の上を「新しい熱い鉄」に戻す(課程の一覧も閉じる)
+		m_courseComplete = false;
+		m_courseIdx      = -1;
+		if (openCourses && m_recipe)
+		{
+			m_courseSelectOpen = true;
+			m_courseSel        = (nextCourse < (int)m_recipe->courses.size()) ? nextCourse : (int)m_recipe->courses.size();	// 次の課程(無ければ「戻る」)
+			m_courseRequest    = -1;
+		}
+		Audio::Stop(Audio::BGM_PLAY);
+		Audio::PlayLoop(Audio::BGM_TITLE, TITLE_BGM_VOLUME);
+	});
+}
+
+//--- 済んだ課程の保存/読み込み。1行 = "done <番号> <0/1>"。無い/壊れた行は「まだ」のまま。
+void SceneForge::LoadCourseProgress()
+{
+	m_courseDone.assign(m_recipe ? m_recipe->courses.size() : 0, false);
+	FILE* fp = nullptr;
+	if (fopen_s(&fp, COURSE_PROGRESS_PATH, "r") != 0 || !fp) return;
+	char line[64];
+	while (fgets(line, sizeof(line), fp))
+	{
+		int idx = -1, done = 0;
+		if (sscanf_s(line, "done %d %d", &idx, &done) == 2 && idx >= 0 && idx < (int)m_courseDone.size())
+			m_courseDone[idx] = (done != 0);
+	}
+	fclose(fp);
+}
+
+void SceneForge::SaveCourseProgress() const
+{
+	FILE* fp = nullptr;
+	if (fopen_s(&fp, COURSE_PROGRESS_PATH, "w") != 0 || !fp) return;
+	for (size_t i = 0; i < m_courseDone.size(); ++i)
+		fprintf(fp, "done %d %d\n", (int)i, m_courseDone[i] ? 1 : 0);
+	fclose(fp);
 }
 
 //--- 今実行中の工程設定(HUD の指示文表示などが読む)。範囲外は端にクランプ。
@@ -665,81 +792,65 @@ bool SceneForge::BothSidesDone() const
 	return m_forging.BothSidesDone();
 }
 
-//--- 翻面の子状態機(鍛打工程の内部)。玩家が F で起動→火钳運鏡→夹む→マウスで翻す→面を確定。
+//--- 翻面の子状態機(鍛打工程の内部)。F を押し続けると動作が進み、離すと巻き戻る(『鬼武者』の剛力と同じ流儀)。
 //    命名 enum + switch の軽量な下層FSM。上層(工程FSM)は触らない=翻面は鍛打の内部交互。
 //    ※呼び出し側(UpdatePlay)は、None 以外の間はハンマー入力を止める(火钳を扱っている最中)。
-//--- 取り消し不可の運鏡ビートか。ここが true の間は F/左键/マウスを一切受け付けない
-//    (「再生中の動画は途中で止められない」= 火钳が空中で消える様な破綻を構造的に防ぐ)。
-bool SceneForge::FlipIsCutscene() const
-{
-	return m_flipPhase == FlipPhase::TongsOut
-		|| m_flipPhase == FlipPhase::Gripping
-		|| m_flipPhase == FlipPhase::PutBack;
-}
-
 void SceneForge::UpdateFlip(float tick, bool inputOn)
 {
 	// 翻面は工程に関係なく、金床にいればいつでも F で始められる(玩家の自由)。
-	// 入力凍結中(F1/遷移)は「一時停止」: 段階も計時も進めない。打ち切らない=動画は取り消されない。
+	// 入力凍結中(F1/遷移)は「一時停止」: 再生位置も計時も進めない。
 	if (!inputOn) return;
 
-	// 運鏡ビート中に押されたキーは「読んで捨てる」。IsKeyTrigger は押した瞬間の1フレームだけ true なので、
-	// ビート中に判定しなければ、そのキーはビート明けに持ち越されない(=バッファされず暴発しない)。
+	const bool holding = InputActions::Held(Action::Flip);
 	switch (m_flipPhase)
 	{
-	case FlipPhase::None:									// 金床で: F で火钳を取って翻面を起動
-		if (m_station == Station::Anvil && IsKeyTrigger('F')) { m_flipPhase = FlipPhase::TongsOut; m_flipTimer = 0.0f; }
-		break;
-
-	case FlipPhase::TongsOut:								// 火钳を取り出す運鏡(慢い)
-	{
-		m_flipTimer += tick;
-		// 腰へ振り向いて静止している区間の中点=「手に取った」瞬間。腰の火钳を消す。
-		const float grabAt = FLIP_TONGS_OUT_TIME * (FLIP_REACH_FRAC + FLIP_RETURN_FRAC) * 0.5f;
-		if (m_flipTimer >= grabAt) m_tongsInHand = true;
-		if (m_flipTimer >= FLIP_TONGS_OUT_TIME) m_flipPhase = FlipPhase::Ready;
-		break;
-	}
-
-	case FlipPhase::Ready:									// 火钳待命: F=戻す / 左键=夹む(ESC は一時停止メニュー専用)
-		if      (IsKeyTrigger('F')) { m_flipPhase = FlipPhase::PutBack; m_flipTimer = 0.0f; }
-		else if (IsKeyTrigger(VK_LBUTTON)){ m_flipPhase = FlipPhase::Gripping; m_flipTimer = 0.0f; }
-		break;
-
-	case FlipPhase::Gripping:								// 铁を夹む運鏡→翻し開始(今の面から)
-		m_flipTimer += tick;
-		if (m_flipTimer >= FLIP_GRIP_TIME) m_flipPhase = FlipPhase::Flipping;	// 今の刃の角度から翻し始める
-		break;
-
-	case FlipPhase::Flipping:								// マウス左右で铁を翻す。左键で面を確定
-	{
-		// マウス移動量をそのまま角度へ(1:1, FPS の視点操作と同じ raw input)。
-		//   マウスが止まれば刃も止まる=入力が溜まらない。「重さ」は低い感度(m_flipSens)で出す。
-		//   ※旧方式(狙い角を最大角速度で追う)は、速く振ると狙いが先行して溜まり、手を止めても
-		//     刃が回り続けた(入力のバックログ)。加速/平滑/上限は手感を裏切るので使わない。
-		//   上限なし=同じ方向へ回し続ければ何回でも翻る(左へ回せば逆回転)。
-		float dx, dy; ReadMouseDelta(dx, dy);			// 相対マウス(ここで光標を中心へ戻す)
-		m_flipAngle += dx * m_flipSens * DirectX::XM_PI;	// 感度の単位=「1pxあたり何半回転」
-
-		// 面の判定: 刃角を「最も近い半回転の番号」k に丸める(境界=π/2, 3π/2, ...=半回転ごとに0.5の線)。
-		//   k が偶数=表, 奇数=裏。0.5 を越えるたびに k が1つ進む=一回ずつ翻る。見た目の刃と必ず一致。
-		const int k = (int)floorf(m_flipAngle / DirectX::XM_PI + 0.5f);
-		m_forging.SetSide(((k % 2) + 2) % 2);			// 負の k(逆回転)でも 0/1 に正規化
-		if (IsKeyTrigger(VK_LBUTTON))	// 現在の面を確定→待命へ
+	case FlipPhase::None:									// 金床で F を押した瞬間から再生位置が進み始める
+		if (m_station == Station::Anvil && InputActions::Pressed(Action::Flip))
 		{
-			// 角度を「今の面の清潔な角」(0 か π)の近くへ巻き戻す。2π の倍数を引くだけなので見た目は不変。
-			// これで確定後の Damp(目標=面×π)が最短で落ち着き、回し続けても角度が無限に増えない。
+			m_flipPhase = FlipPhase::Holding;
+			m_flipHold  = 0.0f;
+			// 今の面の清潔な角(0 か π)から半回転する。確定後の Damp でほぼそこにあるので、揃えても見た目は変わらない。
+			m_flipStartAngle = m_flipAngle = (float)m_forging.Side() * DirectX::XM_PI;
+		}
+		break;
+
+	case FlipPhase::Holding:
+	{
+		// 押している=再生位置が進む / 離した=巻き戻る。これだけ(判定のタイミングが無い=途中のどこで離しても自然に戻る)。
+		const float total = FlipHoldTotal();
+		m_flipHold += holding ? tick : -tick * FLIP_REWIND_RATE;
+		if (m_flipHold > total) m_flipHold = total;
+
+		// 再生位置 → 画。全部 m_flipHold の関数なので、前へ進めても巻き戻しても同じ画を通る。
+		//   火钳: 振り向いて静止している区間の中点=「手に取った」瞬間(巻き戻してそこを過ぎれば腰へ戻る)。
+		const float grabAt = FLIP_TONGS_OUT_TIME * (FLIP_REACH_FRAC + FLIP_RETURN_FRAC) * 0.5f;
+		m_tongsInHand = m_flipHold >= grabAt;
+		//   回転: Turn 区間の進み 0..1 で半回転。面の判定は「最も近い半回転の番号」k(半分を越えると面が替わる)。
+		const float turn01 = fminf(fmaxf((m_flipHold - FLIP_TONGS_OUT_TIME - FLIP_GRIP_TIME) / m_flipTurnSec, 0.0f), 1.0f);
+		m_flipAngle = m_flipStartAngle + turn01 * DirectX::XM_PI;
+		const int k = (int)floorf(m_flipAngle / DirectX::XM_PI + 0.5f);
+		m_forging.SetSide(((k % 2) + 2) % 2);
+
+		if (m_flipHold >= total)							// 押し切った = 裏返し完成 → 火钳を戻す(完成の動作)
+		{
+			// 角度を「今の面の清潔な角」(0 か π)へ巻き戻す。2π の倍数を引くだけなので見た目は不変(角度が増え続けない)。
 			const int wrap = k - m_forging.Side();		// 2 の倍数
 			m_flipAngle -= wrap * DirectX::XM_PI;
-			m_flipPhase = FlipPhase::Ready;
+			++m_flipCount;								// 操作の案内: 裏返せた(LessonMetric: Flip)
+			m_flipPhase = FlipPhase::PutBack; m_flipTimer = 0.0f;
+		}
+		else if (m_flipHold <= 0.0f)						// 最初まで巻き戻った = 何もしなかった事に
+		{
+			m_flipHold = 0.0f;
+			m_flipPhase = FlipPhase::None;
 		}
 		break;
 	}
 
-	case FlipPhase::PutBack:								// 火钳を戻す運鏡→鍛打へ復帰
+	case FlipPhase::PutBack:								// 火钳を戻す運鏡→鍛打へ復帰(時間で進む。巻き戻さない)
 	{
 		m_flipTimer += tick;
-		// TongsOut と対称: 振り向いた静止区間の中点で火钳を腰へ戻す(モデルを再表示)。
+		// Tongs 区間と対称: 振り向いた静止区間の中点で火钳を腰へ戻す(モデルを再表示)。
 		const float putAt = FLIP_PUTBACK_TIME * (FLIP_REACH_FRAC + FLIP_RETURN_FRAC) * 0.5f;
 		if (m_flipTimer >= putAt) m_tongsInHand = false;
 		if (m_flipTimer >= FLIP_PUTBACK_TIME) m_flipPhase = FlipPhase::None;
@@ -748,12 +859,21 @@ void SceneForge::UpdateFlip(float tick, bool inputOn)
 	}
 }
 
-//--- 翻面の運鏡。段階(と計時)から2つの重みを決める。カメラへの適用は ApplyCamera が行う。
-//    火钳の曲線は計時の純関数(同じ時刻なら同じ画)=決定論的で、途中で揺れない。
+//--- 今の再生位置(m_flipHold)がどの区間か。案内文と運鏡が使う。
+SceneForge::FlipBeat SceneForge::CurrentFlipBeat() const
+{
+	if (m_flipHold < FLIP_TONGS_OUT_TIME)                  return FlipBeat::Tongs;
+	if (m_flipHold < FLIP_TONGS_OUT_TIME + FLIP_GRIP_TIME) return FlipBeat::Grip;
+	return FlipBeat::Turn;
+}
+
+//--- 翻面の運鏡。再生位置(Holding)/ 計時(PutBack)から3つの重みを決める。カメラへの適用は ApplyCamera が行う。
+//    どれも位置/時刻の純関数(同じ値なら同じ画)=決定論的で、巻き戻しても同じ道を逆にたどる。
 void SceneForge::UpdateFlipCamera(float tick)
 {
 	// 火钳へ振り向く曲線: 0→1(振り向く)→1(手に取る)→0(元の視点へ)。両端は SmoothStep で緩急。
 	auto tongsCurve = [](float t01) {
+		t01 = fminf(fmaxf(t01, 0.0f), 1.0f);
 		if (t01 < FLIP_REACH_FRAC)  return Lerp::SmoothStep(t01 / FLIP_REACH_FRAC);
 		if (t01 < FLIP_RETURN_FRAC) return 1.0f;
 		return 1.0f - Lerp::SmoothStep((t01 - FLIP_RETURN_FRAC) / (1.0f - FLIP_RETURN_FRAC));
@@ -761,30 +881,27 @@ void SceneForge::UpdateFlipCamera(float tick)
 
 	switch (m_flipPhase)
 	{
-	case FlipPhase::TongsOut: m_camTongsW = tongsCurve(m_flipTimer / FLIP_TONGS_OUT_TIME); break;
-	case FlipPhase::PutBack:  m_camTongsW = tongsCurve(m_flipTimer / FLIP_PUTBACK_TIME);   break;
-	default:                  m_camTongsW = 0.0f; break;
-	}
-
-	switch (m_flipPhase)
+	case FlipPhase::Holding:
 	{
-	case FlipPhase::Gripping: m_camGripW = Lerp::SmoothStep(m_flipTimer / FLIP_GRIP_TIME); break;	// 刃へ寄る
-	case FlipPhase::Flipping: m_camGripW = 1.0f; break;								// 寄ったまま刃を見て翻す
-	default: m_camGripW = Lerp::Damp(m_camGripW, 0.0f, m_gripLambda, tick); break;	// 面確定後、元の視点へ戻る
+		const float tongs01 = m_flipHold / FLIP_TONGS_OUT_TIME;							// Tongs 区間の進み(超えたら 1)
+		m_camTongsW   = tongsCurve(tongs01);
+		m_camGripW    = Lerp::SmoothStep((m_flipHold - FLIP_TONGS_OUT_TIME) / FLIP_GRIP_TIME);	// Grip 区間で刃へ寄る(Turn 中は 1)
+		m_hammerStowW = Lerp::SmoothStep(tongs01 / FLIP_REACH_FRAC);					// 振り向く間にハンマーを置く
+		break;
 	}
-
-	// ハンマーを置く/取る。火钳へ振り向く間に置き、戻ってくる間に取り上げる(同じ時間割を再利用)。
-	switch (m_flipPhase)
-	{
-	case FlipPhase::TongsOut: m_hammerStowW = Lerp::SmoothStep((m_flipTimer / FLIP_TONGS_OUT_TIME) / FLIP_REACH_FRAC); break;
 	case FlipPhase::PutBack:
 	{
 		const float t01 = m_flipTimer / FLIP_PUTBACK_TIME;
-		m_hammerStowW = 1.0f - Lerp::SmoothStep((t01 - FLIP_RETURN_FRAC) / (1.0f - FLIP_RETURN_FRAC));
+		m_camTongsW   = tongsCurve(t01);
+		m_camGripW    = Lerp::Damp(m_camGripW, 0.0f, m_gripLambda, tick);				// 刃への寄りは元の視点へ
+		m_hammerStowW = 1.0f - Lerp::SmoothStep((t01 - FLIP_RETURN_FRAC) / (1.0f - FLIP_RETURN_FRAC));	// 戻る間に取り上げる
 		break;
 	}
-	case FlipPhase::None:     m_hammerStowW = 0.0f; break;
-	default:                  m_hammerStowW = 1.0f; break;	// Ready/Gripping/Flipping=火钳を持っている
+	default:
+		m_camTongsW   = 0.0f;
+		m_camGripW    = Lerp::Damp(m_camGripW, 0.0f, m_gripLambda, tick);
+		m_hammerStowW = 0.0f;
+		break;
 	}
 	// 腰の火钳モデルの表示は m_tongsInHand に従う(DrawCarry が読む。作業台の火钳は飾りで、隠さない)。
 }
@@ -810,21 +927,53 @@ void SceneForge::UpdateTitle(float /*tick*/)
 	// 黒転じは使わない: タイトルはゲーム世界そのもの。
 	// SPACE → モード選択(チュートリアル / 通常モード) → 決定 → ロゴ淡出 → カメラが金床へ → 鍛打(Title.cpp UpdateIntro)。
 	if (m_introPhase != IntroPhase::None || m_fade.IsBusy()) return;
+
+	// チュートリアルの課程の一覧(モード選択で「チュートリアル」を選んだ後)。最後の行 = 戻る(モード選択へ)
+	if (m_courseSelectOpen && m_recipe)
+	{
+		const int nCourse = (int)m_recipe->courses.size();
+		const int N = nCourse + 1;
+		if (InputActions::Pressed(Action::Pause)) m_courseRequest = nCourse;	// ESC = 戻る
+		if (InputActions::Pressed(Action::MenuUp))   m_courseSel = (m_courseSel + N - 1) % N;
+		if (InputActions::Pressed(Action::MenuDown)) m_courseSel = (m_courseSel + 1) % N;
+		if (InputActions::Pressed(Action::Confirm)) m_courseRequest = m_courseSel;
+		if (m_courseRequest < 0) return;
+		const int req = m_courseRequest;
+		m_courseRequest    = -1;
+		m_courseSelectOpen = false;
+		if (req >= nCourse) { m_modeSelectOpen = true; m_modeSel = (int)ModeItem::Tutorial; m_modeRequest = -1; return; }	// 戻る
+		m_tutorial   = true;
+		m_courseIdx  = req;
+		m_introPhase = IntroPhase::LogoFade;
+		m_introTimer = 0.0f;
+		Audio::Play(Audio::SE_TITLE_FADE, TITLE_FADE_SE_VOLUME);
+		return;
+	}
+
 	if (!m_modeSelectOpen)
 	{
-		if (IsKeyTrigger(VK_SPACE)) { m_modeSelectOpen = true; m_modeSel = (int)ModeItem::Tutorial; m_modeRequest = -1; }
+		if (InputActions::Pressed(Action::Confirm)) { m_modeSelectOpen = true; m_modeSel = (int)ModeItem::Tutorial; m_modeRequest = -1; }
 		return;	// 開いたフレームは決定を読まない(同じ SPACE で即決定しない様に)
 	}
 	const int N = (int)ModeItem::Count;
-	if (IsKeyTrigger(VK_ESCAPE)) { m_modeSelectOpen = false; return; }	// 選ばずに戻る
-	if (IsKeyTrigger(VK_UP)   || IsKeyTrigger('W')) m_modeSel = (m_modeSel + N - 1) % N;
-	if (IsKeyTrigger(VK_DOWN) || IsKeyTrigger('S')) m_modeSel = (m_modeSel + 1) % N;
-	if (IsKeyTrigger(VK_RETURN) || IsKeyTrigger(VK_SPACE)) m_modeRequest = m_modeSel;
+	if (InputActions::Pressed(Action::Pause)) { m_modeSelectOpen = false; return; }	// 選ばずに戻る
+	if (InputActions::Pressed(Action::MenuUp))   m_modeSel = (m_modeSel + N - 1) % N;
+	if (InputActions::Pressed(Action::MenuDown)) m_modeSel = (m_modeSel + 1) % N;
+	if (InputActions::Pressed(Action::Confirm)) m_modeRequest = m_modeSel;
 	if (m_modeRequest < 0) return;
 
-	m_tutorial       = (m_modeRequest == (int)ModeItem::Tutorial);
+	const bool tutorial = (m_modeRequest == (int)ModeItem::Tutorial);
 	m_modeSelectOpen = false;
 	m_modeRequest    = -1;
+	if (tutorial)	// チュートリアル = まず課程の一覧を開く(選んだ課程から始まる)
+	{
+		m_courseSelectOpen = true;
+		m_courseSel        = 0;
+		m_courseRequest    = -1;
+		return;
+	}
+	m_tutorial   = false;
+	m_courseIdx  = -1;	// 通常モード = 最初から最後まで一通り
 	m_introPhase = IntroPhase::LogoFade;
 	m_introTimer = 0.0f;
 	Audio::Play(Audio::SE_TITLE_FADE, TITLE_FADE_SE_VOLUME);
@@ -853,7 +1002,7 @@ void SceneForge::UpdatePlay(float tick)
 	// --- 工位から出る: E。翻面中は出ない(火钳を持ったまま離れない)。ESC は一時停止メニュー専用(2026-10-08)。
 	//   淬火の動画(刃が水に入った後)も取り消せない=出られない。
 	const bool quenchLocked = (m_quenchTurn > 0.0f || m_plunge > 0.0f);	// 刃を立て始めたら取り消せない
-	if (inputOn && m_flipPhase == FlipPhase::None && !quenchLocked && IsKeyTrigger('E'))
+	if (inputOn && m_flipPhase == FlipPhase::None && !quenchLocked && InputActions::Pressed(Action::Interact))
 	{
 		m_charging = false; m_charge = 0.0f;	// 蓄力中なら破棄(暴発させない)
 		BeginExitStation();
@@ -879,7 +1028,8 @@ void SceneForge::UpdatePlay(float tick)
 	//   風箱(R長押し)は炉の工位で玩家が行う行為なので inputOn の時だけ=炭火に追加で熱を送る。
 	const bool simOn  = !DebugUI::IsVisible() && !m_fade.IsBusy();
 	const bool inFire = !m_carrying && m_workAt == Station::Hearth;
-	const bool bellows = inputOn && m_station == Station::Hearth && IsKeyPress('R');
+	const bool bellows = inputOn && m_station == Station::Hearth && InputActions::Held(Action::Bellows);
+	if (bellows) m_bellowsTime += tick;	// 操作の案内: ふいごを踏んだ秒(LessonMetric: Bellows)
 	if (simOn)
 	{
 		if (inFire)
@@ -946,9 +1096,9 @@ void SceneForge::UpdatePlay(float tick)
 	// 開始直後の誤爆防止(一度ボタンを離すまで蓄力しない)
 	else if (!m_canStrike)
 	{
-		if (!IsKeyPress(VK_LBUTTON)) m_canStrike = true;
+		if (!InputActions::Held(Action::Use)) m_canStrike = true;
 	}
-	else if (m_strikeCD <= 0.0f && IsKeyPress(VK_LBUTTON))
+	else if (m_strikeCD <= 0.0f && InputActions::Held(Action::Use))
 	{
 		m_charging = true;
 		m_charge  += CHARGE_RATE * tick;
@@ -971,9 +1121,9 @@ void SceneForge::UpdatePlay(float tick)
 	else m_match = m_forging.ShapeMatch();
 
 	// --- 翻面の見た目 ---
-	//   Flipping 中はマウスが m_flipAngle を直接動かす(UpdateFlip 内)。それ以外の時は、確定済みの
+	//   F を押している間は再生位置が m_flipAngle を直接決める(UpdateFlip 内)。それ以外の時は、確定済みの
 	//   面の清潔な角(0 か π)へ Damp で落ち着かせる。Damp はフレームレート非依存。
-	if (m_flipPhase != FlipPhase::Flipping)
+	if (m_flipPhase != FlipPhase::Holding)
 	{
 		float flipTarget = (float)m_forging.Side() * DirectX::XM_PI;	// 表=0, 裏=π
 		m_flipAngle = Lerp::Damp(m_flipAngle, flipTarget, FLIP_TURN_LAMBDA, tick);
@@ -1003,8 +1153,11 @@ void SceneForge::UpdatePlay(float tick)
 	//     Forge … 両面の全区域が到位したら次へ(叩く行為自体は上の蓄力/DoStrike が担当)
 	//     Grind … 刃の全区域が研ぎ上がったら次へ(研ぐ行為は UpdateGrind が担当)
 	//     Quench… 水槽で左クリック→沈める→黒帯→完成(FinishGame)
-	//   完了判定に入力を読む工程があるので、入力凍結中(F1/遷移中)は進めない。
-	if (inputOn) m_stepMachine.Update(tick);
+	//   進める条件は「世界の時間が流れている」(simOn)。旧: inputOn(=工位で操作できる時)だけ進めていた為、
+	//   炉に鉄を置いて歩いている間に熱くなっても加熱が「済」にならず、工位に戻るまで判定されなかった(2026-10-12 不具合)。
+	//   完了の条件は鉄の状態(温度/形/鋭さ)なので、どこにいても判定してよい。入力を読む工程(淬火の「水に入れる」)は
+	//   自分で AtStation(水槽の工位にいる)を確かめてから読むので、歩いている間に誤って進む事は無い。
+	if (simOn) m_stepMachine.Update(tick);
 }
 
 //--- 蓄力を解放して1打: 変形＋フィードバック
@@ -1033,6 +1186,7 @@ void SceneForge::DoStrike()
 		// 空振りでも錘は砧へ振り下ろされ弾む(鉄は変形しないだけ)=バネに接触＋初速を与える
 		m_hammer.Strike();
 		Audio::Play(Audio::SE_SWING, 0.7f);	// 空を切る「ヒュッ」(鉄に当たっていない合図。文字は出さない)
+		NoteLessonMistake(LessonId::Aim);	// 救急: 空振りを重ねたら狙い方を見せる
 		return;
 	}
 
@@ -1079,18 +1233,23 @@ void SceneForge::DoStrike()
 	switch (outcome)
 	{
 	case ForgingSim::StrikeOutcome::ColdHit:
-		label = (const char*)u8"まだ冷たい…赤くなるまで熱して"; col = IM_COL32(120, 170, 255, 255); break;
+		label = (const char*)u8"まだ冷たい…赤くなるまで熱して"; col = IM_COL32(120, 170, 255, 255);
+		NoteLessonMistake(LessonId::LeaveCold);	// 救急: 冷えた鉄を叩き続けたら「離れて炉へ」を見せる
+		break;
 	case ForgingSim::StrikeOutcome::OverHit:
 		// 緑帯の上: 過熱(鋼が焼ける)まで行っていれば強く、手前なら「少し冷ませ」(どちらも有効打ではない)
 		label = (heat > OVERHEAT) ? (const char*)u8"熱しすぎだ！鋼が焼ける" : (const char*)u8"熱すぎる…少し冷めるまで待つ";
 		col = IM_COL32(255, 120, 120, 255); break;
 	case ForgingSim::StrikeOutcome::AlreadyDone:
-		label = (const char*)u8"ここはもう完成済みだ";         col = IM_COL32(255, 200,  90, 255); break;
+		label = (const char*)u8"ここはもう完成済みだ";         col = IM_COL32(255, 200,  90, 255);
+		if (m_forging.SideDone(side)) NoteLessonMistake(LessonId::Flip);	// 救急: 面が仕上がっているのに叩き続けたら裏返し方を見せる
+		break;
 	default:	// Shaped = 適温 & 未完成の区域に命中 = 成功。得点のみ
 		if      (power > POWER_PERFECT) { label = "PERFECT!"; col = IM_COL32(255, 220, 120, 255); quality = QUALITY_PERFECT; }
 		else if (power > POWER_GOOD)    { label = "GOOD";     col = IM_COL32(180, 255, 150, 255); quality = QUALITY_GOOD; }
 		else                            { label = "WEAK";     col = IM_COL32(200, 200, 200, 255); quality = QUALITY_WEAK; }
 		if (inGroove) quality += GROOVE_QUALITY_BONUS;
+		++m_validStrikes;	// 操作の案内: 有効打(LessonMetric: Strike)
 		// 完成の合図 = 面が仕上がった瞬間だけ(リズムの手応えは上の金床音の音程で返す)。両面とも済んだ(工程の完了)なら一段高く。
 		if (faceJustDone) Audio::Play(Audio::SE_FACE_DONE, FACE_DONE_VOLUME, m_forging.BothSidesDone() ? FACE_DONE_FINAL_PITCH : 1.0f);
 		m_qualitySum += quality;
@@ -1165,18 +1324,42 @@ void SceneForge::UpdateGrind(float tick, bool inputOn)
 		float dx, dy; ReadMouseDelta(dx, dy);	// 砥石の工位ではマウスを視角でなく刃の滑りに使う
 		// 刃が右へ動く=砥石に当たる位置は刃の左側へ移る(刃の長軸は StationRight に揃えてある)
 		// 左右反転して置いた(m_restFlip)時は長手の向きが逆 → 画面上の手応え(マウス右=刃が右)を保つ為に符号も逆
+		const float prevU = m_grindU;
 		m_grindU -= dx * m_grindSens * (m_restFlip ? -1.0f : 1.0f);
 		if (m_grindU < 0.0f) m_grindU = 0.0f;
 		if (m_grindU > 1.0f) m_grindU = 1.0f;
+		if (InputActions::Held(Action::Use)) m_grindSlideTravel += fabsf(m_grindU - prevU);	// 操作の案内: 当てたまま滑らせた量
 		// 上下 = 研ぎ角(マウスを上へ = 立てる)。刃は少し遅れて追う(手で角度を保つ重さ)。0 = 平らに寝ている
 		m_grindAngleTarget = fminf(fmaxf(m_grindAngleTarget - dy * GRIND_ANGLE_SENS, 0.0f), GRIND_ANGLE_MAX);
-		// F = 刃を裏返してもう片方の刃を研ぐ(鍛造の F と同じ操作。ユーザー指定 2026-10-07)
-		if (IsKeyTrigger('F')) m_grindFace ^= 1;
-		if (IsKeyTrigger(VK_RBUTTON) || IsKeyTrigger(VK_SPACE)) m_wheel.Pedal();	// 点按=足で一回踏む(右クリック/Space。速すぎる連打は GrindWheel が無視)
-		pressing = IsKeyPress(VK_LBUTTON);
+		// F を押し続ける = 刃を裏返してもう片方の刃を研ぐ(金床の裏返しと同じ操作)
+		if (!m_grindFlipping && InputActions::Pressed(Action::Flip))
+		{
+			m_grindFlipping  = true;
+			m_grindFlipHold  = 0.0f;
+			m_grindFlipStart = m_grindFlipRoll = m_grindFace * XM_PI;	// 今の面の清潔な角から(Damp でほぼそこにある)
+		}
+		if (InputActions::Pressed(Action::Pedal)) m_wheel.Pedal();	// 点按=足で一回踏む(右クリック/Space。速すぎる連打は GrindWheel が無視)
+		pressing = InputActions::Held(Action::Use) && !m_grindFlipping;	// 裏返している最中は砥石に当てられない(刃が回っている)
 	}
 	m_wheel.Update(tick, pressing);			// 足を止めれば摩擦で止まる。押し当て中は余計に減速
-	m_grindFlipRoll = Lerp::Damp(m_grindFlipRoll, m_grindFace * XM_PI, GRIND_FLIP_LAMBDA, tick);	// 裏返しは半回転を滑らかに
+
+	// 裏返し: 押している間は進み、離すと戻る(工位を離れた時も「離した」扱い=途中で残らない)
+	if (m_grindFlipping)
+	{
+		const bool held = here && InputActions::Held(Action::Flip);
+		m_grindFlipHold += held ? tick : -tick * FLIP_REWIND_RATE;
+		if (m_grindFlipHold >= GRIND_FLIP_SEC)
+		{
+			m_grindFace ^= 1;								// 裏返り切った = 研ぐ面が替わる
+			++m_grindFlipCount;								// 操作の案内: 砥石で裏返せた
+			m_grindFlipping = false;
+			m_grindFlipRoll = m_grindFace * XM_PI;			// 半回転先と同じ向き(2π 違うだけ)=見た目は不変で角度が増え続けない
+		}
+		else if (m_grindFlipHold <= 0.0f) { m_grindFlipHold = 0.0f; m_grindFlipping = false; }	// 最初まで戻った = やめた
+		else m_grindFlipRoll = m_grindFlipStart + XM_PI * Lerp::SmoothStep(m_grindFlipHold / GRIND_FLIP_SEC);	// 再生位置 → 回転(巻き戻しも同じ道)
+	}
+	if (!m_grindFlipping)
+		m_grindFlipRoll = Lerp::Damp(m_grindFlipRoll, m_grindFace * XM_PI, GRIND_FLIP_LAMBDA, tick);	// 普段は今の面の清潔な角へ落ち着く
 	m_grindPress    = Lerp::Damp(m_grindPress, pressing ? 1.0f : 0.0f, GRIND_PRESS_LAMBDA, tick);	// 押し当て=浮いた所から砥石へ下ろす
 	m_grindAngle = Lerp::Damp(m_grindAngle, m_grindAngleTarget, GRIND_ANGLE_FOLLOW, tick);
 
@@ -1184,8 +1367,10 @@ void SceneForge::UpdateGrind(float tick, bool inputOn)
 	constexpr float MIN_GRIND_SPEED = 0.02f;	// これ未満=砥石がほぼ止まっている(研げない・火花も出ない)
 	const bool grinding = pressing && speed > MIN_GRIND_SPEED;
 	bool onDoneSpot = false;	// 研ぎ上がった所を研いでいる(火花が細り、音が軽く高くなる=もう削る物が無い)
+	bool goodAngle  = false;	// このフレーム、使える角度で研げた(操作の案内: 角度の課は「途切れずに」続いた長さで測る)
 	if (grinding)
 	{
+		if (speed >= GRIND_WORK_MIN_SPEED) m_grindRunTime += tick;	// 操作の案内: 左の長押し + 右の連打 で研げていた秒
 		// 研いでいる所 = 砥石の接点(刃の長手のどこが砥石に当たっているか)。m_grindU から区域を推測せず、
 		//   描画と同じ WeaponWorld の逆変換で求める=見えている暗い所を当てれば、そこが研げる(鍛造の StrikeLenCoord と同じ考え方)。
 		const float lenCoord = GrindLenCoord();
@@ -1194,7 +1379,7 @@ void SceneForge::UpdateGrind(float tick, bool inputOn)
 		const int  side = GrindSide();	// 砥石へ向いている刃の面
 		onDoneSpot = m_forging.EdgeCellDoneOf(side, cell);
 		const bool faceWasDone = m_forging.SharpProgress(side) >= 1.0f;
-		// 誤りは独白で知らせ(1回の独白 = 1回の誤り)、同じ誤りをくり返したら直し方の案内を出す(DrawGrindHint)。
+		// 誤りは独白で知らせ(1回の独白 = 1回の誤り)、同じ誤りを重ねたら操作の案内(救急)が直し方を見せる(Tutorial.cpp)。
 		if (eff > 0.0f)
 		{
 			// 有効な研ぎ = 使える角度 + 砥石が十分に回っている。有効な間は一定の速さで残り作業量を減らす(ForgingSim::ApplyGrind)。
@@ -1204,10 +1389,11 @@ void SceneForge::UpdateGrind(float tick, bool inputOn)
 				if (m_popupLife <= 0.0f)
 				{
 					Say((const char*)u8"そこはもう十分だ", IM_COL32(255, 200, 90, 255));	// 研ぎ上がった所を削る=誤り
-					CountGrindMistake(m_grindDoneMistakes, GrindHint::Slide);
+					// 面が全部済んでいる → 裏返すべき / まだ残りがある → 別の所へ滑らせるべき
+					NoteLessonMistake(faceWasDone ? LessonId::GrindFlip : LessonId::GrindSlide);
 				}
 			}
-			else ClearGrindHint();	// 正しく研げた
+			else goodAngle = true;	// 正しく研げた
 		}
 		else if (m_popupLife <= 0.0f)
 		{
@@ -1215,8 +1401,8 @@ void SceneForge::UpdateGrind(float tick, bool inputOn)
 			const bool tooFlat = fabsf(m_grindAngle) < GRIND_IDEAL_ANGLE;
 			Say(tooFlat ? (const char*)u8"寝かせすぎだ…刃に当たっていない" : (const char*)u8"立てすぎだ…刃先が丸まる",
 			    IM_COL32(255, 200, 90, 255));
-			if (tooFlat) CountGrindMistake(m_grindFlatMistakes,  GrindHint::TiltUp);
-			else         CountGrindMistake(m_grindSteepMistakes, GrindHint::TiltDown);
+			m_grindTooFlat = tooFlat;	// 救急の絵で「どちらへ直すか」の矢印を明るくする
+			NoteLessonMistake(LessonId::GrindAngle);
 		}
 
 		// この面の刃が全部研ぎ上がった瞬間: 「完成」の合図(鍛造の面の完成と同じ音。両面とも済めば一段高く)
@@ -1236,6 +1422,10 @@ void SceneForge::UpdateGrind(float tick, bool inputOn)
 		}
 	}
 	else m_grindSparkAcc = 0.0f;
+	// 角度の課の「できた」量 = 使える角度を GRIND_ANGLE_HOLD_SEC 途切れずに保てた回数(マウスを端から端へ振って通り過ぎるだけでは増えない)
+	const float prevStreak = m_grindGoodStreak;
+	m_grindGoodStreak = goodAngle ? m_grindGoodStreak + tick : 0.0f;
+	if (prevStreak < GRIND_ANGLE_HOLD_SEC && m_grindGoodStreak >= GRIND_ANGLE_HOLD_SEC) ++m_grindAngleHolds;	// 保てた瞬間(エッジ)に1回
 
 	// --- 研磨音: 止めずに鳴らし続け、音量と音程だけを砥石の状態に追従させる ---
 	//   押す/離すたびに Stop→PlayLoop すると、毎回素材の頭から鳴り直して機械的に聞こえる。
@@ -1257,18 +1447,6 @@ void SceneForge::UpdateGrind(float tick, bool inputOn)
 			m_grindSndOn = false;
 		}
 	}
-}
-
-void SceneForge::CountGrindMistake(int& count, GrindHint hint)
-{
-	const int need = m_tutorial ? 1 : m_hintAfterMistakes;	// チュートリアルは1回目の誤りから直し方を見せる
-	if (++count >= need) m_grindHint = hint;
-}
-
-void SceneForge::ClearGrindHint()
-{
-	m_grindHint = GrindHint::None;
-	m_grindFlatMistakes = m_grindSteepMistakes = m_grindDoneMistakes = 0;
 }
 
 //--- 研ぎの効率: 正しい研ぎ角からのずれ e に対して 1 − (e/TOL)²(正しい角で 1、TOL ずれで 0。山なりに落ちる)。
@@ -1296,6 +1474,7 @@ bool SceneForge::TryQuench()
 	}
 	// 音と蒸気はクリックの瞬間でなく、刃が水面に触れた瞬間に出す(SetPlunge)
 	m_quenchContact = false;
+	++m_plungeCount;	// 操作の案内: 水に入れた
 	return true;
 }
 
@@ -1387,6 +1566,7 @@ void SceneForge::StirQuench(float dt)
 	const float before = m_agitate;
 	m_agitate = Lerp::Damp(m_agitate, m_stirTarget, QUENCH_STIR_FOLLOW, dt);
 	const float moved = fabsf(m_agitate - before);
+	m_stirTravel += moved;	// 操作の案内: 揺すった量
 
 	const float MIN_DT = 1e-4f;
 	const float speed01 = fminf(moved / fmaxf(dt, MIN_DT) / STIR_FULL_SPEED, 1.0f);
@@ -1499,7 +1679,7 @@ void SceneForge::SetLetterbox(float t01)
 //--- 結果: SPACEでタイトルへ戻る
 void SceneForge::UpdateResult(float /*tick*/)
 {
-	if (IsKeyTrigger(VK_SPACE) && !m_fade.IsBusy())
+	if (InputActions::Pressed(Action::Confirm) && !m_fade.IsBusy())
 	{
 		m_fade.Transition([this] {
 			m_state = GAME_TITLE;
@@ -1535,6 +1715,7 @@ void SceneForge::OpenPause()
 void SceneForge::ClosePause()
 {
 	m_paused = false;
+	m_optionsOpen = false;
 	m_canStrike = false;					// 押しっぱなしのボタンで再開直後に打たない(一度離すまで)
 	float dx, dy; ReadMouseDelta(dx, dy);	// メニュー中に動かしたカーソルの分を捨てる(再開で視点が跳ばない)
 	// カーソルの表示は Update の通常処理が PLAY 中は隠す
@@ -1544,11 +1725,12 @@ void SceneForge::ClosePause()
 //    マウスの選択/決定は描画側(DrawPauseMenu)が当たり判定をして m_pauseSel / m_pauseRequest に書く=ここで実行する。
 void SceneForge::UpdatePause()
 {
+	if (m_optionsOpen) { UpdateOptions(); return; }	// 設定の画面(閉じると一時停止メニューへ戻る)
 	const int N = (int)PauseItem::Count;
-	if (IsKeyTrigger(VK_ESCAPE)) m_pauseRequest = PauseItem::Resume;
-	if (IsKeyTrigger(VK_UP)   || IsKeyTrigger('W')) m_pauseSel = (m_pauseSel + N - 1) % N;
-	if (IsKeyTrigger(VK_DOWN) || IsKeyTrigger('S')) m_pauseSel = (m_pauseSel + 1) % N;
-	if (IsKeyTrigger(VK_RETURN) || IsKeyTrigger(VK_SPACE)) m_pauseRequest = (PauseItem)m_pauseSel;
+	if (InputActions::Pressed(Action::Pause)) m_pauseRequest = PauseItem::Resume;
+	if (InputActions::Pressed(Action::MenuUp))   m_pauseSel = (m_pauseSel + N - 1) % N;
+	if (InputActions::Pressed(Action::MenuDown)) m_pauseSel = (m_pauseSel + 1) % N;
+	if (InputActions::Pressed(Action::Confirm)) m_pauseRequest = (PauseItem)m_pauseSel;
 
 	const PauseItem req = m_pauseRequest;
 	m_pauseRequest = PauseItem::None;
@@ -1557,19 +1739,12 @@ void SceneForge::UpdatePause()
 	case PauseItem::Resume:
 		ClosePause();
 		break;
+	case PauseItem::Options:
+		m_optionsOpen = true; m_optionsSel = (int)OptionItem::LessonSpeed; m_optionsRequest = -1; m_optionsStep = 0;
+		break;
 	case PauseItem::Title:
 		ClosePause();
-		// 結果画面からタイトルへ戻るのと同じ流れ(黒幕の裏で状態を切り替える)。途中の工程の状態も片付ける。
-		m_fade.Transition([this] {
-			StopSequence();							// 拍子表の途中なら打ち切る(鉄の姿勢の上書きも解除)
-			m_modeTrans = ModeTrans::None;
-			m_flipPhase = FlipPhase::None;
-			m_camTongsW = 0.0f; m_camGripW = 0.0f; m_hammerStowW = 0.0f; m_tongsInHand = false;
-			m_state = GAME_TITLE;
-			ResetTitleStage();						// 金床の上を「新しい熱い鉄」に戻す
-			Audio::Stop(Audio::BGM_PLAY);
-			Audio::PlayLoop(Audio::BGM_TITLE, TITLE_BGM_VOLUME);
-		});
+		ReturnToTitle(false);	// 結果画面からタイトルへ戻るのと同じ流れ(黒幕の裏で状態を切り替える)
 		break;
 	case PauseItem::Quit:
 		PostQuitMessage(0);						// 通常の終了と同じ(メインループが抜けて Uninit=調整値の保存も走る)
@@ -1578,17 +1753,75 @@ void SceneForge::UpdatePause()
 	}
 }
 
+//--- 設定の画面: 上下 = 行 / 左右 = 値 / 決定(戻る) / ESC = 一時停止メニューへ戻る。値は変えた時に保存。
+void SceneForge::UpdateOptions()
+{
+	const int N = (int)OptionItem::Count;
+	if (InputActions::Pressed(Action::Pause)) m_optionsRequest = (int)OptionItem::Back;
+	if (InputActions::Pressed(Action::MenuUp))   m_optionsSel = (m_optionsSel + N - 1) % N;
+	if (InputActions::Pressed(Action::MenuDown)) m_optionsSel = (m_optionsSel + 1) % N;
+	if (InputActions::Pressed(Action::Confirm)) m_optionsRequest = m_optionsSel;
+	int step = m_optionsStep;
+	m_optionsStep = 0;
+	if (m_optionsSel == (int)OptionItem::LessonSpeed)
+	{
+		if (InputActions::Pressed(Action::MenuLeft))  step = -1;
+		if (InputActions::Pressed(Action::MenuRight)) step = +1;
+	}
+	if (step != 0)
+	{
+		const int n = (int)_countof(LESSON_SPEED_STEPS);
+		const int next = m_lessonSpeedIdx + step;
+		if (next >= 0 && next < n) { m_lessonSpeedIdx = next; SaveOptions(); }	// 端で止まる(回り込まない=今どこか分かる)
+	}
+	const int req = m_optionsRequest;
+	m_optionsRequest = -1;
+	if (req == (int)OptionItem::Back) { m_optionsOpen = false; m_pauseSel = (int)PauseItem::Options; }
+}
+
+//--- 設定の保存/読み込み。1行 = "<キー> <値>"。無い/壊れた行は既定のまま。
+static const char* OPTIONS_PATH = "Assets/options.txt";
+void SceneForge::LoadOptions()
+{
+	FILE* fp = nullptr;
+	if (fopen_s(&fp, OPTIONS_PATH, "r") != 0 || !fp) return;
+	char line[64];
+	while (fgets(line, sizeof(line), fp))
+	{
+		int v = 0;
+		if (sscanf_s(line, "lessonspeed %d", &v) == 1 && v >= 0 && v < (int)_countof(LESSON_SPEED_STEPS)) m_lessonSpeedIdx = v;
+	}
+	fclose(fp);
+}
+
+void SceneForge::SaveOptions() const
+{
+	FILE* fp = nullptr;
+	if (fopen_s(&fp, OPTIONS_PATH, "w") != 0 || !fp) return;
+	fprintf(fp, "lessonspeed %d\n", m_lessonSpeedIdx);	// LESSON_SPEED_STEPS の番号
+	fclose(fp);
+}
+
 void SceneForge::Update(float tick)
 {
 	m_time += tick;
+	m_lessonClock += tick * LessonSpeed();	// 教学アニメの時計(設定の速さ。一時停止中も進む=設定の見本が動く)
 	m_fade.Update(tick);	// 画面フェード(黒幕)を進める。遷移はTransitionの黒転じで実行される
 	m_door.Update(tick);	// 扉の開閉の回転(E で切り替えた後、入力と無関係に最後まで回り切る)
 	m_grassMapDt += tick;	// 草の踏み跡が薄れる時間(GPU の Fade は Draw の最初でまとめて)
 
 	// --- 一時停止メニュー(ESC)。開いている間は世界を止める(以下の更新を全部飛ばす=時間・温度・粒子も止まる) ---
 	//   開いたフレームは UpdatePause を呼ばない: 同じフレームの ESC の押下を「続ける」と読んで即座に閉じていた(2026-10-08 F5)。
-	if (!m_paused && CanPause() && IsKeyTrigger(VK_ESCAPE)) { OpenPause(); return; }
+	if (!m_paused && CanPause() && InputActions::Pressed(Action::Pause)) { OpenPause(); return; }
 	if (m_paused) { UpdatePause(); return; }
+
+	// チュートリアルの課程を終えた: 「レッスン完了」を見せてから課程の一覧へ
+	if (m_state == GAME_PLAY && m_courseComplete && !m_fade.IsBusy() && m_time - m_courseCompleteAt >= COURSE_DONE_SHOW_SEC)
+		ReturnToTitle(true);
+
+	// プレイテスト計時: 遊んでいる時間だけ(導入カメラ・F1・画面フェード中は数えない。一時停止は上で return 済み)
+	if (m_state == GAME_PLAY && m_introPhase == IntroPhase::None && !DebugUI::IsVisible() && !m_fade.IsBusy())
+		TickPlaytestTimer(tick);
 
 	// F8 = 全調整値を起動時スナップショットへ一発リセット(F1デバッグ表示中のみ=誤爆防止)。
 	if (DebugUI::IsVisible() && IsKeyTrigger(VK_F8)) RestoreTuning();
@@ -1599,6 +1832,7 @@ void SceneForge::Update(float tick)
 		// 互動の注視判定(①範囲 ②視線)。走動中以外(工位/移動アニメ中)は対象なし=提示がフェードアウト。
 		UpdateInteract(tick);
 		UpdateGuide();		// 指引 UI: 今の状況から案内文と行き先を決める(HUD.cpp)
+		UpdateLessons(tick);	// 操作の案内(チュートリアル / 救急)を進める(Tutorial.cpp)
 		UpdateSeqBreath(tick);	// 拍子表の再生中だけカメラに呼吸を乗せる重み(Sequence.cpp)
 		UpdateCarryAvoid(tick);	// 手の鉄が道具/壁に入らない様に起こす(Carry.cpp)。運んでいない時は 0 へ戻る
 
@@ -1631,14 +1865,9 @@ void SceneForge::Update(float tick)
 			//   金床=工位へ移動 / 火钳=取って工位へ移動→翻面。退出(工位→走動)は UpdatePlay 側で E。
 			if (m_player.WantInteract() && m_focus >= 0) DoInteract(INTERACTABLES[m_focus]);
 		}
-		else if (m_flipPhase == FlipPhase::Flipping)
-		{
-			// 翻面の「翻す」中はマウスを翻し量に使う(UpdatePlay→UpdateFlip が読む)。
-			// ここで視角を読むと同フレームで光標を二重に中心へ戻す=偏移が消えるので、視角は止める。
-		}
 		else if (m_flipPhase != FlipPhase::None)
 		{
-			// 翻面中(運鏡ビート/火钳待命)はハンマーを置いている=狙いも視角も動かさない。
+			// 翻面中(F を押し続けている間)はハンマーを置いている=狙いも視角も動かさない(回すのは F だけ)。
 			// マウス移動は読んで捨てる(光標は中心へ戻す)=翻面明けに溜まった移動量で視点が跳ばない。
 			float dx, dy; ReadMouseDelta(dx, dy);
 		}

@@ -329,12 +329,14 @@ XMMATRIX SceneForge::TongsWorld(const XMFLOAT3& approach, const XMFLOAT3& barDir
 void SceneForge::GripIron()
 {
 	m_carrying = true;	// 以後 WorkAnchor() は手の前の点を返す=鉄は手に付いて来る。火の外なので熱は入らない。
+	++m_gripCount;		// 操作の案内: 掴んだ(LessonMetric: GripIron)
 }
 
 void SceneForge::PutIronAt(Station s)
 {
 	m_workAt   = s;
 	m_carrying = false;
+	++m_putCount;		// 操作の案内: 置いた(LessonMetric: PutDown)
 }
 
 //--- 鉄の無い工位で E を押した: 入らず、鉄の在り処を言う(KCD式の負向フィードバック。自動では動かない)。

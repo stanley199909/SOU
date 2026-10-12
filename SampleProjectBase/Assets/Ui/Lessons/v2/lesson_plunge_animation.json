@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "lesson": "plunge",
+  "canvas": {
+    "width": 512,
+    "height": 512
+  },
+  "playback": "step",
+  "loop": true,
+  "coordinate_system": "top-left origin; x right; y down; pixels; tilt radians clockwise",
+  "transform_order": "rotate pose around pivot, then apply dx/dy; base never transformed",
+  "compositing": {
+    "mode": "source-over",
+    "clearance_pixels": 0
+  },
+  "meaning": "横拿→刀尖转向下、仍在水上→竖直插入水中，出现水花与蒸汽。",
+  "frames": [
+    {
+      "base": "lesson_plunge_base.png",
+      "pose": "lesson_plunge_pose1.png",
+      "duration_seconds": 0.7,
+      "dx": 0,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        245,
+        145
+      ]
+    },
+    {
+      "base": "lesson_plunge_base2.png",
+      "pose": "lesson_plunge_pose2.png",
+      "duration_seconds": 0.45,
+      "dx": 0,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        245,
+        145
+      ]
+    },
+    {
+      "base": "lesson_plunge_base3.png",
+      "pose": "lesson_plunge_pose3.png",
+      "duration_seconds": 1.4,
+      "dx": 0,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        245,
+        145
+      ]
+    }
+  ],
+  "waterline_y": 299,
+  "note": "顺序对应先转刀再下沉；水槽剖视让水下刀身仍可见。"
+}

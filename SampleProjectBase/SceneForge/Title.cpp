@@ -27,6 +27,7 @@ void SceneForge::ResetTitleStage()
 	m_introPhase = IntroPhase::None;
 	m_introTimer = 0.0f;
 	m_modeSelectOpen = false;	// タイトルに戻った時はモード選択を閉じた状態から(SPACE でまた開く)
+	m_courseSelectOpen = false;	// 課程の一覧も閉じる(課程を終えて戻る時は ReturnToTitle が開き直す)
 }
 
 //--- 導入の段階を進める(ユーザーの演出指示: 一つ終わってから次へ)。
@@ -42,8 +43,16 @@ void SceneForge::UpdateIntro(float tick)
 		m_introTimer += tick;
 		if (m_introTimer >= m_logoFadeTime)
 		{
-			StartGame();
-			BeginEnterStation(Station::Anvil);	// 開始視点=今映っている標題カメラ
+			// チュートリアルの課程ならその工程の所から(鉄をその工位に置き、カメラはそこへ入る)、通常モードは最初から(金床)
+			Station first = Station::Anvil;
+			if (m_courseIdx >= 0 && m_recipe && m_courseIdx < (int)m_recipe->courses.size())
+			{
+				const int step = m_recipe->courses[m_courseIdx].firstStep;
+				StartAtStep(step, false);
+				first = StepStation(m_recipe->steps[step].type);
+			}
+			else StartGame();
+			BeginEnterStation(first);	// 開始視点=今映っている標題カメラ
 			m_transDur   = m_titleIntroTime;	// 通常の工位移動より長く=映画的にゆっくり
 			m_introPhase = IntroPhase::CameraMove;
 		}
