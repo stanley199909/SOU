@@ -5,6 +5,9 @@
 #include "Geometory.h"
 #include "Sprite.h"
 #include "Input.h"
+#include "Gamepad.h"
+#include "InputPrompts.h"
+#include "Haptics.h"
 #include "SceneRoot.h"
 #include "PostProcess.h"
 #include "DebugUI.h"
@@ -22,6 +25,7 @@ HRESULT Init(HWND hWnd, UINT width, UINT height)
 	Geometory::Init();
 	Sprite::Init();
 	InitInput();
+	Gamepad::Init();	// 手柄(SDL3)。失敗しても(=SDL が起動しない)キーボードとマウスで遊べる
 	Audio::Init();	// BGMはロード完了後にゲームシーン側で開始する(起動途中で鳴らない)
 
 	// シーン作成
@@ -56,6 +60,7 @@ void Uninit()
 	g_pScene->Uninit();
 	g_pScene.reset();
 	Audio::Uninit();
+	Gamepad::Uninit();
 	UninitInput();
 	Sprite::Uninit();
 	Geometory::Uninit();
@@ -65,8 +70,11 @@ void Uninit()
 void Update(HWND hWnd, float tick)
 {
 	UpdateInput();
+	Gamepad::Update(tick);
+	InputPrompts::Update();	// 最後に触った機器(キーボード・マウス / 手柄)= 操作案内の絵を切り替える
 	if (IsKeyTrigger(VK_F1)) DebugUI::Toggle();	// F1でデバッグUIの表示切替
 	g_pScene->_update(tick);
+	Haptics::Update(tick);	// このフレームに頼まれた震動を混ぜて手柄へ送る(ゲームの更新の後)
 	g_pPost->Update(tick);
 }
 

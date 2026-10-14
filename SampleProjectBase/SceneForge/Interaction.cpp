@@ -229,7 +229,7 @@ void SceneForge::DrawInteractPrompt()
 	// 見た目の寸法は画面の高さに対する比(=ウィンドウサイズが変わっても同じ見え方)
 	const float R_RATIO    = 0.030f;	// 丸の半径
 	const float RING_RATIO = 0.004f;	// 外枠の太さ
-	const float TEXT_RATIO = 0.034f;	// 「E」の文字の高さ
+	const float TEXT_RATIO = 0.034f;	// 「E」(手柄なら「A」)の文字の高さ
 	const float r    = disp.y * R_RATIO;
 	const float ring = disp.y * RING_RATIO;
 	const int   a    = (int)(255 * m_promptAlpha);
@@ -240,8 +240,9 @@ void SceneForge::DrawInteractPrompt()
 
 	ImFont* f  = DebugUI::FontBody() ? DebugUI::FontBody() : ImGui::GetFont();
 	float   px = disp.y * TEXT_RATIO;
-	ImVec2  ts = f->CalcTextSizeA(px, FLT_MAX, 0.0f, "E");
-	dl->AddText(f, px, ImVec2(sx - ts.x * 0.5f, sy - ts.y * 0.5f), IM_COL32(255, 200, 120, a), "E");	// 暖色=鍛冶の火
+	const char* key = InputPrompts::ShortName(Action::Interact);	// 「使う」に割り当てたキー/ボタンの1文字(今の機器)
+	ImVec2  ts = f->CalcTextSizeA(px, FLT_MAX, 0.0f, key);
+	dl->AddText(f, px, ImVec2(sx - ts.x * 0.5f, sy - ts.y * 0.5f), IM_COL32(255, 200, 120, a), key);	// 暖色=鍛冶の火
 
 	// 丸の下に「押すと何が起きるか」を一言(鉄を掴む/ここに置く/ここで作業/鉄はここに無い…)。
 	if (m_promptLabel && m_promptLabel[0])
@@ -252,8 +253,8 @@ void SceneForge::DrawInteractPrompt()
 		ImFont* jp = DebugUI::FontJPFor(lpx);	// 文言は日本語(游明朝。大きさに一番近い実寸)。「E」だけ英字フォント
 		ImVec2 ls  = jp->CalcTextSizeA(lpx, FLT_MAX, 0.0f, m_promptLabel);
 		ImVec2 lp(sx - ls.x * 0.5f, sy + r + disp.y * LABEL_GAP);
-		dl->AddText(jp, lpx, ImVec2(lp.x + 1.0f, lp.y + 1.0f), IM_COL32(0, 0, 0, (int)(a * 0.8f)), m_promptLabel);	// 影(明るい背景でも読める)
-		dl->AddText(jp, lpx, lp, IM_COL32(240, 225, 200, a), m_promptLabel);
+		DrawSubtitleBox(dl, lp.x, lp.y, lp.x + ls.x, lp.y + ls.y, lpx, a / 255.0f);	// 字幕の箱(明るい背景でも読める)
+		DrawOutlinedText(dl, jp, lpx, lp.x, lp.y, IM_COL32(240, 225, 200, a), m_promptLabel);
 	}
 }
 

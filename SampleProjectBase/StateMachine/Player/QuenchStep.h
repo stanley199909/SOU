@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "StateBase.h"
 
 class SceneForge; // owner
@@ -17,13 +17,15 @@ class SceneForge; // owner
 //             (how far the blade has cooled); at 100% the game is certain to end -> the owner
 //             hides the HUD (BeginFinale). Not stirring never blocks: the film still breaks once
 //             the steel cools enough, only slower (and the grade is a little lower).
+//   Full    : the progress bar stays on screen at 100% for a moment (the player SEES it finish)
+//             before the HUD is hidden; otherwise the last frames before 100% are all they saw.
 //   Settle  : letterbox bars slide in while the steam and waves calm down, then hold the shot.
 // Then the step advances; being the last step, that finishes the game.
 // This class owns the ORDER and TIMING of the sequence; SceneForge owns what it
 // looks/sounds like (blade angle, depth, stroke, steam, waves, bars) and the boiling physics.
 class QuenchStep : public StateBase
 {
-    enum class Phase { Hold, Turn, Plunge, Stir, Settle };
+    enum class Phase { Hold, Turn, Plunge, Stir, Full, Settle };
 
     SceneForge* m_forge;
     Phase m_phase = Phase::Hold;
@@ -41,4 +43,5 @@ public:
     static constexpr float PLUNGE_TIME    = 1.0f;  // blade travels into the water (s)
     static constexpr float LETTERBOX_TIME = 1.8f;  // bars slide in (s)
     static constexpr float HOLD_TIME      = 2.5f;  // stay on the finished shot while it calms, before the result (s)
+    static constexpr float FULL_SHOW_TIME = 0.5f;  // show the full (100%) bar before hiding the HUD (s)
 };

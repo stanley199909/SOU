@@ -25,4 +25,5 @@ FORGE - Credits / クレジット
   使用箇所: チュートリアルで操作を覚えた時の確認音 (Assets/Sound/SE/learned.wav に加工: 先頭/末尾の無音を除去・モノラル化・-2.2dB・WAV化)
 - Poly Haven (CC0): 岩壁テクスチャ
 - Kenney (CC0): 操作キーのアイコン
+- SDL3 (zlib License, https://www.libsdl.org/): ゲームパッドの入力 (ThirdParty/SDL3/LICENSE.txt)
 - MM Blacksmith Pack / Fantasy Props MegaKit: 購入素材 (各ライセンスに従う)

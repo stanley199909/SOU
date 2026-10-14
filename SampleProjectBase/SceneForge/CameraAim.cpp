@@ -14,6 +14,7 @@
 #include "Model.h"
 #include "Geometory.h"
 #include "Input.h"
+#include "InputActions.h"
 #include "DebugUI.h"
 #include "Defines.h"
 #include "Audio.h"
@@ -146,15 +147,10 @@ void SceneForge::ApplyCamera()
 //    左右(yaw)は玩家の向き(m_player)に、上下(pitch)は m_walkPitch に入れる(一人称の見回し)。
 void SceneForge::UpdateWalkLook()
 {
-	HWND hwnd = GetActiveWindow();
-	if (!hwnd) return;
-	RECT rc; GetClientRect(hwnd, &rc);
-	POINT center = { (rc.right - rc.left) / 2, (rc.bottom - rc.top) / 2 };
-	POINT cp; GetCursorPos(&cp);
-	POINT cs = center; ClientToScreen(hwnd, &cs);	// 画面座標の中心
-	POINT cc = cp;     ScreenToClient(hwnd, &cc);	// 現在カーソルをクライアント座標へ
-	float dx = (float)(cc.x - center.x);
-	float dy = (float)(cc.y - center.y);
+	float dx, dy;
+	if (!ReadMouseDelta(dx, dy)) return;	// マウス(中心へ戻すのも ReadMouseDelta の中)
+	float sx, sy; InputActions::LookDelta(sx, sy);	// + 右スティック = 見回す(手柄の約束事)
+	dx += sx; dy += sy;
 
 	// 左右: マウス右(dx>0)=右へ振り向く=yaw増加(前方が+xへ回る)
 	m_player.SetYaw(m_player.GetYaw() + dx * m_walkSens);
@@ -162,8 +158,6 @@ void SceneForge::UpdateWalkLook()
 	m_walkPitch -= dy * m_walkSens;
 	if (m_walkPitch >  m_walkPitchLim) m_walkPitch =  m_walkPitchLim;
 	if (m_walkPitch < -m_walkPitchLim) m_walkPitch = -m_walkPitchLim;
-
-	SetCursorPos(cs.x, cs.y);	// 中心へ戻す(累積の基準を保つ)
 }
 
 //--- 走動モードのカメラ = 玩家の目線に置く一人称カメラ。
@@ -578,9 +572,11 @@ void SceneForge::ApplyWorkCamera()
 
 //--- マウス移動を視角(yaw/pitch)へ累積する。FPS方式: 毎フレーム、カーソルを画面中心へ
 //    戻し(再センタリング)、その差分を回転量にする。範囲は板の周囲に夹住する。
-//--- 光標のクライアント中心からの偏移(dx,dy)を読み、光標を中心へ戻す(相対マウスの基礎)。
-//    視角(UpdateMouseLook)と翻面(UpdateFlip)が同じ読み取りを共用する。中心へ戻すのは1回だけ
-//    にする(2回呼ぶと偏移が二重に消える)ので、同じフレームでは片方だけが呼ぶこと。
+//--- このフレームのマウスの移動量(dx,dy, 単位 px)を読む。
+//    光標のクライアント中心からの偏移を読み、光標を中心へ戻す(相対マウスの基礎)。
+//    スティックはここで足さない: 同じ「マウスの上下」でも、手柄では工位ごとに左(手)/右(視点・回す)が違うため、
+//    使う側が InputActions::LookDelta / HandDelta(px 換算)や 〜StickY(位置)を選んで足す。
+//    中心へ戻すのは1回だけにする(2回呼ぶと偏移が二重に消える)ので、同じフレームでは1か所だけが呼ぶこと。
 bool SceneForge::ReadMouseDelta(float& dx, float& dy)
 {
 	dx = dy = 0.0f;
@@ -594,6 +590,7 @@ bool SceneForge::ReadMouseDelta(float& dx, float& dy)
 	dx = (float)(cc.x - center.x);
 	dy = (float)(cc.y - center.y);
 	SetCursorPos(cs.x, cs.y);						// 中心へ戻す(累積の基準を保つ)
+	InputPrompts::SyncCursor();						// 今のはゲームが動かした=「マウスを触った」と数えない(手柄で遊んでいる時に案内がマウスへ戻らない様に)
 	return true;
 }
 
@@ -601,6 +598,12 @@ void SceneForge::UpdateMouseLook()
 {
 	float dx, dy;
 	if (!ReadMouseDelta(dx, dy)) return;
+	// 手柄: 左スティック上下 = 狙い(手で鎚を刃の長手に沿って動かす)/ 右スティック左右 = 少し見回す(視点)
+	float hx, hy, lx, ly;
+	InputActions::HandDelta(hx, hy);
+	InputActions::LookDelta(lx, ly);
+	dx += lx;
+	dy += hy;
 
 	const float SENS = 0.0017f;			// 左右(yaw)の感度(rad/px)。低め=据わった視点
 	m_lookYaw += dx * SENS;

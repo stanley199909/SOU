@@ -19,6 +19,8 @@
 #include "HingedDoor.h"		// GameLogic: 蝶番で開閉する扉(状態と角度)
 #include "CottageDoor.h"	// 整屋の裏口の扉(データ+蝶番の幾何)
 #include "InteractionMap.h"	// 真上から正射影で見た「最近押された所」の貼图(草の倒れ等)
+#include "InputPrompts.h"	// GameLogic: 操作案内の絵と呼び名(今使っている機器=キーボード・マウス/手柄 に合わせる)
+#include "Haptics.h"		// GameLogic: 手柄の震動(一発/持続を混ぜて送る)
 #include <DirectXMath.h>
 #include <memory>
 #include <vector>
@@ -149,6 +151,7 @@ private:
 	std::shared_ptr<Texture>    m_glow;
 	std::shared_ptr<Texture>    m_uiParchment;	// UI: 羊皮紙パネル(結果/失敗画面の下地。抠いた透明PNG)
 	std::shared_ptr<Texture>    m_uiFrame;		// UI: 飾り枠付き羊皮紙(工程リストの下地。ナインスライスで描く)
+	std::shared_ptr<Texture>    m_uiStrip;		// UI: 横長の紙片(説明文・案内文の下地。3スライスで描く)。Assets/UI/paper_strip.png を差し替えれば見た目が変わる
 	std::shared_ptr<Texture>    m_gaugeFrame;	// UI: 温度ゲージの金属外框(槽の暗い地を含む=一番下の層)
 	std::shared_ptr<Texture>    m_gaugeOverlay;	// UI: 槽をくり抜いた外框(一番上の層。金の縁が範囲の紋理の端を覆う)
 	std::shared_ptr<Texture>    m_gaugeMarker;	// UI: 温度ゲージの指針(表示サイズへ縮小済み)
@@ -389,7 +392,8 @@ private:
 	float m_lookYaw = 0.0f, m_lookPitch = 0.0f;	// 基準視線からのマウス累積回転(夹住)
 	DirectX::XMFLOAT3 m_camFwd = { 0, 0, 1 };	// 現在のカメラ正前方(照準射線に使う)
 	void  UpdateMouseLook();		// マウス移動を視角(yaw/pitch)へ累積(再センタリング方式)
-	bool  ReadMouseDelta(float& dx, float& dy);	// 光標のクライアント中心からの偏移を読み、中心へ戻す(look/翻面で共用)
+	void  UpdateCursorVisibility();	// OS の光標を出すか(毎フレーム1か所で決める): メニュー/タイトルでキーボード・マウス操作中 or F1
+	bool  ReadMouseDelta(float& dx, float& dy);	// このフレームのマウスの移動量(px)。光標を中心へ戻す。スティックは使う側が InputActions から足す
 	void  UpdateAim();				// 準心射線を板と交差させ m_aimI/J/World を更新
 
 	//--- 一人称の「走動モード」(工位に着く前に工坊を歩く) ---
@@ -721,7 +725,7 @@ private:
 	//--- 設定(一時停止メニューの「設定」。2026-10-12 ユーザー要望: F1 と分けて、玩家が自分で調整できる所)
 	//    今は「教学アニメの速さ」だけ。段階の中から選ぶ(◀ ▶)。選んでいる間は横に瞄準の指示図を実際の速さで動かして見せる。
 	//    保存 = Assets/options.txt(調整値 forge_tuning.txt とは別=玩家の好み)。
-	enum class OptionItem { LessonSpeed, Back, Count };
+	enum class OptionItem { LessonSpeed, Rumble, Back, Count };
 	bool  m_optionsOpen    = false;				// 設定の画面を開いているか(一時停止の中)
 	int   m_optionsSel     = 0;					// 選んでいる行
 	int   m_optionsRequest = -1;				// 決定された行(描画側のクリック / キー)。UpdateOptions で実行
@@ -730,6 +734,11 @@ private:
 	static constexpr int   LESSON_SPEED_DEFAULT = 2;	// 既定 = 1.0 倍
 	int   m_lessonSpeedIdx = LESSON_SPEED_DEFAULT;
 	float LessonSpeed() const { return LESSON_SPEED_STEPS[m_lessonSpeedIdx]; }
+	static constexpr float RUMBLE_STEPS[] = { 0.0f, 0.25f, 0.5f, 0.75f, 1.0f };	// 選べる震動の強さ(0 = オフ)
+	static constexpr int   RUMBLE_DEFAULT = 4;	// 既定 = 100%(手応え表の値そのまま)
+	int   m_rumbleIdx = RUMBLE_DEFAULT;
+	static constexpr Rumble RUMBLE_PREVIEW     = { 0.6f, 0.4f, 0.0f, 0.6f };	// 設定で強さを変えた時に一度震わせる見本(変えた結果がその場で分かる)
+	static constexpr float  RUMBLE_PREVIEW_SEC = 0.25f;
 	float m_lessonClock    = 0.0f;				// 教学アニメの時計(秒)= 経過 × 速さ。一時停止中も進む(設定の見本が動く)
 	void  UpdateOptions();
 	void  DrawOptionsMenu();
@@ -1094,14 +1103,15 @@ private:
 	bool  RowCompleted(int i, bool wasCompleted) const;	// i 行目は今「済」か(加熱の行は温度で生きている)
 	float ReadyTemp(StepName next) const;			// その工程を始めるのに十分な温度(加熱の行が「済」になる)
 	float MinWorkTemp(StepName next) const;		// その工程ができる最低温度(下回ると加熱の行が「済」でなくなる)
-	//    操作説明=キーアイコン(Kenney Input Prompts, CC0)+一言。アイコン名は表(データ)で持つ。
+	//    操作説明=キーアイコン(Kenney Input Prompts, CC0)+一言。表には「動作」を書き、絵は今の機器に合わせて InputPrompts が選ぶ。
 	struct KeyHint
 	{
 		static const int MAX_ICONS = 4;			// 1つの説明に並べるアイコンの最大数(WASD=4)
-		const char* icons[MAX_ICONS];			// アイコンのファイル名(拡張子なし, 例 "mouse_left")。nullptr で終わり
+		InputGlyph  glyph;						// どの操作か(Action::Use / AxisPrompt::Move 等)
 		const char* label;						// 何が起きるか(UTF-8)
 	};
-	void  DrawKeyHints(const KeyHint* hints, int count, float yRatio, float alpha = 1.0f);	// 中央揃えで1行に並べる
+	void  DrawKeyHints(const KeyHint* hints, int count, float yRatio, float alpha = 1.0f, bool alignRight = false);	// 1行に並べる(既定 = 中央揃え / alignRight = 右下のボタンガイド用)
+	void  DrawMenuButtonGuide();	// メニューの右下: [決定] [戻る] のボタンガイド(今の機器の絵)
 
 	//====================================================================
 	//  操作の案内(チュートリアル / 救急)。データ駆動 = 下の LESSONS 表(Tutorial.cpp)。2026-10-12 阶段 C
@@ -1141,8 +1151,8 @@ private:
 	{
 		LessonId    id;
 		LessonAnim  anim;
-		const char* key;			// HoldKey 等で使うキーの絵(拡張子なし)。不要なら nullptr
-		const char* text;			// 絵の下の一言(日本語)
+		Action      key;			// HoldKey / PressKey で見せる動作(絵は今の機器に合わせる)。不要なら Action::Count
+		const char* text;			// 絵の下の一言(日本語)。キー名は {Interact} 等の印で書く(InputPrompts::Format が置き換える)
 		float       need;			// 「できた」とみなす LessonMetric の増え量
 		float       rescueIdle;		// 救急: この秒数、状況が続いて進まなければ出す(0 = 使わない)
 		int         rescueMistakes;	// 救急: この回数、誤りを重ねたら出す(0 = 使わない)
@@ -1222,9 +1232,9 @@ private:
 	static constexpr float WALK_BLINK_AFTER = 5.0f;
 	static constexpr float WALK_BLINK_HZ    = 2.0f;	// 点滅の速さ(回/秒)
 	float HearthTargetTemp() const;				// 炉で目指す温度(焼入れ前なら火花の温度、鍛造中なら作業できる温度)
-	void  DrawHoldKeyLesson(const char* key, float alpha, float scale, unsigned int tint);	// キーを押し続ける(押下→溜まる輪)
+	void  DrawHoldKeyLesson(Action key, float alpha, float scale, unsigned int tint);	// キーを押し続ける(押下→溜まる輪)
 	void  DrawStrikeHoldLesson(float alpha, float scale, unsigned int tint);	// 左ボタンを押し続けて溜める → 離す
-	void  DrawTapKeyLesson(const char* key, float alpha, float scale, unsigned int tint);	// キーを押す(押下→離すを繰り返す)
+	void  DrawTapKeyLesson(Action key, float alpha, float scale, unsigned int tint);	// キーを押す(押下→離すを繰り返す)
 	void  DrawGaugePointLesson(float lo, float hi, float alpha, float scale);	// 温度ゲージの範囲を囲んで指す
 	void  DrawPointUpLesson(float alpha, float scale, unsigned int tint);		// 上(刃)を指す
 	void  DrawWalkLesson(float alpha, float scale, unsigned int tint);		// WASD
@@ -1252,13 +1262,78 @@ private:
 		LessonPictFrame frames[MAX_FRAMES];
 	};
 	static const LessonPicture LESSON_PICTURES[];
-	void  DrawMouseAxisLesson(bool vertical, int towards, float alpha, float scale, unsigned int tint);	// マウスを上下/左右に(towards: 0 往復 / −1 上・左 / +1 下・右)
+	void  DrawAxisLesson(AxisPrompt axis, int towards, float alpha, float scale, unsigned int tint);	// マウス/スティックを上下・左右に(towards: 0 往復 / −1 上・左 / +1 下・右)
 	void  DrawFlipHoldPrompt(float alpha, float scale, unsigned int tint, const char* label);	// 裏返し: F + 押した長さの輪(離すと減る)
-	void  DrawHoldProgressPrompt(const char* key, float fill01, bool pressed, const char* label, float alpha, float scale, unsigned int tint);	// 長押しの進み(共通の見た目)。label=nullptr で一言なし
+	void  DrawHoldProgressPrompt(Action key, float fill01, bool pressed, const char* label, float alpha, float scale, unsigned int tint);	// 長押しの進み(共通の見た目)。label=nullptr で一言なし
 	bool  LessonDrawsFlip() const { return m_lessonShown == (int)LessonId::Flip; }	// 裏返しの輪を課が描いている(DrawPlayUI が重ねない)
 	bool  LessonDrawsGrindFlip() const { return m_lessonShown == (int)LessonId::GrindFlip; }	// 砥石の裏返しも同じ
 	bool  GuideTarget(DirectX::XMFLOAT3& pos, const char*& label);	// 走動中に次に向かう点(鉄 or 工位)。無ければ false
 	void  DrawObjectiveMarker();					// 向かう点の上に目印。画面外なら画面端に矢印(オフスクリーンインジケーター)
+
+	//====================================================================
+	//  震動(手柄)の手応え表。2026-10-13 阶段 D-2 = 試作の値(ユーザーが手で確かめて調整する)
+	//    Rumble = { low(左の重い錘=重さ・柔らかさ), high(右の軽い錘=硬さ・細かさ), 左扳机, 右扳机 }(各 0..1)
+	//    物理の状態から強さを決める: 打撃=溜めた力 × 鉄の温度(熱い=柔らかい=低く重い / 冷たい=硬い=高く鋭い)、
+	//    研ぎ=研ぎ音と同じ量(m_grindVol)、焼入れ=沸き立ち(m_boil。膜沸騰は静か / 核沸騰は激しい)。
+	//====================================================================
+	// 鎚は3段階(2026-10-14 ユーザーと合意): ① 溜め ② 当たる ③ 跳ね返り
+	// ① 溜め(押している間ずっと): 叩く指(RT)に張り詰める感じ。量 = 溜めた力 m_charge(弓を引き絞る様に強くなる)
+	static constexpr Rumble RUMBLE_CHARGE            = { 0.08f, 0.0f, 0.0f, 0.45f };
+	// ② 当たる。強さ amp = BASE + GAIN × 溜めた力(試遊 2026-10-14: 弱すぎた → 底上げ。溜めきれば重い錘が 1.0)
+	static constexpr float  RUMBLE_STRIKE_BASE       = 0.5f;	// 一番弱く叩いた時
+	static constexpr float  RUMBLE_STRIKE_GAIN       = 0.5f;	// 溜めきった時に足される分(BASE + GAIN = 1)
+	//   ②-a 衝撃の頭(トランジェント): ごく短く鋭い「カッ」= 鉄と鉄がぶつかった瞬間
+	static constexpr Rumble RUMBLE_STRIKE_TRANSIENT  = { 0.0f, 1.0f, 0.0f, 1.0f };
+	static constexpr float  RUMBLE_STRIKE_TRANSIENT_SEC = 0.035f;
+	//   ②-b 本体: 少し長い「ドン」。low/high の配分は鉄の柔らかさ(熱いほど low = 重く柔らかい)
+	static constexpr float  RUMBLE_STRIKE_LOW_SOFT   = 1.0f;	// 熱い鉄: 重い錘の割合(ドスッ)
+	static constexpr float  RUMBLE_STRIKE_LOW_HARD   = 0.6f;	// 緑帯の下端の鉄: 重い錘の割合
+	static constexpr float  RUMBLE_STRIKE_HIGH_SOFT  = 0.3f;	// 熱い鉄: 軽い錘の割合
+	static constexpr float  RUMBLE_STRIKE_HIGH_HARD  = 0.9f;	// 緑帯の下端の鉄: 軽い錘の割合(カンッ)
+	static constexpr float  RUMBLE_STRIKE_SEC        = 0.12f;	// 手に残る長さ(短めにして、後の跳ね返りと分ける)
+	static constexpr float  RUMBLE_STRIKE_TRIGGER    = 1.0f;	// 叩く指(RT)への「コツン」の強さ(× amp)
+	static constexpr float  RUMBLE_STRIKE_TRIGGER_SEC = 0.08f;
+	// ③ 跳ね返り(2026-10-14 2回目の試遊で作り直し): 画面の鎚が跳ねている間ずっと、その揺れの大きさで震わせる。
+	//    揺れの大きさ(振幅)A = √(静止位置からのずれ² + (速さ/ω)²)。ばねの「位置と速さ」を合わせた量なので、
+	//    上の端でも下の端でも 0 にならず、阻尼で滑らかに小さくなる = 画面の鎚の揺れの大きさと同じ時間で消える。
+	//    強さ = A ÷ 打った瞬間の A(1 → 0)× 鉄の硬さ。重い錘だけは速さで脈打たせて「ブルン、ブルン」の手触りを付ける。
+	//    当たる震動(②)と同時に始まる(画面の鎚も当たった瞬間に跳ね上がる)。打ち消し合わない様に、跳ね返りは軽い錘・扳机が主
+	static constexpr Rumble RUMBLE_REBOUND           = { 0.6f, 1.0f, 0.0f, 0.7f };
+	static constexpr float  REBOUND_END              = 0.08f;	// 揺れが最初のこの割合まで小さくなったら終わり(止まった)
+	static constexpr float  REBOUND_HARDNESS_HARD    = 1.0f;	// 冷打・金床だけを打った(空振り): 硬い物はよく跳ね返す
+	static constexpr float  REBOUND_HARDNESS_SOFT    = 0.5f;	// 緑帯の上端の熱い鉄: 鎚を受け止める(死に打ち)。0.35 は弱すぎて感じなかった(2026-10-14)
+	float m_reboundHardness = REBOUND_HARDNESS_HARD;	// 直前の一打が何を打ったか(跳ね返りの震動の量に掛ける)
+	float m_reboundRef      = 0.0f;		// 打った瞬間の揺れの大きさ(振幅)。以後の強さの基準
+	bool  m_reboundActive   = false;	// 打った後、跳ね返りを震わせているか
+	float HammerSwingAmplitude() const;	// 鎚の今の揺れの大きさ(ばねの振幅)
+	void  StartReboundHaptics();		// 打った瞬間(m_hammer.Strike の直後)に呼ぶ
+	void  UpdateReboundHaptics();		// ③ 跳ね返りの震動(毎フレーム)
+	float IronSoftness(float heat) const;			// 緑帯の中の位置 0(下端=硬い)..1(上端=柔らかい)
+	// 冷打: 硬い鉄を叩いた「ガツン」。手応えが悪い=衝撃だけ大きく、軽い錘(鋭い)が主
+	static constexpr Rumble RUMBLE_COLD_HIT          = { 0.6f, 1.0f, 0.0f, 1.0f };
+	static constexpr float  RUMBLE_COLD_HIT_SEC      = 0.20f;
+	// 空振り(鉄でなく金床だけを打った)。軽く
+	static constexpr Rumble RUMBLE_SWING             = { 0.25f, 0.1f, 0.0f, 0.2f };
+	static constexpr float  RUMBLE_SWING_SEC         = 0.08f;
+	// ふいご(踏んでいる間ずっと): 風の低いうなり + 踏んでいる左扳机(LT)に軽く
+	static constexpr Rumble RUMBLE_BELLOWS           = { 0.15f, 0.0f, 0.2f, 0.0f };
+	// 研ぎ(当てている間ずっと): 量は研ぎ音(m_grindVol 0..1)に掛ける。細かいザラザラ=軽い錘が主 + 刃を当てている左扳机(LT)
+	static constexpr Rumble RUMBLE_GRIND             = { 0.08f, 0.35f, 0.3f, 0.0f };
+	// ペダルを1回踏んだ(踏んでいる右扳机 RT に)
+	static constexpr Rumble RUMBLE_PEDAL             = { 0.0f, 0.0f, 0.0f, 0.4f };
+	static constexpr float  RUMBLE_PEDAL_SEC         = 0.05f;
+	// 焼入れ: 入水の瞬間の爆発
+	static constexpr Rumble RUMBLE_QUENCH_CONTACT    = { 1.0f, 0.7f, 0.0f, 0.0f };
+	static constexpr float  RUMBLE_QUENCH_CONTACT_SEC = 0.5f;
+	// 焼入れ: 沸き立ち(m_boil 0..1)に掛ける持続の震え
+	static constexpr Rumble RUMBLE_BOIL              = { 0.3f, 0.2f, 0.0f, 0.0f };
+	// 焼入れ: 揺すって蒸気の膜を破った瞬間(「破れた」と手で分かる)
+	static constexpr Rumble RUMBLE_FILM_BREAK        = { 0.6f, 0.4f, 0.0f, 0.0f };
+	static constexpr float  RUMBLE_FILM_BREAK_SEC    = 0.25f;
+	// 裏返し(金床/砥石)が終わって刃が置かれた「コトン」
+	static constexpr Rumble RUMBLE_FLIP              = { 0.4f, 0.15f, 0.0f, 0.0f };
+	static constexpr float  RUMBLE_FLIP_SEC          = 0.10f;
+	void  PulseStrike(float power, float heat);	// 打撃の震動(溜めた力 × 温度で強さと音色を決める)
 
 	//--- 温度パラメータ(加熱速度は上の COAL_HEAT_RATE / BELLOWS_HEAT_RATE)
 	// 打撃CDは調整しやすいようメンバー変数(m_strikeCDMax)。自然冷却速度は m_forging.coolRate

@@ -58,6 +58,61 @@ static void CenterText(const char* text, float yRatio, float scale = 1.0f,
 	dl->AddText(f, px, ImVec2(x, y), col, text);									// 本体
 }
 
+//--- 「PRESS [ボタンの絵] TO START」の様に、文の途中に今の機器のボタンの絵を挟んで中央に出す(CenterText と同じ見た目)。
+//    絵は InputPrompts が選ぶ = キーボードなら Enter/Space、手柄なら A。文字だけの「SPACE」は手柄の人に嘘になる。
+static void CenterTextWithIcons(const char* before, InputGlyph glyph, const char* after, float yRatio, float scale,
+                                ImU32 col, ImFont* font)
+{
+	const float ICON_SCALE = 1.35f;		// 絵の大きさ(文字の高さに対する比)。ボタンの絵は余白があるので文字より少し大きく
+	const float ICON_GAP   = 0.15f;		// 絵と絵の間(絵の大きさに対する比)
+	const float SHADOW_PX  = 2.0f;
+	const int   MAX_ICONS  = 4;		// 1つのボタンの絵の最大枚数(キーボードの決定 = Enter + Space の2枚)
+	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImVec2 disp = ImGui::GetIO().DisplaySize;
+	ImFont* f = font ? font : ImGui::GetFont();
+	const float px = f->FontSize * scale;
+	const char* icons[MAX_ICONS] = {};
+	const int   n = InputPrompts::Icons(glyph, icons, MAX_ICONS);
+	const ImVec2 sb = f->CalcTextSizeA(px, FLT_MAX, 0.0f, before);
+	const ImVec2 sa = f->CalcTextSizeA(px, FLT_MAX, 0.0f, after);
+	const float icon = sb.y * ICON_SCALE, gap = icon * ICON_GAP;
+	const float total = sb.x + n * icon + (n > 0 ? (n - 1) * gap : 0.0f) + sa.x;
+	float x = (disp.x - total) * 0.5f;
+	const float cy = disp.y * yRatio;
+	const int   a  = (int)((col >> IM_COL32_A_SHIFT) & 0xFF);
+	DrawSubtitleBox(dl, x, cy - icon * 0.5f, x + total, cy + icon * 0.5f, sb.y, a / 255.0f);	// 3D のタイトル画面の上でも読める様に
+	const ImU32 shadowCol = IM_COL32(0, 0, 0, (int)(a * 0.6f));
+	auto text = [&](const char* t, const ImVec2& sz)
+	{
+		const ImVec2 p(x, cy - sz.y * 0.5f);
+		dl->AddText(f, px, ImVec2(p.x + SHADOW_PX, p.y + SHADOW_PX), shadowCol, t);
+		dl->AddText(f, px, p, col, t);
+		x += sz.x;
+	};
+	text(before, sb);
+	for (int i = 0; i < n; ++i)
+	{
+		if (i > 0) x += gap;
+		std::shared_ptr<Texture> tex = TextureCache::Get((std::string(icons[i]) + ".png").c_str());
+		if (tex && tex->GetResource())
+		{
+			ImTextureID id = (ImTextureID)tex->GetResource();
+			const ImVec2 p0(x, cy - icon * 0.5f), p1(x + icon, cy + icon * 0.5f);
+			dl->AddImage(id, ImVec2(p0.x + SHADOW_PX, p0.y + SHADOW_PX), ImVec2(p1.x + SHADOW_PX, p1.y + SHADOW_PX), ImVec2(0, 0), ImVec2(1, 1), shadowCol);
+			dl->AddImage(id, p0, p1, ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, a));
+		}
+		x += icon;
+	}
+	text(after, sa);
+}
+
+//--- このフレームにマウスが動いたか(メニューのホバーで選び直してよいか)。
+static bool MouseMovedThisFrame()
+{
+	const ImVec2 d = ImGui::GetIO().MouseDelta;
+	return d.x != 0.0f || d.y != 0.0f;
+}
+
 //--- 2色を t(0..1) で線形補間(ImU32 の RGBA 各成分ごと)。
 static ImU32 LerpColor(ImU32 a, ImU32 b, float t)
 {
@@ -117,13 +172,128 @@ static void DrawParchment(ImDrawList* dl, Texture* frame, ImVec2 a, ImVec2 b, fl
 	DrawNineSlice(dl, frame, a, b, srcCorner, cornerPx / srcCorner, PARCHMENT_TINT, srcCenter);
 }
 
+//--- 横長の紙片を 3スライス(three-slice)で貼る: 左右の端(焦げた縁)は縦横比を保ったまま、真ん中だけを横に伸ばす。
+//    = 文の長さが変わっても端の飾りが歪まない(温度ゲージの鋲と同じ手法)。端の幅は「画像の高さに対する比」で持つ。
+static const float STRIP_END_SRC_RATIO = 0.6f;	// 端(伸ばさない部分)の幅 = 画像の高さ × これ
+static void DrawPaperStrip(ImDrawList* dl, Texture* tex, ImVec2 a, ImVec2 b, int alpha)
+{
+	if (!tex || !tex->GetResource()) return;
+	const float tw = (float)tex->GetWidth(), th = (float)tex->GetHeight();
+	const float srcEnd = th * STRIP_END_SRC_RATIO;
+	const float end    = fminf(srcEnd * (b.y - a.y) / th, (b.x - a.x) * 0.5f);	// 画面上の端の幅(縦の倍率と同じ倍率=歪まない)
+	const float xs[4] = { a.x, a.x + end, b.x - end, b.x };
+	const float us[4] = { 0.0f, srcEnd / tw, 1.0f - srcEnd / tw, 1.0f };
+	ImTextureID id = (ImTextureID)tex->GetResource();
+	for (int i = 0; i < 3; ++i)
+		dl->AddImage(id, ImVec2(xs[i], a.y), ImVec2(xs[i + 1], b.y), ImVec2(us[i], 0.0f), ImVec2(us[i + 1], 1.0f), IM_COL32(255, 255, 255, alpha));
+}
+
+//--- 紙片の上に墨で1行書く(画面中央揃え)。紙の大きさは文の大きさから決める = 文が長くても短くても余白が同じ。
+//    明るい炉の前でも、暗い紙の上の白い字でなく「明るい紙の上の濃い墨」で読ませる(工程リスト・一時停止メニューと同じ見た目)。
+//    紙の画像が無ければ、前と同じ暗い帯 + 明るい字で代わりに描く(読めなくはならない)。
+static const float STRIP_H_PER_TEXT = 2.1f;	// 紙の高さ = 文字の高さ × これ(破れた縁の分、上下に余裕が要る)
+static const float STRIP_PAD_PER_H  = 0.85f;	// 文の左右の余白 = 紙の高さ × これ(端の焦げた縁に字が掛からない様に)
+static const ImU32 STRIP_INK        = IM_COL32(60, 38, 22, 255);	// 墨(工程リストの見出しと同じ)
+static float StripHeightPx(float textPx) { return textPx * STRIP_H_PER_TEXT; }
+static void DrawTextOnStrip(Texture* strip, const char* text, float cyRatio, float textPx, ImFont* font, float alpha01)
+{
+	if (!text || !text[0]) return;
+	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	const ImVec2 disp = ImGui::GetIO().DisplaySize;
+	ImFont* f = (font == DebugUI::FontJP()) ? DebugUI::FontJPFor(textPx) : (font ? font : ImGui::GetFont());
+	const ImVec2 ts = f->CalcTextSizeA(textPx, FLT_MAX, 0.0f, text);
+	const float h = StripHeightPx(textPx), w = ts.x + h * STRIP_PAD_PER_H * 2.0f;
+	const float cy = disp.y * cyRatio;
+	const ImVec2 a((disp.x - w) * 0.5f, cy - h * 0.5f), b(a.x + w, a.y + h);
+	const int alpha = (int)(255 * alpha01);
+	const ImVec2 tp((disp.x - ts.x) * 0.5f, cy - ts.y * 0.5f);
+	if (strip && strip->GetResource())
+	{
+		DrawPaperStrip(dl, strip, a, b, alpha);
+		dl->AddText(f, textPx, tp, (STRIP_INK & ~IM_COL32_A_MASK) | ((ImU32)alpha << IM_COL32_A_SHIFT), text);
+	}
+	else
+	{
+		const int BAND_ALPHA = 150;
+		dl->AddRectFilled(a, b, IM_COL32(0, 0, 0, (int)(BAND_ALPHA * alpha01)), h * 0.5f);
+		dl->AddText(f, textPx, tp, IM_COL32(255, 236, 196, alpha), text);
+	}
+}
+
+//--- 選択パネルの寸法(画面高さ比)。パネルの高さを外から計算できる様にファイルの先頭側で持つ(下に説明の紙片を置く時の配置)
+static const float CHOICE_CORNER_RATIO = 0.085f;	// 隅の大きさ=工程リストと同じ
+static const float CHOICE_ROW_RATIO    = 0.075f;	// 項目の間隔
+static const float CHOICE_HEAD_GAP     = 1.3f;		// 見出しから1項目目まで(行単位)
+static const float CHOICE_INSET_TOP    = 0.95f, CHOICE_INSET_BOTTOM = 0.75f;	// 枠の飾りの内側(隅の大きさ比)=工程リストと同じ
+static float ChoicePanelHeightRatio(int n)
+{
+	return CHOICE_CORNER_RATIO * (CHOICE_INSET_TOP + CHOICE_INSET_BOTTOM) + CHOICE_ROW_RATIO * (CHOICE_HEAD_GAP + n);
+}
+
+//--- タイトルの選択パネル + その下の説明の紙片(2026-10-14: 説明が羊皮紙に隠れて読めなかった → 紙片に分けて、必ずパネルの下に置く)。
+//    紙片の位置(DESC_Y)は固定し、パネルは「紙片の上に収まる」高さまで上げる(項目が多くても重ならない)。
+static const float TITLE_DESC_Y       = 0.90f;	// 説明の紙片の中心(画面高さ比)
+static const float TITLE_DESC_SCALE   = 0.8f;	// 説明の文字(游明朝の焼き寸に対する倍率)
+static const float TITLE_DESC_GAP     = 0.015f;	// パネルと紙片の間(画面高さ比)
+static float TitlePanelCenterY(int n, float preferredCenterY)
+{
+	const float dispH  = ImGui::GetIO().DisplaySize.y;
+	const float descPx = DebugUI::FontJP()->FontSize * TITLE_DESC_SCALE;
+	const float stripTop = TITLE_DESC_Y - StripHeightPx(descPx) * 0.5f / dispH;
+	const float fitCenter = stripTop - TITLE_DESC_GAP - ChoicePanelHeightRatio(n) * 0.5f;
+	return fminf(preferredCenterY, fitCenter);	// 元の位置で収まるなら動かさない
+}
+
+//--- 主人公の独白 = 字幕(サブタイトル)の見た目: 半透明の暗い角丸の箱 + 細い縁取り(アウトライン)の字。
+//    紙片(DrawTextOnStrip)=「ゲームが今やる事を教える」/ 字幕 =「主人公が喋っている」。見た目を分けて、誰の言葉かを一目で分からせる。
+//    暗い箱の上なので、色分け(冷たい=青 / 熱すぎ=赤 / 済んだ所=黄)が炉や石壁の前でも沈まない(2026-10-14 試遊: 青い字が読めなかった)。
+static const float SUBTITLE_PAD_X_PER_TEXT = 0.9f;	// 箱の左右の余白 = 文字の高さ × これ
+static const float SUBTITLE_PAD_Y_PER_TEXT = 0.35f;	// 箱の上下の余白 = 文字の高さ × これ
+static const float SUBTITLE_ROUND_PER_TEXT = 0.3f;	// 角の丸み = 文字の高さ × これ
+static const int   SUBTITLE_BOX_ALPHA      = 165;		// 箱の濃さ(0..255)。背景が少し透けて、世界を塞がない
+static const float SUBTITLE_OUTLINE_PX     = 1.5f;		// 字の縁取りの太さ(px)
+static const int   SUBTITLE_OUTLINE_ALPHA  = 200;		// 縁取りの濃さ
+//--- 字幕の箱: 中身の矩形(x0,y0)-(x1,y1)の外側に余白を足した、半透明の暗い角丸の箱。余白と丸みは文字の高さから決める
+void DrawSubtitleBox(ImDrawList* dl, float x0, float y0, float x1, float y1, float textPx, float alpha01)
+{
+	const float px = textPx * SUBTITLE_PAD_X_PER_TEXT, py = textPx * SUBTITLE_PAD_Y_PER_TEXT;
+	dl->AddRectFilled(ImVec2(x0 - px, y0 - py), ImVec2(x1 + px, y1 + py),
+	                  IM_COL32(0, 0, 0, (int)(SUBTITLE_BOX_ALPHA * alpha01)), textPx * SUBTITLE_ROUND_PER_TEXT);
+}
+
+//--- 縁取りの字: 同じ字を暗い色で 8 方向に少しずらして下に敷き、その上に本体(シェーダ無しの安価な縁取り)。縁取りの濃さは字の淡出に合わせる
+void DrawOutlinedText(ImDrawList* dl, ImFont* f, float textPx, float x, float y, unsigned int col, const char* text)
+{
+	const float a01 = ((col >> IM_COL32_A_SHIFT) & 0xFF) / 255.0f;
+	const ImU32 outline = IM_COL32(0, 0, 0, (int)(SUBTITLE_OUTLINE_ALPHA * a01));
+	const float o = SUBTITLE_OUTLINE_PX;
+	static const float DIRS[8][2] = { {-1,-1}, {0,-1}, {1,-1}, {-1,0}, {1,0}, {-1,1}, {0,1}, {1,1} };
+	for (const auto& d : DIRS) dl->AddText(f, textPx, ImVec2(x + d[0] * o, y + d[1] * o), outline, text);
+	dl->AddText(f, textPx, ImVec2(x, y), col, text);
+}
+
+//--- 1行の字幕を画面中央に(主人公の独白・翻面の状況説明・過熱の警告)
+static void DrawSubtitle(const char* text, float cyRatio, float textPx, ImFont* font, ImU32 col)
+{
+	if (!text || !text[0]) return;
+	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	const ImVec2 disp = ImGui::GetIO().DisplaySize;
+	ImFont* f = (font == DebugUI::FontJP()) ? DebugUI::FontJPFor(textPx) : (font ? font : ImGui::GetFont());
+	const ImVec2 ts = f->CalcTextSizeA(textPx, FLT_MAX, 0.0f, text);
+	const float a01 = ((col >> IM_COL32_A_SHIFT) & 0xFF) / 255.0f;	// 字の淡出に箱も合わせる
+	const ImVec2 tp((disp.x - ts.x) * 0.5f, disp.y * cyRatio - ts.y * 0.5f);
+	DrawSubtitleBox(dl, tp.x, tp.y, tp.x + ts.x, tp.y + ts.y, textPx, a01);
+	DrawOutlinedText(dl, f, textPx, tp.x, tp.y, col, text);
+}
+
 //--- 操作説明を1行に並べる: [アイコン…] 一言 　[アイコン…] 一言 …(画面中央揃え)。
 //    アイコンは Kenney Input Prompts(CC0)の白い画像。TextureCache で一度だけ読み、以後は使い回す。
 //    明るい炉の前でも沈まない様に、黒く染めた同じ画像を少しずらして下に敷く(影)。
-void SceneForge::DrawKeyHints(const KeyHint* hints, int count, float yRatio, float alpha)
+void SceneForge::DrawKeyHints(const KeyHint* hints, int count, float yRatio, float alpha, bool alignRight)
 {
-	// 64px 版。画面上は約45px(1080p)=ほぼ等倍。128px 版だと約2.8倍の縮小になり、ミップマップの平均でぼやけた。
-	const std::string ICON_DIR = "Assets/UI/Keyboard & Mouse/Default/";
+	const float RIGHT_MARGIN_RATIO = 0.03f;	// 右揃えの時の画面右端からの余白(画面幅比)
+	// 64px 版(Default)。画面上は約45px(1080p)=ほぼ等倍。128px 版だと約2.8倍の縮小になり、ミップマップの平均でぼやけた。
+	// 絵は今の機器(キーボード・マウス / 手柄)に合わせて InputPrompts が選ぶ(パスも InputPrompts が持つ)。
 	const float ICON_RATIO      = 0.042f;	// アイコンの大きさ(画面高さ比)
 	const float ICON_GAP_RATIO  = 0.002f;	// 1つの説明の中のアイコン同士の間
 	const float LABEL_GAP_RATIO = 0.004f;	// アイコンと一言の間
@@ -136,26 +306,34 @@ void SceneForge::DrawKeyHints(const KeyHint* hints, int count, float yRatio, flo
 	ImFont* jp = DebugUI::FontJPFor(px);	// 描く大きさに一番近い実寸のフォント
 	const int   a = (int)(255 * alpha);
 
+	// 0) 各説明のアイコンを今の機器で引く(WASD=4枚 / 左スティック=1枚 の様に、機器で枚数が変わる)
+	const int MAX_HINTS = 8;
+	const char* icons[MAX_HINTS][KeyHint::MAX_ICONS] = {};
+	int nIcons[MAX_HINTS] = {};
+	if (count > MAX_HINTS) count = MAX_HINTS;
+	for (int h = 0; h < count; ++h)
+		nIcons[h] = InputPrompts::Icons(hints[h].glyph, icons[h], KeyHint::MAX_ICONS);
+
 	// 1) 全体の幅を測って中央揃えの開始位置を決める
 	float total = 0.0f;
 	for (int h = 0; h < count; ++h)
 	{
-		int ni = 0;
-		while (ni < KeyHint::MAX_ICONS && hints[h].icons[ni]) ++ni;
+		const int ni = nIcons[h];
 		total += icon * ni + disp.y * ICON_GAP_RATIO * (ni - 1) + disp.y * LABEL_GAP_RATIO;
 		total += jp->CalcTextSizeA(px, FLT_MAX, 0.0f, hints[h].label).x;
 		if (h + 1 < count) total += disp.y * HINT_GAP_RATIO;
 	}
-	float x = (disp.x - total) * 0.5f;
+	float x = alignRight ? disp.x * (1.0f - RIGHT_MARGIN_RATIO) - total : (disp.x - total) * 0.5f;
 	const float cy = disp.y * yRatio;
+	DrawSubtitleBox(dl, x, cy - icon * 0.5f, x + total, cy + icon * 0.5f, px, alpha);	// 行全体の下に字幕の箱(3D の上でも読める)
 
 	// 2) 描く
 	for (int h = 0; h < count; ++h)
 	{
-		for (int k = 0; k < KeyHint::MAX_ICONS && hints[h].icons[k]; ++k)
+		for (int k = 0; k < nIcons[h]; ++k)
 		{
 			if (k > 0) x += disp.y * ICON_GAP_RATIO;
-			std::shared_ptr<Texture> tex = TextureCache::Get((ICON_DIR + hints[h].icons[k] + ".png").c_str());
+			std::shared_ptr<Texture> tex = TextureCache::Get((std::string(icons[h][k]) + ".png").c_str());
 			if (tex && tex->GetResource())
 			{
 				ImTextureID id = (ImTextureID)tex->GetResource();
@@ -356,7 +534,7 @@ void SceneForge::DrawTitleUI()
 	// チュートリアルの課程の一覧(○ = まだ / ✓ = 済)。最後の行 = 戻る
 	if (m_courseSelectOpen && m_recipe)
 	{
-		const float PANEL_CENTER_Y = 0.66f, DESC_Y = 0.90f, DESC_SCALE = 0.8f;
+		const float PANEL_CENTER_Y = 0.66f;
 		const int nCourse = (int)m_recipe->courses.size();
 		std::vector<const char*> labels;
 		std::vector<int>         marks;
@@ -367,10 +545,12 @@ void SceneForge::DrawTitleUI()
 		}
 		labels.push_back((const char*)u8"戻る");
 		marks.push_back(0);
-		const int clicked = DrawChoicePanel((const char*)u8"チュートリアル", labels.data(), (int)labels.size(), m_courseSel, PANEL_CENTER_Y, false, marks.data());
+		const int clicked = DrawChoicePanel((const char*)u8"チュートリアル", labels.data(), (int)labels.size(), m_courseSel,
+		                                    TitlePanelCenterY((int)labels.size(), PANEL_CENTER_Y), false, marks.data());
 		if (clicked >= 0) m_courseRequest = clicked;	// 実行は UpdateTitle
 		const char* desc = (m_courseSel < nCourse) ? m_recipe->courses[m_courseSel].desc : (const char*)u8"モードの選択へ戻る";
-		CenterText(desc, DESC_Y, DESC_SCALE, IM_COL32(255, 236, 196, 235), DebugUI::FontJP());
+		DrawTextOnStrip(m_uiStrip.get(), desc, TITLE_DESC_Y, DebugUI::FontJP()->FontSize * TITLE_DESC_SCALE, DebugUI::FontJP(), 1.0f);
+		DrawMenuButtonGuide();
 		return;
 	}
 	// 開始プロンプトは緩やかに明滅させて「操作可能」を伝える
@@ -378,14 +558,16 @@ void SceneForge::DrawTitleUI()
 	{
 		static const char* LABELS[(int)ModeItem::Count] = { (const char*)u8"チュートリアル", (const char*)u8"通常モード" };
 		static const char* DESCS[(int)ModeItem::Count]  = { (const char*)u8"はじめての方へ。工程を一つずつ選んで、操作を順に覚えます", (const char*)u8"案内は最小限。自分の目と耳で鍛冶を進めます" };
-		const float PANEL_CENTER_Y = 0.70f, DESC_Y = 0.90f, DESC_SCALE = 0.8f;
-		const int clicked = DrawChoicePanel((const char*)u8"モードを選ぶ", LABELS, (int)ModeItem::Count, m_modeSel, PANEL_CENTER_Y, false);
+		const float PANEL_CENTER_Y = 0.70f;
+		const int clicked = DrawChoicePanel((const char*)u8"モードを選ぶ", LABELS, (int)ModeItem::Count, m_modeSel,
+		                                    TitlePanelCenterY((int)ModeItem::Count, PANEL_CENTER_Y), false);
 		if (clicked >= 0) m_modeRequest = clicked;	// 実行は UpdateTitle
-		CenterText(DESCS[m_modeSel], DESC_Y, DESC_SCALE, IM_COL32(255, 236, 196, 235), DebugUI::FontJP());
+		DrawTextOnStrip(m_uiStrip.get(), DESCS[m_modeSel], TITLE_DESC_Y, DebugUI::FontJP()->FontSize * TITLE_DESC_SCALE, DebugUI::FontJP(), 1.0f);
+		DrawMenuButtonGuide();
 		return;
 	}
 	float p = (0.6f + 0.4f * sinf(m_time * 3.0f)) * alpha;
-	CenterText("PRESS  SPACE  TO  START", 0.86f, 1.15f, IM_COL32(255, 255, 255, (int)(255 * p)), body);
+	CenterTextWithIcons("PRESS  ", Action::Confirm, "  TO  START", 0.86f, 1.15f, IM_COL32(255, 255, 255, (int)(255 * p)), body);
 }
 
 //--- 映画的な終幕の黒帯(上下)。淬火後に QuenchStep が m_letterbox を 0→1 へ進める。
@@ -422,24 +604,16 @@ void SceneForge::DrawPlayUI()
 	//   文が変わった瞬間は淡入+少し下から浮かせる=「変わった」ことに気付かせる(読み落とし防止)。
 	{
 		const char* text = (m_guideText && m_guideText[0]) ? m_guideText : CurrentStep().instruction;
+		text = InputPrompts::Format(text);	// {Flip} 等 → 今の機器の呼び名(「Fキー」/「Yボタン」)
 		const float FADE_IN_SEC   = 0.6f;	// 淡入にかける秒
 		const float RISE_RATIO    = 0.015f;	// 淡入中に浮き上がる量(画面高さ比)
 		const float TEXT_Y        = 0.10f;	// 文の縦位置(画面高さ比)
 		const float TEXT_SCALE    = 1.0f;	// 游明朝の焼き寸(30px)に対する倍率
-		const float BAND_H_RATIO  = 0.075f;	// 文の後ろに敷く暗い帯の高さ(明るい炉の前でも読める様に)
-		const float BAND_W_RATIO  = 0.36f;	// 帯の半幅(画面幅比)。両端は透明へ溶かす
-		const int   BAND_ALPHA    = 150;
 		float t = fminf((m_time - m_guideChangedAt) / FADE_IN_SEC, 1.0f);
 		if (t < 0.0f) t = 0.0f;
-		ImVec2 disp = ImGui::GetIO().DisplaySize;
-		ImDrawList* bg = ImGui::GetForegroundDrawList();
-		float cy = disp.y * TEXT_Y, bh = disp.y * BAND_H_RATIO * 0.5f, bw = disp.x * BAND_W_RATIO;
-		ImU32 dark  = IM_COL32(0, 0, 0, (int)(BAND_ALPHA * t));
-		ImU32 clear = IM_COL32(0, 0, 0, 0);
-		bg->AddRectFilledMultiColor(ImVec2(disp.x * 0.5f - bw, cy - bh), ImVec2(disp.x * 0.5f, cy + bh), clear, dark, dark, clear);
-		bg->AddRectFilledMultiColor(ImVec2(disp.x * 0.5f, cy - bh), ImVec2(disp.x * 0.5f + bw, cy + bh), dark, clear, clear, dark);
+		// 紙片の上に墨で書く(工程リスト・メニューと同じ羊皮紙の見た目に揃える。2026-10-14 ユーザーと合意)。紙ごと淡入して浮き上がる
 		float y = TEXT_Y + RISE_RATIO * (1.0f - t);
-		CenterText(text, y, TEXT_SCALE, IM_COL32(255, 236, 196, (int)(255 * t)), jp);
+		DrawTextOnStrip(m_uiStrip.get(), text, y, jp->FontSize * TEXT_SCALE, jp, t);
 	}
 
 	// 翻面の子状態ごとの操作ヒント(宏観チュートリアル)。運鏡ビート中は状況説明、
@@ -452,15 +626,15 @@ void SceneForge::DrawPlayUI()
 	{
 		switch (CurrentFlipBeat())
 		{
-		case FlipBeat::Tongs: CenterText((const char*)u8"火ばさみを手に取る…", FLIP_Y, FLIP_SCALE, BEAT_COL, jp); break;
-		case FlipBeat::Grip:  CenterText((const char*)u8"刃を掴んでいる…",     FLIP_Y, FLIP_SCALE, BEAT_COL, jp); break;
+		case FlipBeat::Tongs: DrawSubtitle((const char*)u8"火ばさみを手に取る…", FLIP_Y, jp->FontSize * FLIP_SCALE, jp, BEAT_COL); break;
+		case FlipBeat::Grip:  DrawSubtitle((const char*)u8"刃を掴んでいる…",     FLIP_Y, jp->FontSize * FLIP_SCALE, jp, BEAT_COL); break;
 		default: break;
 		}
 		// 押した長さの輪(F + 溜まる輪。離すと減る)。チュートリアルで未習得の間は案内(DrawLessonPrompts)が同じ物を描くので重ねない。
 		if (!LessonDrawsFlip()) DrawFlipHoldPrompt(1.0f, 1.0f, IM_COL32(255, 255, 255, 255), (const char*)u8"長押しで裏返す");
 		break;
 	}
-	case FlipPhase::PutBack:  CenterText((const char*)u8"火ばさみを戻している…", FLIP_Y, FLIP_SCALE, BEAT_COL, jp); break;
+	case FlipPhase::PutBack:  DrawSubtitle((const char*)u8"火ばさみを戻している…", FLIP_Y, jp->FontSize * FLIP_SCALE, jp, BEAT_COL); break;
 	default: break;
 	}
 
@@ -471,7 +645,8 @@ void SceneForge::DrawPlayUI()
 	if (m_forging.Heat() > OVERHEAT)
 	{
 		float p = 0.5f + 0.5f * sinf(m_time * 12.0f);
-		CenterText((const char*)u8"！！　過熱　！！", 0.20f, 1.3f, IM_COL32(255, 70, 50, (int)(150 + p * 105)), jp);
+		const float OVERHEAT_Y = 0.20f, OVERHEAT_SCALE = 1.3f;
+		DrawSubtitle((const char*)u8"！！　過熱　！！", OVERHEAT_Y, jp->FontSize * OVERHEAT_SCALE, jp, IM_COL32(255, 70, 50, (int)(150 + p * 105)));
 	}
 
 	// 打撃フィードバックのポップアップ(鉄条の上でフェード)
@@ -480,7 +655,8 @@ void SceneForge::DrawPlayUI()
 		float a = m_popupLife / POPUP_LIFE;
 		if (a > 1.0f) a = 1.0f;
 		unsigned int c = (m_popupCol & 0x00FFFFFF) | ((unsigned int)(a * 255) << 24);
-		CenterText(m_popupText, 0.36f, 1.15f, c, jp);	// 主人公の独白も指引 UI と同じ游明朝(旧: メイリオ17pxを2倍=ぼやけた)
+		const float POPUP_Y = 0.36f, POPUP_SCALE = 1.15f;
+		DrawSubtitle(m_popupText, POPUP_Y, jp->FontSize * POPUP_SCALE, jp, c);	// 主人公の独白 = 字幕の見た目(游明朝)
 	}
 
 	// スコアと形状一致度(左上)+一致度バー。プレイ中の情報を「今やること」に絞る為、F1(デバッグ)の時だけ出す。
@@ -510,36 +686,36 @@ void SceneForge::DrawPlayUI()
 
 	// 操作ガイド(宏観: 今いる場所で使えるキー)。「どこを叩け」等の微観の指示は出さない。
 	//   キーはアイコン(Kenney Input Prompts)で見せる=文字の「左クリック」を読むより一目で分かる。
-	//   場所ごとの表(データ)。キー割り当てを変えたらここの表だけ直す。
+	//   場所ごとの表(データ)。表には「動作」を書く=キー割り当て(InputActions)を変えても、手柄に持ち替えても、ここは直さない。
 	static const KeyHint WALK_HINTS[] = {
-		{ { "keyboard_w", "keyboard_a", "keyboard_s", "keyboard_d" }, (const char*)u8"移動" },
-		{ { "mouse_move" },  (const char*)u8"見回す" },
-		{ { "keyboard_e" },  (const char*)u8"使う" },
+		{ AxisPrompt::Move,       (const char*)u8"移動" },
+		{ AxisPrompt::Look,       (const char*)u8"見回す" },
+		{ Action::Interact,       (const char*)u8"使う" },
 	};
 	static const KeyHint ANVIL_HINTS[] = {
-		{ { "mouse_move" },  (const char*)u8"狙う" },
-		{ { "mouse_left" },  (const char*)u8"長押し：ハンマー" },
-		{ { "keyboard_f" },  (const char*)u8"長押し：裏返す" },
-		{ { "keyboard_e" },  (const char*)u8"離れる" },
+		{ AxisPrompt::Aim,        (const char*)u8"狙う" },
+		{ Action::Use,            (const char*)u8"長押し：ハンマー" },
+		{ Action::Flip,           (const char*)u8"長押し：裏返す" },
+		{ Action::Interact,       (const char*)u8"離れる" },
 	};
 	static const KeyHint HEARTH_HINTS[] = {
-		{ { "keyboard_r" },  (const char*)u8"長押し：ふいごで風を送る" },
-		{ { "keyboard_e" },  (const char*)u8"炉から出す" },
+		{ Action::Bellows,        (const char*)u8"長押し：ふいごで風を送る" },
+		{ Action::Interact,       (const char*)u8"炉から出す" },
 	};
 	static const KeyHint GRIND_HINTS[] = {
-		{ { "mouse_right", "keyboard_space" }, (const char*)u8"連打：ペダル" },
-		{ { "mouse_left" },  (const char*)u8"長押し：刃を当てる" },
-		{ { "mouse_horizontal" }, (const char*)u8"左右：滑らせる" },
-		{ { "mouse_vertical" },   (const char*)u8"上下：刃の角度" },
-		{ { "keyboard_f" },  (const char*)u8"長押し：裏返す" },
-		{ { "keyboard_e" },  (const char*)u8"離れる" },
+		{ Action::Pedal,          (const char*)u8"連打：ペダル" },
+		{ Action::GrindPress,         (const char*)u8"長押し：刃を当てる" },
+		{ AxisPrompt::HandHorizontal, (const char*)u8"左右：滑らせる" },
+		{ AxisPrompt::TiltVertical,   (const char*)u8"上下：刃の角度" },
+		{ Action::Flip,           (const char*)u8"長押し：裏返す" },
+		{ Action::Interact,       (const char*)u8"離れる" },
 	};
 	static const KeyHint TROUGH_HINTS[] = {
-		{ { "mouse_left" },  (const char*)u8"水に沈める" },
-		{ { "keyboard_e" },  (const char*)u8"離れる" },
+		{ Action::Use,            (const char*)u8"水に沈める" },
+		{ Action::Interact,       (const char*)u8"離れる" },
 	};
 	static const KeyHint QUENCH_STIR_HINTS[] = {
-		{ { "mouse_vertical" }, (const char*)u8"上下：刃を揺する" },
+		{ AxisPrompt::HandVertical, (const char*)u8"上下：刃を揺する" },
 	};
 	const KeyHint* hints = WALK_HINTS; int nHints = _countof(WALK_HINTS);
 	if (!m_walkMode && !Transitioning())
@@ -560,7 +736,7 @@ void SceneForge::DrawPlayUI()
 	if (!inputLocked) DrawKeyHints(hints, nHints, GUIDE_Y);
 	DrawLessonPrompts();	// 操作の案内(チュートリアル=順に教える / 救急=迷った時だけ。全工程で同じ絵・同じ音)
 	if (m_grindFlipping && AtStation(Station::Grindstone) && !LessonDrawsGrindFlip())	// 研ぎの裏返し: 金床と同じ「F + 押した長さの輪」(課が描いている時は重ねない)
-		DrawHoldProgressPrompt("keyboard_f", m_grindFlipHold / GRIND_FLIP_SEC, InputActions::Held(Action::Flip),
+		DrawHoldProgressPrompt(Action::Flip, m_grindFlipHold / GRIND_FLIP_SEC, InputActions::Held(Action::Flip),
 		                       (const char*)u8"長押しで裏返す", 1.0f, 1.0f, IM_COL32(255, 255, 255, 255));
 
 	// 互動提示(走動中、範囲内で物件を見ている時だけ「E」を物件の上に出す)
@@ -637,8 +813,9 @@ void SceneForge::DrawStepTracker()
 	// 済んでいないバーは満タンに見せない: 進捗は区域の平均なので、1区域だけ少し足りなくても 99% = 見た目は満タンになり、
 	// 「全部終わったのに進まない(99% で止まる)」と見えた(2026-10-08)。全区域が済んだ時だけ 1、それ以外は UNFINISHED_MAX まで。
 	// 鍛造/研ぎは対象外: 残り作業量の減算(WorkField)で、バーは「済んだ作業 / 全作業」そのもの=満タン=完成が保証される。
+	// 焼入れも対象外: 進みは区域の平均でなく1つの連続量(冷えた割合)で、100% で必ず終わる。90% で止めると「8〜9割で終わった」と見えた(2026-10-14)
 	const float UNFINISHED_MAX = 0.9f;
-	if (nowType != StepName::Forge && nowType != StepName::Grind)
+	if (nowType != StepName::Forge && nowType != StepName::Grind && nowType != StepName::Quench)
 		for (int k = 0; k < nSub; ++k)
 			if (subs[k].prog < 1.0f) subs[k].prog = fminf(subs[k].prog, UNFINISHED_MAX);
 
@@ -750,7 +927,7 @@ const char* SceneForge::GuideFor(Station& goal) const
 		}
 		if (heat < MinWorkTemp(st.type)) { goal = Station::Hearth; return (const char*)u8"鉄が冷めた。炉で熱し直す"; }
 		if (m_forging.SideDone(m_forging.Side()) && !m_forging.BothSidesDone())
-			return (const char*)u8"この面は仕上がった。Fキー長押しで裏返す";
+			return (const char*)u8"この面は仕上がった。{Flip}長押しで裏返す";
 		return st.instruction;
 
 	case StepName::Grind:
@@ -761,7 +938,7 @@ const char* SceneForge::GuideFor(Station& goal) const
 		const int  side = GrindSide();
 		const bool thisDone  = m_forging.SharpProgress(side)     >= DONE;
 		const bool otherDone = m_forging.SharpProgress(1 - side) >= DONE;
-		if (thisDone && !otherDone) return (const char*)u8"この面の刃は仕上がった。Fキー長押しで裏返す";
+		if (thisDone && !otherDone) return (const char*)u8"この面の刃は仕上がった。{Flip}長押しで裏返す";
 		return st.instruction;
 	}
 
@@ -1042,7 +1219,7 @@ void SceneForge::DrawResultUI()
 	CenterText(buf, MATCH_Y, STAT_SCALE, INK_LABEL, title, false);
 	sprintf_s(buf, sizeof(buf), "SCORE   %d", m_score);
 	CenterText(buf, SCORE_Y, STAT_SCALE, INK_LABEL, title, false);
-	CenterText("PRESS  SPACE  TO  RETURN", PROMPT_Y, PROMPT_SCALE, IM_COL32(240, 228, 205, 230), body);	// 暗い背景の上=影あり
+	CenterTextWithIcons("PRESS  ", Action::Confirm, "  TO  RETURN", PROMPT_Y, PROMPT_SCALE, IM_COL32(240, 228, 205, 230), body);	// 暗い背景の上=影あり
 	// 素材のクレジット(CC BY は作者名の表示が使用条件。一覧は CREDITS.txt)。目立たない様に画面下端に小さく
 	const float CREDIT_Y = 0.95f, CREDIT_SCALE = 0.45f;
 	CenterText("Sound: ZijunSANG, soundslikewillem (freesound.org, CC BY-NC 4.0)", CREDIT_Y, CREDIT_SCALE, IM_COL32(200, 190, 170, 170), body);
@@ -1050,6 +1227,8 @@ void SceneForge::DrawResultUI()
 
 //--- 羊皮紙の選択パネル(一時停止メニュー / タイトルのモード選択)。工程リストと同じ見た目。
 //    項目はマウスのホバーで選び、クリックで決定(戻り値)。実行は呼び出し側の Update=描画の途中で状態を変えない。寸法は画面比。
+//    ホバーで選ぶのは「マウスが動いたフレーム」だけ: 止まっている光標が項目の上にあるだけで毎フレーム選び直すと、
+//    手柄/キーボードで上下に動かしても次のフレームで光標の下へ戻され、操作できなかった(2026-10-14)。
 int SceneForge::DrawChoicePanel(const char* head, const char* const* labels, int n, int& sel, float centerY, bool dimBack, const int* marks)
 {
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
@@ -1057,12 +1236,12 @@ int SceneForge::DrawChoicePanel(const char* head, const char* const* labels, int
 
 	const ImU32 DIM_COL       = IM_COL32(0, 0, 0, 150);			// 背後の世界を暗く(止まっている事が分かる)
 	const float PANEL_W_RATIO = 0.30f;							// パネルの幅(画面幅比)
-	const float CORNER_RATIO  = 0.085f;							// 隅の大きさ(画面高さ比)=工程リストと同じ
+	const float CORNER_RATIO  = CHOICE_CORNER_RATIO;
 	const float HEAD_RATIO    = 0.040f;							// 見出しの文字の高さ
 	const float ITEM_RATIO    = 0.034f;							// 項目の文字の高さ
-	const float ROW_RATIO     = 0.075f;							// 項目の間隔
-	const float HEAD_GAP      = 1.3f;							// 見出しから1項目目まで(行単位)
-	const float INSET_TOP     = 0.95f, INSET_BOTTOM = 0.75f;	// 枠の飾りの内側(隅の大きさ比)=工程リストと同じ
+	const float ROW_RATIO     = CHOICE_ROW_RATIO;
+	const float HEAD_GAP      = CHOICE_HEAD_GAP;
+	const float INSET_TOP     = CHOICE_INSET_TOP, INSET_BOTTOM = CHOICE_INSET_BOTTOM;
 	const float MARK_RATIO    = 0.010f;							// 選んでいる項目の左の印(三角)の大きさ
 	const float MARK_GAP      = 0.6f;							// 印と文字の間(印の大きさ比)
 	const ImU32 INK_HEAD = IM_COL32( 60,  38,  22, 255);		// 工程リストと同じインク
@@ -1095,6 +1274,7 @@ int SceneForge::DrawChoicePanel(const char* head, const char* const* labels, int
 
 	int clicked = -1;
 	const ImVec2 mouse = ImGui::GetIO().MousePos;
+	const bool   mouseMoved = MouseMovedThisFrame();
 	const float  ipx   = disp.y * ITEM_RATIO;
 	ImFont* f = DebugUI::FontJPFor(ipx);
 	for (int i = 0; i < n; ++i, cy += row)
@@ -1102,8 +1282,8 @@ int SceneForge::DrawChoicePanel(const char* head, const char* const* labels, int
 		// 当たり判定 = パネルの幅いっぱい × 1行(文字の上だけでなく行のどこでも選べる)
 		const ImVec2 ra(pa.x + corner * INSET_BOTTOM, cy - (row - ipx) * 0.5f), rb(pb.x - corner * INSET_BOTTOM, ra.y + row);
 		const bool hover = mouse.x >= ra.x && mouse.x <= rb.x && mouse.y >= ra.y && mouse.y <= rb.y;
-		if (hover) sel = i;
-		if (hover && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) clicked = i;
+		if (hover && mouseMoved) sel = i;
+		if (hover && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) { sel = i; clicked = i; }
 
 		const bool isSel = (i == sel);
 		const ImVec2 sz = f->CalcTextSizeA(ipx, FLT_MAX, 0.0f, labels[i]);
@@ -1157,7 +1337,7 @@ void SceneForge::DrawCourseComplete()
 	center((const char*)u8"レッスン完了", disp.y * DONE_RATIO, DONE_Y, INK_DONE);
 }
 
-//--- 設定の画面(一時停止メニューと同じ羊皮紙)。行 = 「教学アニメの速さ ◀ 1.0倍 ▶」/ 戻る。
+//--- 設定の画面(一時停止メニューと同じ羊皮紙)。行 = 「教学アニメの速さ ◀ 1.0倍 ▶」/「震動 ◀ 100% ▶」/ 戻る。
 //    速さの行を選んでいる間は、パネルの右に瞄準の指示図を今の速さで動かして見せる(変えた結果がその場で分かる)。
 void SceneForge::DrawOptionsMenu()
 {
@@ -1195,6 +1375,7 @@ void SceneForge::DrawOptionsMenu()
 
 	const ImVec2 mouse = ImGui::GetIO().MousePos;
 	const bool   click = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+	const bool   mouseMoved = MouseMovedThisFrame();	// ホバーで選ぶのはマウスが動いた時だけ(DrawChoicePanel と同じ)
 	const float  ipx = disp.y * ITEM_RATIO;
 	ImFont* f = DebugUI::FontJPFor(ipx);
 	const float xL = pa.x + corner * INSET_SIDE, xR = pb.x - corner * INSET_SIDE;
@@ -1202,26 +1383,36 @@ void SceneForge::DrawOptionsMenu()
 	for (int i = 0; i < n; ++i, cy += row)
 	{
 		const ImVec2 ra(xL, cy - (row - ipx) * 0.5f), rb(xR, ra.y + row);
-		if (hit(ra, rb)) m_optionsSel = i;
+		if (hit(ra, rb) && (mouseMoved || click)) m_optionsSel = i;
 		const bool isSel = (i == m_optionsSel);
 		const ImU32 ink = isSel ? INK_SEL : INK_ITEM;
-		if (i == (int)OptionItem::LessonSpeed)
+		// 値のある行: 名前(左)+ ◀ 値 ▶(右寄せ)。矢印はクリックでも変えられる。端では薄く(もう動かない)
+		auto steppedRow = [&](const char* name, const char* value, int idx, int nStep)
 		{
-			dl->AddText(f, ipx, ImVec2(xL, cy), ink, (const char*)u8"案内アニメの速さ");
-			// ◀ 値 ▶(右寄せ)。矢印はクリックでも変えられる。端では薄く(もう動かない)
+			dl->AddText(f, ipx, ImVec2(xL, cy), ink, name);
 			const float a = disp.y * ARROW_RATIO, my = cy + ipx * 0.5f;
 			const float vx1 = xR - a * 2.0f, vx0 = vx1 - disp.x * VALUE_W_RATIO;
 			const ImVec2 lc(vx0 - a * 1.5f, my), rc(xR - a, my);
-			const int nStep = (int)_countof(LESSON_SPEED_STEPS);
-			const bool canL = m_lessonSpeedIdx > 0, canR = m_lessonSpeedIdx < nStep - 1;
+			const bool canL = idx > 0, canR = idx < nStep - 1;
 			dl->AddTriangleFilled(ImVec2(lc.x - a, my), ImVec2(lc.x + a * 0.7f, my - a), ImVec2(lc.x + a * 0.7f, my + a), canL ? ink : INK_OFF);
 			dl->AddTriangleFilled(ImVec2(rc.x + a, my), ImVec2(rc.x - a * 0.7f, my - a), ImVec2(rc.x - a * 0.7f, my + a), canR ? ink : INK_OFF);
-			char val[24]; sprintf_s(val, sizeof(val), "%g%s", LessonSpeed(), (const char*)u8"倍");	// 0.5倍 / 1.25倍 …(%g = 余分な 0 を付けない)
-			const char* label = val;
-			const ImVec2 vs = f->CalcTextSizeA(ipx, FLT_MAX, 0.0f, label);
-			dl->AddText(f, ipx, ImVec2((vx0 + vx1 - vs.x) * 0.5f, cy), ink, label);
+			const ImVec2 vs = f->CalcTextSizeA(ipx, FLT_MAX, 0.0f, value);
+			dl->AddText(f, ipx, ImVec2((vx0 + vx1 - vs.x) * 0.5f, cy), ink, value);
 			if (click && hit(ImVec2(lc.x - a * 2, my - a * 2), ImVec2(lc.x + a * 2, my + a * 2))) m_optionsStep = -1;
 			if (click && hit(ImVec2(rc.x - a * 2, my - a * 2), ImVec2(rc.x + a * 2, my + a * 2))) m_optionsStep = +1;
+		};
+		const int PERCENT = 100;
+		char val[24];
+		if (i == (int)OptionItem::LessonSpeed)
+		{
+			sprintf_s(val, sizeof(val), "%g%s", LessonSpeed(), (const char*)u8"倍");	// 0.5倍 / 1.25倍 …(%g = 余分な 0 を付けない)
+			steppedRow((const char*)u8"案内アニメの速さ", val, m_lessonSpeedIdx, (int)_countof(LESSON_SPEED_STEPS));
+		}
+		else if (i == (int)OptionItem::Rumble)
+		{
+			if (m_rumbleIdx == 0) strcpy_s(val, sizeof(val), (const char*)u8"オフ");
+			else                  sprintf_s(val, sizeof(val), "%d%%", (int)(RUMBLE_STEPS[m_rumbleIdx] * PERCENT + 0.5f));	// 25% / 50% …
+			steppedRow((const char*)u8"震動(コントローラー)", val, m_rumbleIdx, (int)_countof(RUMBLE_STEPS));
 		}
 		else
 		{
@@ -1240,12 +1431,24 @@ void SceneForge::DrawOptionsMenu()
 //--- 一時停止メニュー: 画面を暗くし、中央に選択パネル。クリックは m_pauseRequest へ(実行は UpdatePause)。
 void SceneForge::DrawPauseMenu()
 {
-	if (m_optionsOpen) { DrawOptionsMenu(); return; }	// 設定の画面
+	if (m_optionsOpen) { DrawOptionsMenu(); DrawMenuButtonGuide(); return; }	// 設定の画面
 	static const char* LABELS[(int)PauseItem::Count] = {
 		(const char*)u8"ゲームを続ける", (const char*)u8"設定", (const char*)u8"タイトルへ戻る", (const char*)u8"ゲームを終了する" };
 	const float CENTER_Y = 0.5f;
 	const int clicked = DrawChoicePanel((const char*)u8"一時停止", LABELS, (int)PauseItem::Count, m_pauseSel, CENTER_Y, true);
 	if (clicked >= 0) m_pauseRequest = (PauseItem)clicked;
+	DrawMenuButtonGuide();
+}
+
+//--- メニューの右下のボタンガイド(主機のゲームの約束事)。「どのボタンで決める/戻るか」を今の機器の絵で。
+void SceneForge::DrawMenuButtonGuide()
+{
+	const float GUIDE_Y = 0.95f;	// 縦位置(画面高さ比)= 画面の下端近く
+	static const KeyHint MENU_HINTS[] = {
+		{ Action::Confirm, (const char*)u8"決定" },
+		{ Action::Back,    (const char*)u8"戻る" },
+	};
+	DrawKeyHints(MENU_HINTS, _countof(MENU_HINTS), GUIDE_Y, 1.0f, true);
 }
 
 //--- チュートリアル: 金床の工位で鍛造できる状態か(高亮・「ここで叩く」を出す条件)。

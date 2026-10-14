@@ -1,4 +1,4 @@
-#include "QuenchStep.h"
+﻿#include "QuenchStep.h"
 #include "SceneForge/SceneForge.h"
 #include "InputActions.h"
 
@@ -33,7 +33,12 @@ void QuenchStep::OnUpdate(float dt)
 
     case Phase::Stir:
         m_forge->StirQuench(dt);
-        if (m_forge->QuenchProgress() >= 1.0f)
+        if (m_forge->QuenchProgress() >= 1.0f) Next(Phase::Full);
+        break;
+
+    case Phase::Full:
+        m_timer += dt;
+        if (m_timer >= FULL_SHOW_TIME)
         {
             m_forge->BeginFinale();   // the game is now certain to end and nothing is left to do -> HUD off
             Next(Phase::Settle);

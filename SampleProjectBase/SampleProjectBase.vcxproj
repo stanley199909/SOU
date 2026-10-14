@@ -73,18 +73,18 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <LinkIncremental>true</LinkIncremental>
-    <IncludePath>$(ProjectDir);$(ProjectDir)GameLogic;$(ProjectDir)GameData;$(ProjectDir)StateMachine;$(ProjectDir)StateMachine\Player;$(ProjectDir)Physics;$(ProjectDir)ImGui;$(IncludePath)</IncludePath>
+    <IncludePath>$(ProjectDir);$(ProjectDir)GameLogic;$(ProjectDir)GameData;$(ProjectDir)StateMachine;$(ProjectDir)StateMachine\Player;$(ProjectDir)Physics;$(ProjectDir)ImGui;$(ProjectDir)ThirdParty\SDL3\include;$(IncludePath)</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <LinkIncremental>false</LinkIncremental>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
-    <IncludePath>$(ProjectDir);$(ProjectDir)GameLogic;$(ProjectDir)GameData;$(ProjectDir)StateMachine;$(ProjectDir)StateMachine\Player;$(ProjectDir)Physics;$(ProjectDir)ImGui;$(IncludePath)</IncludePath>
+    <IncludePath>$(ProjectDir);$(ProjectDir)GameLogic;$(ProjectDir)GameData;$(ProjectDir)StateMachine;$(ProjectDir)StateMachine\Player;$(ProjectDir)Physics;$(ProjectDir)ImGui;$(ProjectDir)ThirdParty\SDL3\include;$(IncludePath)</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>false</LinkIncremental>
-    <IncludePath>$(ProjectDir);$(ProjectDir)GameLogic;$(ProjectDir)GameData;$(ProjectDir)StateMachine;$(ProjectDir)StateMachine\Player;$(ProjectDir)Physics;$(ProjectDir)ImGui;$(IncludePath)</IncludePath>
+    <IncludePath>$(ProjectDir);$(ProjectDir)GameLogic;$(ProjectDir)GameData;$(ProjectDir)StateMachine;$(ProjectDir)StateMachine\Player;$(ProjectDir)Physics;$(ProjectDir)ImGui;$(ProjectDir)ThirdParty\SDL3\include;$(IncludePath)</IncludePath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -148,6 +148,10 @@
       <Command>
       </Command>
     </PreBuildEvent>
+    <PostBuildEvent>
+      <Command>xcopy /y /d "$(ProjectDir)ThirdParty\SDL3\lib\x64\SDL3.dll" "$(OutDir)"</Command>
+      <Message>Copy SDL3.dll next to the exe</Message>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
@@ -170,6 +174,10 @@
       <ShaderModel>5.0</ShaderModel>
       <ObjectFileOutput>$(ProjectDir)Assets\Shader\%(Filename).cso</ObjectFileOutput>
     </FxCompile>
+    <PostBuildEvent>
+      <Command>xcopy /y /d "$(ProjectDir)ThirdParty\SDL3\lib\x64\SDL3.dll" "$(OutDir)"</Command>
+      <Message>Copy SDL3.dll next to the exe</Message>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="Box.cpp" />
@@ -181,6 +189,9 @@
     <ClCompile Include="GameLogic\HingedDoor.cpp" />
     <ClCompile Include="GameLogic\ScreenFade.cpp" />
     <ClCompile Include="GameLogic\InputActions.cpp" />
+    <ClCompile Include="GameLogic\Gamepad.cpp" />
+    <ClCompile Include="GameLogic\InputPrompts.cpp" />
+    <ClCompile Include="GameLogic\Haptics.cpp" />
     <ClCompile Include="GameData\WeaponRecipe.cpp" />
     <ClCompile Include="Physics\HammerPhysics.cpp" />
     <ClCompile Include="Physics\ForgingSim.cpp" />
@@ -247,6 +258,9 @@
     <ClInclude Include="GameLogic\HingedDoor.h" />
     <ClInclude Include="GameLogic\ScreenFade.h" />
     <ClInclude Include="GameLogic\InputActions.h" />
+    <ClInclude Include="GameLogic\Gamepad.h" />
+    <ClInclude Include="GameLogic\InputPrompts.h" />
+    <ClInclude Include="GameLogic\Haptics.h" />
     <ClInclude Include="GameData\WeaponRecipe.h" />
     <ClInclude Include="Physics\HammerPhysics.h" />
     <ClInclude Include="Physics\ForgingSim.h" />

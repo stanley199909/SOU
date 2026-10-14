@@ -49,10 +49,12 @@ void Player::Move(float tick)
 	XMFLOAT3 fwd   = GetForward();					// (sin,0,cos)
 	XMFLOAT3 right = XMFLOAT3(fwd.z, 0.0f, -fwd.x);	// 前方を右へ90度回した向き
 
-	// 前後・左右を合成 → 正規化 → 速度×時間
+	// 前後・左右を合成 → 長さ1を超えた時だけ縮める → 速度×時間
+	//   キーボードの斜め(長さ√2)は1へ縮める=斜めでも速くならない(以前と同じ)。
+	//   スティックを少し倒した時(長さ<1)はそのまま=ゆっくり歩ける(全部1にするとアナログの意味が無くなる)。
 	Vector3 v = Vector3(fwd) * f + Vector3(right) * s;
 	if (v.LengthSquared() <= 0.0f) return;
-	v.Normalize();
+	if (v.LengthSquared() > 1.0f) v.Normalize();
 	XMFLOAT3 vel = v * m_moveSpeed * tick;
 
 	m_box.m_pos.x += vel.x;

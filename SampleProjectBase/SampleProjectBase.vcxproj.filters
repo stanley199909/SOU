@@ -216,6 +216,15 @@
     <ClCompile Include="GameLogic\InputActions.cpp">
       <Filter>ソース ファイル\App\GameLogic</Filter>
     </ClCompile>
+    <ClCompile Include="GameLogic\Gamepad.cpp">
+      <Filter>ソース ファイル\App\GameLogic</Filter>
+    </ClCompile>
+    <ClCompile Include="GameLogic\InputPrompts.cpp">
+      <Filter>ソース ファイル\App\GameLogic</Filter>
+    </ClCompile>
+    <ClCompile Include="GameLogic\Haptics.cpp">
+      <Filter>ソース ファイル\App\GameLogic</Filter>
+    </ClCompile>
     <ClCompile Include="GameData\WeaponRecipe.cpp">
       <Filter>ソース ファイル\App\GameData</Filter>
     </ClCompile>
@@ -384,6 +393,15 @@
       <Filter>ヘッダー ファイル\App\GameLogic</Filter>
     </ClInclude>
     <ClInclude Include="GameLogic\InputActions.h">
+      <Filter>ヘッダー ファイル\App\GameLogic</Filter>
+    </ClInclude>
+    <ClInclude Include="GameLogic\Gamepad.h">
+      <Filter>ヘッダー ファイル\App\GameLogic</Filter>
+    </ClInclude>
+    <ClInclude Include="GameLogic\InputPrompts.h">
+      <Filter>ヘッダー ファイル\App\GameLogic</Filter>
+    </ClInclude>
+    <ClInclude Include="GameLogic\Haptics.h">
       <Filter>ヘッダー ファイル\App\GameLogic</Filter>
     </ClInclude>
     <ClInclude Include="GameData\WeaponRecipe.h">

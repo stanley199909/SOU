@@ -40,3 +40,6 @@
 imgui.ini
 debug.txt
 SampleProjectBase/Docs/Present_1010_謚陦薙∪縺ｨ繧・md
+
+# SDL3 (third-party import lib is needed to link; *.lib above is for our own build output)
+!SampleProjectBase/ThirdParty/**/*.lib
