@@ -4,6 +4,7 @@
 // All SceneForge members share the class declaration in SceneForge.h and the
 // file-local helpers declared in SceneForge_Internal.h.
 #include "CottageRender.h"
+#include "LitRender.h"
 #include "SceneForge/SceneForge.h"
 #include "SceneForge/SceneForge_Internal.h"
 #include "DirectX.h"
@@ -556,8 +557,9 @@ void SceneForge::DrawTitleUI()
 	// 開始プロンプトは緩やかに明滅させて「操作可能」を伝える
 	if (m_modeSelectOpen)
 	{
-		static const char* LABELS[(int)ModeItem::Count] = { (const char*)u8"チュートリアル", (const char*)u8"通常モード" };
-		static const char* DESCS[(int)ModeItem::Count]  = { (const char*)u8"はじめての方へ。工程を一つずつ選んで、操作を順に覚えます", (const char*)u8"案内は最小限。自分の目と耳で鍛冶を進めます" };
+		static const char* LABELS[(int)ModeItem::Count] = { (const char*)u8"チュートリアル", (const char*)u8"通常モード", (const char*)u8"ゲームを終了する" };
+		static const char* DESCS[(int)ModeItem::Count]  = { (const char*)u8"はじめての方へ。工程を一つずつ選んで、操作を順に覚えます", (const char*)u8"案内は最小限。自分の目と耳で鍛冶を進めます",
+		                                                    (const char*)u8"ゲームを閉じます" };
 		const float PANEL_CENTER_Y = 0.70f;
 		const int clicked = DrawChoicePanel((const char*)u8"モードを選ぶ", LABELS, (int)ModeItem::Count, m_modeSel,
 		                                    TitlePanelCenterY((int)ModeItem::Count, PANEL_CENTER_Y), false);
@@ -1623,6 +1625,7 @@ void SceneForge::DrawUI()
 		ImGui::SetNextWindowSize(ImVec2(340, 560), ImGuiCond_FirstUseEver);
 		ImGui::Begin("Forge Tuning (F1)");
 	CottageRender::Controls();
+	LitRender::Controls();	// 道具の材質(法線/ORM の見比べ)
 
 		// --- 起動時スナップショットへ一発リセット(F8キーと同じ)。滅茶苦茶にしても戻せる保険。 ---
 		if (ImGui::Button("Reset ALL to startup  (F8)")) RestoreTuning();

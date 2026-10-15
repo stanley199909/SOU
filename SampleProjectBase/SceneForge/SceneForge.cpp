@@ -19,6 +19,7 @@
 #include "PostProcess.h"
 #include "AimSystem.h"
 #include "Lerp.h"
+#include "LitRender.h"
 #include "SceneForge/SceneForge_Internal.h"
 #include <cstdlib>
 #include <cmath>
@@ -31,101 +32,9 @@
 
 using namespace DirectX;
 
-//--- 武器モーフ用シェーダー(頂点色=熱色 + 簡易ライティング + 程序化の黒い酸化スケール)。
-//    KCD風: 熱い鋼の表面に黒い酸化皮(スケール)の斑が乗る。UV不要=世界座標の値ノイズで生成(核显向け)。
-static const char* g_wpVS = R"EOT(
-cbuffer Cam : register(b0){ float4x4 view; float4x4 proj; };
-struct VIN  { float3 pos:POSITION0; float3 nrm:NORMAL0; float2 uv:TEXCOORD0; float4 col:TEXCOORD1; float sharp:TEXCOORD2; float work:TEXCOORD3; };
-struct VOUT { float4 pos:SV_POSITION; float3 nrm:TEXCOORD0; float2 uv:TEXCOORD3; float4 col:TEXCOORD1; float3 wp:TEXCOORD2; float sharp:TEXCOORD4; float work:TEXCOORD5; };
-VOUT main(VIN v){ VOUT o; o.pos=mul(float4(v.pos,1),view); o.pos=mul(o.pos,proj); o.nrm=v.nrm; o.uv=v.uv; o.col=v.col; o.wp=v.pos; o.sharp=v.sharp; o.work=v.work; return o; }
-)EOT";
-//--- 武器PS: 真の鋼テクスチャ(BaseColor)を地色にし、発光はゲームの実時温度 m_forging.Heat() で駆動する。
-//    col.rgb = 温度勾配色(HeatRGB)、col.a = 温度スカラー m_heat。
-//    冷たい時=鋼テクスチャをライティングした金属色。熱い時=温度色で発光(テクスチャの陰影は残す)。
-static const char* g_wpPS = R"EOT(
-Texture2D    tex  : register(t0);
-SamplerState samp : register(s0);
-// 金属質感パラメータ(CPUの m_wp* から供給)。UE5風の質感の要=環境反射を擬似環境で安価に再現する。
-cbuffer Mtl : register(b0){
-  float3 camPos;  float rough;     // 相機位置 / 粗さ
-  float3 lightDir;float metal;     // 光方向 / 金属度
-  float3 skyCol;  float specK;     // 擬似環境の空色 / 直接光高光強度
-  float3 grdCol;  float envK;      // 擬似環境の地色 / 環境反射強度
-  float  fresK;                    // 菲涅尔強度
-  float  hotShade;                 // 熱い時、光の当たらない面の明るさ(0..1。1=明暗なし=旧の平らな発光)
-  float  rimK;   float rimPow;     // 熱い時の縁の明るさ / 縁へ寄る鋭さ
-  float  scaleTiling; float scaleSoft; float scaleOpacity; float scaleGlow;	// 氧化皮(黒皮)
-  float  hotGain;                  // 熱い鋼の発光全体の明るさ
-  float  scaleStart;               // 叩く前から剥がれている割合(マスクの灰度がこれ以下=開局から地金が見える)
-  float2 _pad2;
-};
-Texture2D scaleMask : register(t1);   // 氧化皮の厚み(灰度: 白=厚い / 黒=地金)。無縫=UV に繰り返して貼る
-struct PIN{ float4 pos:SV_POSITION; float3 nrm:TEXCOORD0; float2 uv:TEXCOORD3; float4 col:TEXCOORD1; float3 wp:TEXCOORD2; float sharp:TEXCOORD4; float work:TEXCOORD5; };
-// 氧化皮の見た目(色は固定の物理的な性質なので定数。量/明るさは cbuffer で調整)
-static const float3 SCALE_COLD_COL = float3(0.06, 0.055, 0.05);   // 冷えた黒皮=煤けたほぼ黒(艶なし)
-static const float3 SCALE_EMBER    = float3(1.0, 0.30, 0.08);     // 熱い黒皮の鈍い光の色(暗い赤)。地金の黄白色には寄せない
-static const float3 LUMA_WEIGHTS   = float3(0.2126, 0.7152, 0.0722); // 輝度(Rec.709)= 温度色から「明るさ」だけ取る
-// 研ぎ面(sharp: 0=鍛造のまま 1=研ぎ上がった刃先)。仮の見た目: 黒皮が取れて明るい地金が出て、面が滑らかになる。
-// ※本番の研ぎ面の見た目は外観担当(ChatGPT)が差し替える。値の意味(sharp)はCPU側で確定済み。
-static const float3 GROUND_STEEL  = float3(0.78, 0.80, 0.83);   // 研いだ地金の色
-static const float  GROUND_ROUGH  = 0.08;                       // 研いだ面の粗さ(鏡面寄り)
-static const float  GROUND_SPEC_BOOST = 1.5;                    // 研いだ刃線の高光の増し
-float4 main(PIN i):SV_TARGET{
-  float3 N = normalize(i.nrm);
-  float3 L = normalize(lightDir);
-  float3 V = normalize(camPos - i.wp);                     // 視線(鋼→相機)
-  float3 H = normalize(L + V);
-  float  nl = saturate(dot(N,L));
-  float  nv = saturate(dot(N,V));
-  float  nh = saturate(dot(N,H));
-  float  e  = saturate(i.sharp);
-  float3 steel = lerp(tex.Sample(samp, i.uv).rgb, GROUND_STEEL, e);   // 冷鋼の地色 → 研いだ所は明るい地金
+// 刀身のシェーダーは VS_Wp.hlsl / PS_Wp.hlsl(.cso)。Lighting.hlsli を #include する為に文字列からファイルへ移した(2026-10-15)。
 
-  // 拡散(金属は拡散が弱い=metalで減衰)。環境の底上げ(ambient)で真っ黒を防ぐ。
-  float3 diff = steel * (0.25 + 0.75*nl) * (1.0 - 0.85*metal);
-
-  // 直接光の鏡面高光(Blinn-Phong。粗さ→光沢指数。核显向けに安価)。研いだ面は滑らか=鋭い高光。
-  float  shin = lerp(128.0, 8.0, lerp(rough, GROUND_ROUGH, e));   // 小rough=鋭い/大rough=広い
-  float3 specTint = lerp((float3)1.0, steel, metal);       // 金属は高光が地色に色付く
-  float3 spec = specTint * pow(nh, shin) * specK * nl * (1.0 + GROUND_SPEC_BOOST * e);
-
-  // 擬似環境反射(HDRI無し): 反射向きの上下で空色↔地色を補間=「周囲を映す」金属感の主因。
-  float3 R   = reflect(-V, N);
-  float3 env = lerp(grdCol, skyCol, saturate(R.y*0.5+0.5));
-  float  fre = fresK * pow(1.0 - nv, 5.0);                 // 縁で反射が強まる(菲涅尔)
-  float3 refl = env * (envK + fre) * lerp(0.15, 1.0, metal) * steel;
-
-  float3 cold = diff + spec + refl;                        // 冷: 金属らしくライティング
-  // 熱: 温度色で発光。旧は法線を一切使わず(面の向きに関係なく同じ明るさ)=倒角/凹凸/表裏が平らに潰れて見えた。
-  //   → 発光にも面の向きの明暗を掛ける。ハーフランバート(Half-Lambert: N・L を 0..1 に寄せる)=背光面も真っ黒にならない。
-  //   → 縁(視線に対して寝ている面)を温度色で明るくする(菲涅尔型のリムライト)=輪郭と刃の稜線が浮く。
-  float  halfLambert = saturate(dot(N, L) * 0.5 + 0.5);
-  float  shade = lerp(hotShade, 1.0, halfLambert);
-  float  rim   = rimK * pow(1.0 - nv, rimPow);
-  float3 hot  = (i.col.rgb * (0.35 + 0.65*steel) * shade + i.col.rgb * rim + spec) * hotGain;
-  float  k    = smoothstep(0.06, 0.45, i.col.a);           // 温度(col.a)で冷→熱をブレンド
-  float3 col  = lerp(cold, hot, k);
-
-  // --- 氧化皮(黒皮): 叩いた面ほど剥がれる ---
-  //   マスクの灰度=皮の厚み。この面の鍛造進捗 work を閾値にして「閾値より薄い皮」から消す
-  //   =進捗が上がるにつれ、薄い所から少しずつ剥がれ、最後に厚い所が落ちる(突然消えない)。
-  //   研いだ所(sharp)は削られて皮が無い。冷えても皮は残る(本物と同じ)。
-  float  m       = scaleMask.Sample(samp, i.uv * scaleTiling).r;
-  //   開局(work=0)でも scaleStart 以下の薄い皮は既に剥がれている=炉から出したての「ひび割れて斑な黒皮」。
-  //   一様に全面を覆うと皮に見えず「刃の地の色」に見えてしまった(2026-10-03 F5 で判明)。
-  float  thr     = lerp(scaleStart, 1.0 + scaleSoft, saturate(i.work));
-  float  covered = smoothstep(thr - scaleSoft, thr, m) * (1.0 - e);
-  float3 scaleCold = SCALE_COLD_COL * (0.25 + 0.75 * nl);   // 艶の無い黒皮(拡散だけ)
-  // 熱い時の黒皮: 黒い地に、暗い赤の鈍い光を少しだけ乗せる。温度色をそのまま使うと、黄白に光る地金と
-  //   同じ色になって皮が溶け込み(特に開局の高温時)、ブルームにも埋もれた → 色は固定の暗赤、温度からは明るさだけ取る。
-  float  heatLuma  = dot(i.col.rgb, LUMA_WEIGHTS);
-  float3 scaleHot  = SCALE_COLD_COL + SCALE_EMBER * heatLuma * scaleGlow * shade;
-  col = lerp(col, lerp(scaleCold, scaleHot, k), covered * scaleOpacity);
-  return float4(col, 1.0);
-}
-)EOT";
-
-//--- 目標ゴースト用PS: g_wpVSを流用し、氷のような半透明+輪郭(菲涅尔風)で「完成形」を薄く示す。
+//--- 目標ゴースト用PS: VS_Wp を流用し、氷のような半透明+輪郭(菲涅尔風)で「完成形」を薄く示す。
 //    氧化斑や強い陰影は入れない(実体と区別できる、クリーンな輪郭にする)。
 static const char* g_ghostPS = R"EOT(
 struct PIN{ float4 pos:SV_POSITION; float3 nrm:TEXCOORD0; float4 col:TEXCOORD1; float3 wp:TEXCOORD2; };
@@ -259,13 +168,6 @@ void SceneForge::Init()
 	// タイトルは金床の上で熱い鉄を打ち続ける画なので、その状態で用意する(Title.cpp)。
 	ResetTitleStage();
 
-	// --- 【3D化テスト】鍛冶素材モデルの読み込み ---
-	VertexShader* mvs = CreateObj<VertexShader>("VS_ForgeObj");
-	if (FAILED(mvs->Load("Assets/Shader/VS_Object.cso")))
-		MessageBox(nullptr, "VS_Object.cso", "Shader Error", MB_OK);
-	PixelShader* mps = CreateObj<PixelShader>("PS_ForgeObj");
-	if (FAILED(mps->Load("Assets/Shader/PS_TexTint.cso")))
-		MessageBox(nullptr, "PS_TexTint.cso", "Shader Error", MB_OK);
 
 	// --- 石墙専用シェーダー(triplanarで Poly Haven の実PBR貼图を投影) ---
 	VertexShader* wallVS = CreateObj<VertexShader>("VS_Wall");
@@ -285,9 +187,11 @@ void SceneForge::Init()
 	PixelShader* bps = CreateObj<PixelShader>("PS_Bar");
 	bps->Compile(g_barPS);
 
-	// --- 武器モーフ用シェーダー(pos/normal/col, 簡易ライティング) + FBX各段の読込 ---
-	VertexShader* wpvs = CreateObj<VertexShader>("VS_Wp"); wpvs->Compile(g_wpVS);
-	PixelShader*  wpps = CreateObj<PixelShader>("PS_Wp");  wpps->Compile(g_wpPS);
+	// --- 武器モーフ用シェーダー(PBR の鋼 + 熱の発光) + FBX各段の読込 ---
+	VertexShader* wpvs = CreateObj<VertexShader>("VS_Wp");
+	if (FAILED(wpvs->Load("Assets/Shader/VS_Wp.cso"))) MessageBox(nullptr, "VS_Wp.cso", "Shader Error", MB_OK);
+	PixelShader*  wpps = CreateObj<PixelShader>("PS_Wp");
+	if (FAILED(wpps->Load("Assets/Shader/PS_Wp.cso"))) MessageBox(nullptr, "PS_Wp.cso", "Shader Error", MB_OK);
 	PixelShader*  gps  = CreateObj<PixelShader>("PS_Ghost"); gps->Compile(g_ghostPS);
 	LoadWeaponStages();
 
@@ -470,8 +374,6 @@ void SceneForge::Uninit()
 	DestroyObj("VS_Forge");
 	DestroyObj("PS_Forge");
 	DestroyObj("PS_Spark");
-	DestroyObj("VS_ForgeObj");
-	DestroyObj("PS_ForgeObj");
 	DestroyObj("VS_Bar");
 	DestroyObj("PS_Bar");
 	DestroyObj("VS_Coal");
@@ -964,6 +866,12 @@ void SceneForge::UpdateTitle(float /*tick*/)
 	if (InputActions::Pressed(Action::Confirm)) m_modeRequest = m_modeSel;
 	if (m_modeRequest < 0) return;
 
+	if (m_modeRequest == (int)ModeItem::Quit)
+	{
+		PostQuitMessage(0);	// 一時停止メニューの「ゲームを終了する」と同じ(メインループが抜けて Uninit=調整値の保存も走る)
+		m_modeRequest = -1;
+		return;
+	}
 	const bool tutorial = (m_modeRequest == (int)ModeItem::Tutorial);
 	m_modeSelectOpen = false;
 	m_modeRequest    = -1;
@@ -1048,6 +956,8 @@ void SceneForge::UpdatePlay(float tick)
 	if (bellows && !m_heatSndOn)      { Audio::PlayLoop(Audio::SE_FORGE_LOOP, 0.5f); m_heatSndOn = true; }
 	else if (!bellows && m_heatSndOn) { Audio::Stop(Audio::SE_FORGE_LOOP);           m_heatSndOn = false; }
 	if (bellows) Haptics::Hold(RUMBLE_BELLOWS);	// 踏んでいる間ずっと(離せば次のフレームで止まる)
+	// 炉の光: 踏めば燃え上がって部屋が明るくなり、離すとゆっくり落ち着く(上りと下りで速さが違う)
+	m_fireBoost = Lerp::Damp(m_fireBoost, bellows ? FIRE_BELLOWS_BOOST : 1.0f, bellows ? FIRE_BOOST_RISE : FIRE_BOOST_FALL, tick);
 
 	// --- 過熱で放置すると鋼全体が焼けていく(損傷が蓄積)＋ジュー音 ---
 	//   冷却と同じく鉄の物理なので simOn で進める(F1中は温度と一緒に止まる)。
@@ -1203,6 +1113,14 @@ void SceneForge::UpdateReboundHaptics()
 	r.high         = RUMBLE_REBOUND.high         * k;
 	r.rightTrigger = RUMBLE_REBOUND.rightTrigger * k;
 	Haptics::Hold(r);
+}
+
+//--- 炉の火の明るさの倍率 = 揺らぎ(正弦波の重ね合わせ)× ふいご(m_fireBoost)
+float SceneForge::FireLightScale() const
+{
+	float wave = 0.0f;
+	for (int i = 0; i < 3; ++i) wave += FIRE_FLICKER_WEIGHT[i] * sinf(m_time * FIRE_FLICKER_FREQ[i] + FIRE_FLICKER_PHASE[i]);
+	return (1.0f + FIRE_FLICKER_AMOUNT * wave) * m_fireBoost;
 }
 
 //--- 鉄の柔らかさ = 緑帯の中の位置 0(下端=硬い)..1(上端=柔らかい)。打撃の音色と跳ね返りの量に使う
@@ -2059,6 +1977,7 @@ void SceneForge::Update(float tick)
 void SceneForge::Draw()
 {
 	UpdateGrassMap();	// 草の踏み跡の貼图を更新(一時的に描画先を差し替え→戻す)。シーンを描き始める前に
+	LitRender::SetFire(m_coalPos, FireLightScale());	// 炉の火(位置 + 明るさ)= このフレームの描画で使う全員がここから読む
     CottageRender::ClearExterior();
 	ApplyViewCamera();	// Update と同じ規約でDrawでも適用(GetViewの前に)
 	DrawModelsTest();	// 先に不透明な3Dモデル(金床)を描く

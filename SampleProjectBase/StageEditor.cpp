@@ -1,4 +1,6 @@
-﻿#include "CoalBedMesh.h"
+﻿#include "LitRender.h"
+#include "PropMaterials.h"
+#include "CoalBedMesh.h"
 #include "CottageRender.h"
 #include "OutdoorStage.h"
 #include "math.h"
@@ -395,25 +397,6 @@ XMMATRIX SceneStageEditor::PropWorld(Prop& p)
 	return world;
 }
 
-void SceneStageEditor::DrawModelWorld(Model* m, const XMMATRIX& world, const XMFLOAT4& tint)
-{
-	CameraBase*   cam = GetObj<CameraBase>("Camera");
-	VertexShader* vs  = GetObj<VertexShader>("StVS");
-	PixelShader*  ps  = GetObj<PixelShader>("StPS");
-	if (!m || !cam || !vs || !ps) return;
-	XMFLOAT4X4 mat[3];
-	mat[1] = cam->GetView(); mat[2] = cam->GetProj();
-	XMStoreFloat4x4(&mat[0], XMMatrixTranspose(world));
-	XMFLOAT4 color = tint;
-	vs->WriteBuffer(0, mat);
-	ps->WriteBuffer(0, &color);
-	SetBlendMode(BLEND_ALPHA);
-	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
-	m->SetVertexShader(vs);
-	m->SetPixelShader(ps);
-	m->Draw();
-}
-
 void SceneStageEditor::DrawCoalBed()
 {
 	if (!m_coalOn || !m_coalBedMesh) return;
@@ -528,12 +511,11 @@ void SceneStageEditor::DrawScenery()
             continue;
         }
 
-		XMFLOAT4 tint = (p.key == "StForge") ? XMFLOAT4(0.80f, 0.76f, 0.72f, 1.0f) : XMFLOAT4(1, 1, 1, 1);
-		SunStage::LitProp(m,PropWorld(p),GetObj<CameraBase>("Camera"),tint,CottageRender::Data().sun,CottageRender::Data().ambient,m_coalPos,CottageRender::Data().windowExtra.w,p.key=="StForge");
+		LitRender::Draw(m, PropWorld(p), GetObj<CameraBase>("Camera"), PropMaterials::Find(p.key));	// ゲームと同じ描き方・同じ材質表
 		// 動く部品(砥石の輪)は本体と同じ行列で描く。編集シーンでは回さない(角度0)。
 		if (const PropPart* part = FindPropPart(p.key.c_str()))
 			if (Model* pm = GetObj<Model>(part->partKey))
-				SunStage::LitProp(pm,PropWorld(p),GetObj<CameraBase>("Camera"),tint,CottageRender::Data().sun,CottageRender::Data().ambient,m_coalPos,CottageRender::Data().windowExtra.w);
+				LitRender::Draw(pm, PropWorld(p), GetObj<CameraBase>("Camera"), PropMaterials::Find(p.key));
 	}
 	DrawCoalBed();
     for (auto& p : m_props) if (p.key == "StCottage")
@@ -911,6 +893,7 @@ void SceneStageEditor::Update(float tick)
 
 void SceneStageEditor::Draw()
 {
+	LitRender::SetFire(m_coalPos);	// 編集シーンは揺らさない(配置を見る為)
     CottageRender::ClearExterior();
 	DrawScenery();
 	DrawEmbers();				// coal embers rising from the forge
@@ -924,6 +907,7 @@ void SceneStageEditor::DrawUI()
 	ImGui::SetNextWindowSize(ImVec2(340, 420), ImGuiCond_FirstUseEver);
 	ImGui::Begin("Forge Stage Editor");
 	CottageRender::Controls();
+	LitRender::Controls();
     if (ImGui::Button("View outdoor yard")) {
         auto* cam=GetObj<CameraBase>("Camera");
         if(cam) {

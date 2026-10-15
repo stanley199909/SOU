@@ -43,8 +43,6 @@ private:
 	void LoadProp(const char* key, const char* fbx, const char* tex,
 	              float targetSize, float px, float pz, float yaw);
 	DirectX::XMMATRIX PropWorld(Prop& p);
-	void DrawModelWorld(Model* m, const DirectX::XMMATRIX& world,
-	                    const DirectX::XMFLOAT4& tint = DirectX::XMFLOAT4(1, 1, 1, 1));
 	void DrawScenery();
 
 	//--- glowing coal bed (self-made low-poly charcoal, CoalBedMesh::Create)

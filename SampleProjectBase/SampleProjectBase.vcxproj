@@ -193,6 +193,7 @@
     <ClCompile Include="GameLogic\InputPrompts.cpp" />
     <ClCompile Include="GameLogic\Haptics.cpp" />
     <ClCompile Include="GameData\WeaponRecipe.cpp" />
+    <ClCompile Include="GameData\PropMaterials.cpp" />
     <ClCompile Include="Physics\HammerPhysics.cpp" />
     <ClCompile Include="Physics\ForgingSim.cpp" />
     <ClCompile Include="Physics\WaterSim.cpp" />
@@ -237,6 +238,7 @@
     <ClCompile Include="Geometory.cpp" />
     <ClCompile Include="Main.cpp" />
     <ClCompile Include="Model.cpp" />
+    <ClCompile Include="LitRender.cpp" />
     <ClCompile Include="MoveLight.cpp" />
     <ClCompile Include="SceneBase.cpp" />
     <ClCompile Include="StageEditor.cpp" />
@@ -262,6 +264,7 @@
     <ClInclude Include="GameLogic\InputPrompts.h" />
     <ClInclude Include="GameLogic\Haptics.h" />
     <ClInclude Include="GameData\WeaponRecipe.h" />
+    <ClInclude Include="GameData\PropMaterials.h" />
     <ClInclude Include="Physics\HammerPhysics.h" />
     <ClInclude Include="Physics\ForgingSim.h" />
     <ClInclude Include="Physics\WaterSim.h" />
@@ -297,6 +300,7 @@
     <ClInclude Include="Geometory.h" />
     <ClInclude Include="Main.h" />
     <ClInclude Include="Model.h" />
+    <ClInclude Include="LitRender.h" />
     <ClInclude Include="ModelImport.h" />
     <ClInclude Include="PropParts.h" />
     <ClInclude Include="CottageDoor.h" />
@@ -349,6 +353,10 @@
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Vertex</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Vertex</ShaderType>
     </FxCompile>
+    <FxCompile Include="VS_Wp.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Vertex</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Vertex</ShaderType>
+    </FxCompile>
     <FxCompile Include="VS_Grass.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Vertex</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Vertex</ShaderType>
@@ -374,6 +382,10 @@
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
     </FxCompile>
     <FxCompile Include="PS_StageProp.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
+    </FxCompile>
+    <FxCompile Include="PS_Wp.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
     </FxCompile>

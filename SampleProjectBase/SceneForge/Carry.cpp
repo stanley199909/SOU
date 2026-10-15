@@ -116,7 +116,7 @@ void SceneForge::DrawViewmodel()
 		XMVECTOR base = eye + right * m_tongsBase[0] + up * m_tongsBase[1] + fwd * m_tongsBase[2] + ViewmodelBob(right, up);
 		const XMFLOAT3 grip = HeldGrip();
 		XMFLOAT3 dir; XMStoreFloat3(&dir, XMLoadFloat3(&grip) - base);
-		DrawModelWorld(tongs, TongsWorld(dir, m_heldDir, grip));	// 鉄(m_heldDir)が口の輪を通る
+		DrawModelWorld(tongs, TongsWorld(dir, m_heldDir, grip), "StPliers");	// 鉄(m_heldDir)が口の輪を通る
 	}
 	ctx->RSSetViewports(1, &old);	// 深度範囲を元に戻す
 }
@@ -363,7 +363,7 @@ void SceneForge::DrawCarry()
 
 	if (SequencePlaying())	// 拍子表の再生中: 補間中の火钳の姿勢で描く(Sequence.cpp)
 	{
-		DrawModelWorld(tongs, TongsWorld(m_seqTongs.approach, m_seqTongs.barDir, m_seqTongs.grip));
+		DrawModelWorld(tongs, TongsWorld(m_seqTongs.approach, m_seqTongs.barDir, m_seqTongs.grip), "StPliers");
 		return;
 	}
 	if (m_carrying) return;	// 手の火钳は DrawViewmodel が最後に描く(めり込み防止)
@@ -376,7 +376,7 @@ void SceneForge::DrawCarry()
 		const XMFLOAT3 handle(t.grip.x + m_stationViewDir.x * TROUGH_TONGS_OUT, t.grip.y + TROUGH_TONGS_RISE,
 		                      t.grip.z + m_stationViewDir.z * TROUGH_TONGS_OUT);
 		XMStoreFloat3(&t.approach, XMVector3Normalize(XMLoadFloat3(&t.grip) - XMLoadFloat3(&handle)));	// 柄 → 口
-		DrawModelWorld(tongs, TongsWorld(t.approach, t.barDir, t.grip));
+		DrawModelWorld(tongs, TongsWorld(t.approach, t.barDir, t.grip), "StPliers");
 		return;
 	}
 	const bool atAnvil = !m_walkMode && !Transitioning() && m_station == Station::Anvil;
@@ -391,6 +391,6 @@ void SceneForge::DrawCarry()
 			grip.y -= len * 0.5f * pl->scale * m_tongsScale;
 		}
 		const XMFLOAT3 f = BodyForward();
-		DrawModelWorld(tongs, TongsWorld(XMFLOAT3(0.0f, -1.0f, 0.0f), XMFLOAT3(f.z, 0.0f, -f.x), grip));
+		DrawModelWorld(tongs, TongsWorld(XMFLOAT3(0.0f, -1.0f, 0.0f), XMFLOAT3(f.z, 0.0f, -f.x), grip), "StPliers");
 	}
 }

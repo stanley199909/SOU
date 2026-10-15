@@ -4,6 +4,8 @@
 // All SceneForge members share the class declaration in SceneForge.h and the
 // file-local helpers declared in SceneForge_Internal.h.
 #include "CottageRender.h"
+#include "LitRender.h"
+#include "PropMaterials.h"
 #include "OutdoorStage.h"
 #include "SceneForge/SceneForge.h"
 #include "SceneForge/SceneForge_Internal.h"
@@ -33,27 +35,11 @@
 
 using namespace DirectX;
 
-//--- 共通のモデル描画(ワールド行列を渡すだけ)
-void SceneForge::DrawModelWorld(Model* m, const XMMATRIX& world, const XMFLOAT4& tint)
+//--- 光を受ける物の描画(道具・手に持った鎚/火ばさみ)。全部 LitRender = 壁と同じ PBR の光の式。
+//    材質(粗さ・金属度・三平面投影・色)は表(GameData/PropMaterials)をキーで引く=ここに物ごとの特例を書かない
+void SceneForge::DrawModelWorld(Model* m, const XMMATRIX& world, const char* materialKey)
 {
-	CameraBase*   cam = GetObj<CameraBase>("Camera");
-	VertexShader* vs  = GetObj<VertexShader>("VS_ForgeObj");
-	PixelShader*  ps  = GetObj<PixelShader>("PS_ForgeObj");
-	if (!m || !cam || !vs || !ps) return;
-
-	XMFLOAT4X4 mat[3];
-	mat[1] = cam->GetView();
-	mat[2] = cam->GetProj();
-	XMStoreFloat4x4(&mat[0], XMMatrixTranspose(world));
-	XMFLOAT4 color = tint;	// テクスチャに色を掛ける(既定=白=そのまま)
-	vs->WriteBuffer(0, mat);
-	ps->WriteBuffer(0, &color);
-
-	SetBlendMode(BLEND_ALPHA);
-	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
-	m->SetVertexShader(vs);
-	m->SetPixelShader(ps);
-	m->Draw();
+	LitRender::Draw(m, world, GetObj<CameraBase>("Camera"), PropMaterials::Find(materialKey));
 }
 
 // Shared PBR opaque pass; clear glass is drawn after opaque scenery.
@@ -224,16 +210,12 @@ void SceneForge::DrawScenery()
             if (grass && vs) vs->SetTexture(0, nullptr);	// 次のフレームで貼图を描画先にする前に、読み取り側から外す
             continue;
         }
-		// 炉だけ、のっぺり感を抑えるため僅かに暗い暖色を掛ける(炉内が煤けて見える)
-		XMFLOAT4 tint = (p.key == "StForge")
-			? XMFLOAT4(0.80f, 0.76f, 0.72f, 1.0f)
-			: XMFLOAT4(1, 1, 1, 1);
-		SunStage::LitProp(m,PropWorld(p),GetObj<CameraBase>("Camera"),tint,CottageRender::Data().sun,CottageRender::Data().ambient,m_coalPos,CottageRender::Data().windowExtra.w,p.key=="StForge");
+		DrawModelWorld(m, PropWorld(p), p.key.c_str());	// 炉の暗い暖色・三平面投影も材質表の値(旧: ここに炉だけの特例)
 		// 動く部品(砥石の輪)は本体と同じ行列の手前で、自分の軸まわりに回してから描く。
 		// 角度は砥石の物理(GrindWheel)が積分した値=踏んだ分だけ回り、摩擦で止まる。
 		if (const PropPart* part = FindPropPart(p.key.c_str()))
 			if (Model* pm = GetObj<Model>(part->partKey))
-				SunStage::LitProp(pm,PartSpin(pm, m_wheel.Angle()) * PropWorld(p),GetObj<CameraBase>("Camera"),tint,CottageRender::Data().sun,CottageRender::Data().ambient,m_coalPos,CottageRender::Data().windowExtra.w);
+				DrawModelWorld(pm, PartSpin(pm, m_wheel.Angle()) * PropWorld(p), p.key.c_str());	// 部品は本体と同じ材質
 	}
 	DrawCoalBed();	// 光る炭ベッド(自作)
     if (Prop* house = GetProp("StCottage"))

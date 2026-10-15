@@ -3,6 +3,8 @@
 // original source keep compiling correctly under MSVC (no C2601/C1075).
 // All SceneForge members share the class declaration in SceneForge.h and the
 // file-local helpers declared in SceneForge_Internal.h.
+#include "LitRender.h"
+#include "PropMaterials.h"
 #include "SceneForge/SceneForge.h"
 #include "SceneForge/SceneForge_Internal.h"
 #include "DirectX.h"
@@ -609,7 +611,7 @@ void SceneForge::BuildWeaponMorph()
 	}
 }
 
-//--- 武器を描画(発光+簡易ライティング)。
+//--- 武器を描画(PBR の鋼 + 熱の発光。光と材質は他の物と同じ所から読む)。
 void SceneForge::DrawWeapon()
 {
 	if (!m_wpOk) return;
@@ -624,42 +626,32 @@ void SceneForge::DrawWeapon()
 	BuildWeaponMorph();
 	m_wpMesh->Write(m_wpVtx.data());
 
-	// 金属質感パラメータをPS(b0)へ。HLSLの cbuffer Mtl とレイアウト一致(各float4境界)。
-	struct MtlCB {
-		XMFLOAT3 camPos;  float rough;
-		XMFLOAT3 lightDir;float metal;
-		XMFLOAT3 skyCol;  float specK;
-		XMFLOAT3 grdCol;  float envK;
-		float    fresK;   float hotShade; float rimK; float rimPow;
-		float    scaleTiling; float scaleSoft; float scaleOpacity; float scaleGlow;
-		float    hotGain; float scaleStart; XMFLOAT2 pad2;
-	} mtl;
-	mtl.camPos   = cam->GetPos();
-	mtl.rough    = m_wpRough;
-	mtl.lightDir = { 0.35f, 0.85f, -0.4f };			// 既存のライト方向(固定)
-	mtl.metal    = m_wpMetal;
-	mtl.skyCol   = { m_wpSky[0], m_wpSky[1], m_wpSky[2] };
-	mtl.specK    = m_wpSpec;
-	mtl.grdCol   = { m_wpGround[0], m_wpGround[1], m_wpGround[2] };
-	mtl.envK     = m_wpEnv;
-	mtl.fresK    = m_wpFresnel;
-	mtl.hotShade = m_wpHotShade;
-	mtl.rimK     = m_wpRimK;
-	mtl.rimPow   = m_wpRimPow;
-	mtl.scaleTiling  = m_scaleTiling;
-	mtl.scaleSoft    = m_scaleSoft;
+	// PS_Wp の cbuffer WpParam と同じ並び(順番を変えたら両方直す)。
+	//   光 = シーンと同じ(LitRender::Lights)/ 粗さ・金属度 = 材質表 "Weapon" / 熱の発光・黒皮 = 刀身だけの調整値(F1)
+	struct WpParams
+	{
+		SceneLightParams light;
+		XMFLOAT4 material;	// x 粗さ, y 金属度
+		XMFLOAT4 hot;		// x 光の当たらない面の明るさ, y 縁の明るさ, z 縁の鋭さ, w 発光の明るさ
+		XMFLOAT4 scale;		// x 繰り返し, y 境目の柔らかさ, z 濃さ, w 熱い時の光
+		XMFLOAT4 scale2;	// x 叩く前から剥がれている割合
+	} wp{};
+	static_assert(sizeof(WpParams) % 16 == 0, "cbuffer size must be a multiple of 16 bytes");
+	const PropMaterial& mat = PropMaterials::Find("Weapon");
+	wp.light    = LitRender::Lights(cam);
+	wp.material = { mat.roughness, mat.metallic, 0.0f, 0.0f };
+	wp.hot      = { m_wpHotShade, m_wpRimK, m_wpRimPow, m_wpHotGain };
 	// マスクが読めない時は黒皮を出さない(灰色の既定テクスチャで全面が皮に覆われない様に)
-	mtl.scaleOpacity = (m_wpScaleMask && m_wpScaleMask->GetResource()) ? m_scaleOpacity : 0.0f;
-	mtl.scaleGlow    = m_scaleGlow;
-	mtl.hotGain      = m_wpHotGain;
-	mtl.scaleStart   = m_scaleStart;
-	mtl.pad2         = { 0, 0 };
+	const float scaleOpacity = (m_wpScaleMask && m_wpScaleMask->GetResource()) ? m_scaleOpacity : 0.0f;
+	wp.scale    = { m_scaleTiling, m_scaleSoft, scaleOpacity, m_scaleGlow };
+	wp.scale2   = { m_scaleStart, 0.0f, 0.0f, 0.0f };
 
 	SetBlendMode(BLEND_NONE);
 	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
 	vs->Bind();
 	ps->Bind();
-	ps->WriteBuffer(0, &mtl);						// b0 = 金属質感パラメータ
+	ps->WriteBuffer(0, &wp);						// b0 = 光 + 材質 + 熱/黒皮
+	LitRender::BindShadow();						// t3 = 太陽の影(道具と同じ影を受ける)
 	if (m_wpTex) ps->SetTexture(0, m_wpTex.get());	// t0 = 鋼テクスチャ(BaseColor)
 	if (m_wpScaleMask && m_wpScaleMask->GetResource())
 		ps->SetTexture(1, m_wpScaleMask.get());		// t1 = 氧化皮の厚みマスク
@@ -719,8 +711,8 @@ void SceneForge::DrawHammer3D()
 {
 	Model* hammer = GetObj<Model>("MdlHammer");
 	if (!hammer) return;
-	if (HammerOnHip()) { DrawModelWorld(hammer, HammerHipWorld(hammer)); return; }	// 金床を離れたら右腰に下げる
-	DrawModelWorld(hammer, HammerWorld(hammer));
+	if (HammerOnHip()) { DrawModelWorld(hammer, HammerHipWorld(hammer), "MdlHammer"); return; }	// 金床を離れたら右腰に下げる
+	DrawModelWorld(hammer, HammerWorld(hammer), "MdlHammer");
 }
 
 //--- 打撃の火花の出る所 = ハンマーの頭の真下の、鉄の上面。

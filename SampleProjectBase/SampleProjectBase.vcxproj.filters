@@ -132,6 +132,9 @@
     <ClCompile Include="Model.cpp">
       <Filter>ソース ファイル\System</Filter>
     </ClCompile>
+    <ClCompile Include="LitRender.cpp">
+      <Filter>ソース ファイル\System</Filter>
+    </ClCompile>
     <ClCompile Include="Sprite.cpp">
       <Filter>ソース ファイル\System</Filter>
     </ClCompile>
@@ -226,6 +229,9 @@
       <Filter>ソース ファイル\App\GameLogic</Filter>
     </ClCompile>
     <ClCompile Include="GameData\WeaponRecipe.cpp">
+      <Filter>ソース ファイル\App\GameData</Filter>
+    </ClCompile>
+    <ClCompile Include="GameData\PropMaterials.cpp">
       <Filter>ソース ファイル\App\GameData</Filter>
     </ClCompile>
     <ClCompile Include="Physics\HammerPhysics.cpp">
@@ -326,6 +332,9 @@
     <ClInclude Include="Model.h">
       <Filter>ヘッダー ファイル\System</Filter>
     </ClInclude>
+    <ClInclude Include="LitRender.h">
+      <Filter>ヘッダー ファイル\System</Filter>
+    </ClInclude>
     <ClInclude Include="PropParts.h">
       <Filter>ヘッダー ファイル\System</Filter>
     </ClInclude>
@@ -405,6 +414,9 @@
       <Filter>ヘッダー ファイル\App\GameLogic</Filter>
     </ClInclude>
     <ClInclude Include="GameData\WeaponRecipe.h">
+      <Filter>ヘッダー ファイル\App\GameData</Filter>
+    </ClInclude>
+    <ClInclude Include="GameData\PropMaterials.h">
       <Filter>ヘッダー ファイル\App\GameData</Filter>
     </ClInclude>
     <ClInclude Include="Physics\HammerPhysics.h">

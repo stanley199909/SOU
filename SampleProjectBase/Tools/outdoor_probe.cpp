@@ -6,6 +6,8 @@
 #include <memory>
 #include <vector>
 #include "CottageRender.h"
+#include "LitRender.h"
+#include "PropMaterials.h"
 #include "OutdoorStage.h"
 #include "DirectXTex/TextureLoad.h"
 #pragma comment(lib,"d3d11.lib")
@@ -50,7 +52,7 @@ int main(){
  SunStage::Prepare(items,CottageRender::Data().sun,XMFLOAT3(0,3,0));printf("Sun stage ready=%d shadow=%d\n",SunStage::Data().ready,SunStage::Data().hasShadow);
  SunStage::Sky(&cam,CottageRender::Data().sun,CottageRender::Data().exteriorSky);float fire[3]={1.82f,1.21405f,.54f};
  for(size_t i=0;i<items.size();++i){
- if(i>=outdoorEnd)SunStage::LitProp(items[i].model,XMLoadFloat4x4(&items[i].world),&cam,XMFLOAT4(1,1,1,1),CottageRender::Data().sun,CottageRender::Data().ambient,fire,CottageRender::Data().windowExtra.w);
+ if(i>=outdoorEnd){LitRender::SetFire(fire);LitRender::Draw(items[i].model,XMLoadFloat4x4(&items[i].world),&cam,PropMaterials::Find(""));}
  else CottageRender::Draw(items[i].model,XMLoadFloat4x4(&items[i].world),&cam,&vs,&ps,fire,false,i>0);}
 
  CottageRender::Draw(items[0].model,XMLoadFloat4x4(&items[0].world),&cam,&vs,&ps,fire,true);

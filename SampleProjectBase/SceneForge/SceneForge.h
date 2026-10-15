@@ -115,8 +115,7 @@ private:
 	void  UpdateBarAnchor();	// 金床のAABBから砧面(上面中心)を求め、鉄条をその上に自動配置
 	void  DrawDebugBoxes();	// デバッグ: 金床AABBと鉄条の箱を線で可視化
 	void  DrawModelsTest();		// 鍛冶素材の3Dモデルを描画
-	void  DrawModelWorld(Model* m, const DirectX::XMMATRIX& world,
-	                     const DirectX::XMFLOAT4& tint = DirectX::XMFLOAT4(1,1,1,1));	// 共通のモデル描画(tintで色掛け)
+	void  DrawModelWorld(Model* m, const DirectX::XMMATRIX& world, const char* materialKey);	// 光を受ける物の描画(LitRender。材質は PropMaterials の表をキーで引く)
 	//--- シーン装飾(炉/風箱/作業台/水桶/床)
 	void  LoadProp(const char* key, const char* fbx, const char* tex,
 	               float targetSize, float px, float py, float pz, float yaw, bool groundSnap);
@@ -760,7 +759,7 @@ private:
 	//--- チュートリアル(2026-10-09 ユーザー要望: 初めての人向け)。タイトルで「チュートリアル / 通常モード」を選ぶ。
 	//    チュートリアルの時だけ: 右の説明パネル / 刃の未完成の所を青く光らせる / 温度ゲージの「ここで叩く」/ 研ぎの角度計 /
 	//    研ぎの誤りの案内をすぐ出す。通常モードの遊び方・判定は一切変えない(表示を足すだけ)。
-	enum class ModeItem { Tutorial, Normal, Count };	// 並び順 = 選択パネルの上から
+	enum class ModeItem { Tutorial, Normal, Quit, Count };	// 並び順 = 選択パネルの上から(終了は一番下=誤って選びにくい)
 	bool  m_tutorial       = false;				// この回はチュートリアルか(タイトルで選んだ値。次に選ぶまで保つ)
 	bool  m_modeSelectOpen = false;				// タイトルでモード選択を開いているか
 	int   m_modeSel        = 0;					// 選んでいる項目
@@ -907,19 +906,12 @@ private:
 	static constexpr float FLIP_REACH_FRAC  = 0.35f;
 	static constexpr float FLIP_RETURN_FRAC = 0.55f;
 	void  UpdateFlipCamera(float tick);			// 翻面の段階から運鏡の重みを更新(UpdateFlipの後)
-	//--- 金属の質感パラメータ(PS_Wpへ渡す。廉価IBL=高光+環境反射+菲涅尔。核显向けにGPU負荷は低く抑える)
-	//    UE5のPBR質感の主因は「環境反射」。HDRIを読まず、反射向きで空/地の2色を補間する擬似環境で代用する。
-	float m_wpRough   = 0.35f;					// 粗さ0..1(小=鏡面的で高光が鋭い/大=拡散的)
-	float m_wpMetal   = 0.85f;					// 金属度0..1(大=反射が地色に色付き、拡散が弱まる=金属らしく)
-	float m_wpSpec    = 0.6f;					// 直接光の高光(鏡面ハイライト)の強さ
-	float m_wpEnv     = 0.5f;					// 擬似環境反射の強さ(金属が「周囲を映す」度合い)
-	float m_wpFresnel = 1.0f;					// 縁の反射増強(菲涅尔)の強さ
+	//--- 刀身の質感: 粗さ・金属度は材質表(GameData/PropMaterials の "Weapon")、光はシーンと同じ(LitRender::Lights)。
+	//    旧: 刀身だけ固定の光の向きと「空/地の2色」の擬似環境を持っていた(シーンの太陽・炉と無関係)→ 2026-10-15 統一で削除
 	//--- 熱い鋼の見え方(発光していても形が読める様に。F1「Weapon」→ Hot steel)
 	float m_wpHotShade = 0.35f;					// 光の当たらない面の明るさ(0..1。小=明暗が強い=倒角/表裏がはっきり)
 	float m_wpRimK     = 0.6f;					// 縁(輪郭/稜線)を温度色で明るくする強さ
 	float m_wpRimPow   = 3.0f;					// 縁の明るさがどれだけ縁だけに寄るか(大=細い線)
-	float m_wpSky[3]    = { 0.55f, 0.62f, 0.75f };	// 擬似環境の上方向(空)の色
-	float m_wpGround[3] = { 0.18f, 0.15f, 0.12f };	// 擬似環境の下方向(地面/炉床)の色
 	void  LoadWeaponStages();					// Assets/Model/weapon/stage_*.fbx を読む
 	DirectX::XMMATRIX WeaponWorld();			// 武器ローカル→ワールドのフィット変換(照準/描画で共用)
 	DirectX::XMMATRIX WeaponSpin() const;		// 翻面回転(長軸まわりに m_flipAngle)。WeaponWorld と法線変換で共用
@@ -1309,6 +1301,19 @@ private:
 	void  StartReboundHaptics();		// 打った瞬間(m_hammer.Strike の直後)に呼ぶ
 	void  UpdateReboundHaptics();		// ③ 跳ね返りの震動(毎フレーム)
 	float IronSoftness(float heat) const;			// 緑帯の中の位置 0(下端=硬い)..1(上端=柔らかい)
+
+	//--- 炉の火の明るさ(部屋を照らす光源)。ゲームの状態で変わる = 状態駆動(炭の光・音・震動と同じ考え方)
+	//    揺らぎ: 周波数の違う正弦波の重ね合わせ(倍音が整数倍でない = 繰り返しが目立たない)。一様乱数だとガクガク跳ねる
+	//    ふいご: 踏むと炭が燃え上がる → 部屋も明るくなる(離すとゆっくり戻る)
+	static constexpr float FIRE_FLICKER_AMOUNT   = 0.12f;	// 揺らぎの深さ(明るさの ±割合)
+	static constexpr float FIRE_FLICKER_FREQ[3]   = { 1.7f, 4.3f, 9.1f };	// 重ねる正弦波の速さ(rad/秒)。基音 + 非整数倍の倍音
+	static constexpr float FIRE_FLICKER_WEIGHT[3] = { 0.6f, 0.3f, 0.1f };	// 各波の重み(合計 1)
+	static constexpr float FIRE_FLICKER_PHASE[3]  = { 0.0f, 1.3f, 2.9f };	// 各波の位相(同時に山が来ない様にずらす)
+	static constexpr float FIRE_BELLOWS_BOOST    = 1.6f;	// ふいごを踏んでいる間の明るさの倍率
+	static constexpr float FIRE_BOOST_RISE       = 4.0f;	// 踏んだ時に明るくなる速さ(Damp率, 1/秒)= 送った風ですぐ燃え上がる
+	static constexpr float FIRE_BOOST_FALL       = 0.8f;	// 離した時に戻る速さ(Damp率, 1/秒)= 炭はゆっくり落ち着く
+	float m_fireBoost = 1.0f;						// ふいごによる今の明るさの倍率(UpdateHeat が動かす)
+	float FireLightScale() const;					// 揺らぎ × ふいご
 	// 冷打: 硬い鉄を叩いた「ガツン」。手応えが悪い=衝撃だけ大きく、軽い錘(鋭い)が主
 	static constexpr Rumble RUMBLE_COLD_HIT          = { 0.6f, 1.0f, 0.0f, 1.0f };
 	static constexpr float  RUMBLE_COLD_HIT_SEC      = 0.20f;
