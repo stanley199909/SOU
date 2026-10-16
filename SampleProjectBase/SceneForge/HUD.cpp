@@ -1626,6 +1626,13 @@ void SceneForge::DrawUI()
 		ImGui::Begin("Forge Tuning (F1)");
 	CottageRender::Controls();
 	LitRender::Controls();	// 道具の材質(法線/ORM の見比べ)
+	if (ImGui::CollapsingHeader("Forge light (flicker)"))	// 炉の火の光: 揺らぎ・位置の揺れ・ふいご(保存しない調整用。良い値は header の既定へ)
+	{
+		ImGui::SliderFloat("Flicker amount", &m_fireFlickerAmount, 0.0f, 0.8f, "%.2f");		// 明るさの揺れの深さ(±割合)
+		ImGui::SliderFloat("Flicker speed",  &m_fireFlickerSpeed,  0.2f, 3.0f, "%.2f");		// 揺れの速さの倍率
+		ImGui::SliderFloat("Flame jitter (m)", &m_fireJitter,      0.0f, 0.3f, "%.3f");		// 火の位置の揺れ幅 = 明暗・ハイライトが動く量
+		ImGui::SliderFloat("Bellows boost",  &m_fireBellowsBoost,  1.0f, 3.0f, "%.2f");		// ふいごで部屋が明るくなる倍率
+	}
 
 		// --- 起動時スナップショットへ一発リセット(F8キーと同じ)。滅茶苦茶にしても戻せる保険。 ---
 		if (ImGui::Button("Reset ALL to startup  (F8)")) RestoreTuning();
@@ -1709,7 +1716,9 @@ void SceneForge::DrawUI()
 			ImGui::SliderFloat("Hot shade", &m_wpHotShade, 0.0f, 1.0f, "%.2f");	// 背光面の明るさ(1=旧の平らな発光)
 			ImGui::SliderFloat("Rim",       &m_wpRimK,     0.0f, 2.0f, "%.2f");	// 縁の明るさ
 			ImGui::SliderFloat("Rim power", &m_wpRimPow,   1.0f, 8.0f, "%.1f");	// 縁へ寄る鋭さ
-			ImGui::SliderFloat("Hot gain",  &m_wpHotGain,  0.3f, 1.5f, "%.2f");	// 発光全体の明るさ(白飛び防止)
+			ImGui::SliderFloat("Hot gain",  &m_wpHotGain,  0.3f, 1.5f, "%.2f");
+			ImGui::Checkbox("Blade: reflection", &m_wpShowReflect); ImGui::SameLine();	// 診断: 白く見える原因が反射か発光かを切り分ける
+			ImGui::Checkbox("Blade: glow", &m_wpShowGlow);	// 発光全体の明るさ(白飛び防止)
 			ImGui::TextDisabled("-- Forge scale (black oxide, knocked off by hammering) --");
 			ImGui::SliderFloat("Scale tiling",  &m_scaleTiling,  1.0f, 40.0f, "%.1f");	// 大=細かい皮
 			ImGui::SliderFloat("Scale soft",    &m_scaleSoft,    0.01f, 0.3f, "%.2f");	// 剥がれ際のぼかし

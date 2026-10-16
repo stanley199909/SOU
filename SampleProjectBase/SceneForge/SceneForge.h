@@ -909,6 +909,8 @@ private:
 	//--- 刀身の質感: 粗さ・金属度は材質表(GameData/PropMaterials の "Weapon")、光はシーンと同じ(LitRender::Lights)。
 	//    旧: 刀身だけ固定の光の向きと「空/地の2色」の擬似環境を持っていた(シーンの太陽・炉と無関係)→ 2026-10-15 統一で削除
 	//--- 熱い鋼の見え方(発光していても形が読める様に。F1「Weapon」→ Hot steel)
+	bool  m_wpShowReflect = true;				// F1 診断: 刀身の反射(太陽・炉・部屋)を描くか
+	bool  m_wpShowGlow    = true;				// F1 診断: 刀身の熱の発光を描くか
 	float m_wpHotShade = 0.35f;					// 光の当たらない面の明るさ(0..1。小=明暗が強い=倒角/表裏がはっきり)
 	float m_wpRimK     = 0.6f;					// 縁(輪郭/稜線)を温度色で明るくする強さ
 	float m_wpRimPow   = 3.0f;					// 縁の明るさがどれだけ縁だけに寄るか(大=細い線)
@@ -1302,18 +1304,24 @@ private:
 	void  UpdateReboundHaptics();		// ③ 跳ね返りの震動(毎フレーム)
 	float IronSoftness(float heat) const;			// 緑帯の中の位置 0(下端=硬い)..1(上端=柔らかい)
 
-	//--- 炉の火の明るさ(部屋を照らす光源)。ゲームの状態で変わる = 状態駆動(炭の光・音・震動と同じ考え方)
-	//    揺らぎ: 周波数の違う正弦波の重ね合わせ(倍音が整数倍でない = 繰り返しが目立たない)。一様乱数だとガクガク跳ねる
+	//--- 炉の火(部屋を照らす光源)。ゲームの状態で変わる = 状態駆動(炭の光・音・震動と同じ考え方)
+	//    火の光らしさ = ① 明るさが速く不規則に揺れる ② 光る所(火の位置)も揺れる = 物の明暗とハイライトが動く
+	//      どちらも周波数の違う正弦波の重ね合わせ(倍音が整数倍でない = 繰り返しが目立たない)。一様乱数だとガクガク跳ねる
 	//    ふいご: 踏むと炭が燃え上がる → 部屋も明るくなる(離すとゆっくり戻る)
-	static constexpr float FIRE_FLICKER_AMOUNT   = 0.12f;	// 揺らぎの深さ(明るさの ±割合)
-	static constexpr float FIRE_FLICKER_FREQ[3]   = { 1.7f, 4.3f, 9.1f };	// 重ねる正弦波の速さ(rad/秒)。基音 + 非整数倍の倍音
-	static constexpr float FIRE_FLICKER_WEIGHT[3] = { 0.6f, 0.3f, 0.1f };	// 各波の重み(合計 1)
+	//    2026-10-16 F5: 旧(±12%・ゆっくり・位置固定)は「ただの点光源」にしか見えなかった → 速く・深く・位置も揺らす。F1「Forge light」で調整
+	static constexpr float FIRE_FLICKER_HZ[3]     = { 1.3f, 3.7f, 8.9f };	// 重ねる波の速さ(回/秒)。基音 + 非整数倍の倍音(炎のちらつきは数 Hz)
+	static constexpr float FIRE_FLICKER_WEIGHT[3] = { 0.5f, 0.3f, 0.2f };	// 各波の重み(合計 1)
 	static constexpr float FIRE_FLICKER_PHASE[3]  = { 0.0f, 1.3f, 2.9f };	// 各波の位相(同時に山が来ない様にずらす)
-	static constexpr float FIRE_BELLOWS_BOOST    = 1.6f;	// ふいごを踏んでいる間の明るさの倍率
-	static constexpr float FIRE_BOOST_RISE       = 4.0f;	// 踏んだ時に明るくなる速さ(Damp率, 1/秒)= 送った風ですぐ燃え上がる
-	static constexpr float FIRE_BOOST_FALL       = 0.8f;	// 離した時に戻る速さ(Damp率, 1/秒)= 炭はゆっくり落ち着く
+	static constexpr float FIRE_JITTER_HZ[3]      = { 0.9f, 1.7f, 2.3f };	// 火の位置の揺れの速さ(回/秒)。x / y / z で別の速さ = 同じ所を往復しない
+	static constexpr float FIRE_BOOST_RISE        = 4.0f;	// 踏んだ時に明るくなる速さ(Damp率, 1/秒)= 送った風ですぐ燃え上がる
+	static constexpr float FIRE_BOOST_FALL        = 0.8f;	// 離した時に戻る速さ(Damp率, 1/秒)= 炭はゆっくり落ち着く
+	float m_fireFlickerAmount = 0.30f;				// 揺らぎの深さ(明るさの ±割合)。F1
+	float m_fireFlickerSpeed  = 1.0f;				// 揺らぎの速さの倍率。F1
+	float m_fireJitter        = 0.06f;				// 火の位置の揺れの幅(m)。F1
+	float m_fireBellowsBoost  = 1.6f;				// ふいごを踏んでいる間の明るさの倍率。F1
 	float m_fireBoost = 1.0f;						// ふいごによる今の明るさの倍率(UpdateHeat が動かす)
 	float FireLightScale() const;					// 揺らぎ × ふいご
+	void  FireLightPos(float out[3]) const;			// 揺れた火の位置(炉床 m_coalPos + 揺れ)。光の計算だけに使う(火花・炭の位置は動かさない)
 	// 冷打: 硬い鉄を叩いた「ガツン」。手応えが悪い=衝撃だけ大きく、軽い錘(鋭い)が主
 	static constexpr Rumble RUMBLE_COLD_HIT          = { 0.6f, 1.0f, 0.0f, 1.0f };
 	static constexpr float  RUMBLE_COLD_HIT_SEC      = 0.20f;

@@ -63,17 +63,19 @@ float4 main(PS_IN p):SV_TARGET {
     rough=clamp(rough,MIN_ROUGHNESS,1);
 
     float3 geometryNormal=normalize(p.normal);
-    float3 n=geometryNormal;
-    if(maps.x>.5) {
-        float3 mapN=normalMap.Sample(samp,p.uv).xyz*2-1;
-        if(maps.z>.5) mapN.y=-mapN.y;        // DirectX-convention map -> OpenGL convention
-        n=PerturbNormal(n,p.worldPos,p.uv,mapN);
-    }
+    // Computed OUTSIDE any if: PerturbNormal uses ddx/ddy (screen-space derivatives, taken across a 2x2
+    // pixel quad). Inside a branch the compiler does not guarantee them, and they came out 0 -> the
+    // normal map had no effect at all (2026-10-16, measured with Tools/pbr_material_probe). Only the
+    // RESULT is chosen by the flag.
+    float3 mapN=normalMap.Sample(samp,p.uv).xyz*2-1;
+    mapN.y=maps.z>.5?-mapN.y:mapN.y;          // DirectX-convention map -> OpenGL convention
+    float3 perturbed=PerturbNormal(geometryNormal,p.worldPos,p.uv,mapN);
+    float3 n=maps.x>.5?perturbed:geometryNormal;
     float3 v=normalize(eye.xyz-p.worldPos);
     float3 l=sun.xyz/max(length(sun.xyz),EPSILON);
 
     float visible=shadow.x>.5?SunVisibility(p.worldPos,geometryNormal):1;
-    float3 col=AmbientLight(base,rough,metal,n,v,ambient.rgb*ambient.w)*ao;   // AO only darkens the indirect light
+    float3 col=AmbientLight(base,rough,metal,n,v,ambient.rgb*ambient.w,ambient.rgb)*ao;   // AO only darkens the indirect light
     [branch] if(visible>0 && sun.w>0)
         col+=BRDF(base,rough,metal,n,v,l)*sun.w*visible;
     col+=FireLight(base,rough,metal,n,v,p.worldPos,fire.xyz,fire.w);

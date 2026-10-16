@@ -63,6 +63,7 @@ namespace LitRender
 	}
 
 	void BindShadow() { SunStage::BindShadow(); }
+	float FireIntensityScale() { return s_fireScale; }
 
 	void Draw(Model* model, FXMMATRIX world, CameraBase* camera, const PropMaterial& mat)
 	{

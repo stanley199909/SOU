@@ -634,7 +634,7 @@ void SceneForge::DrawWeapon()
 		XMFLOAT4 material;	// x 粗さ, y 金属度
 		XMFLOAT4 hot;		// x 光の当たらない面の明るさ, y 縁の明るさ, z 縁の鋭さ, w 発光の明るさ
 		XMFLOAT4 scale;		// x 繰り返し, y 境目の柔らかさ, z 濃さ, w 熱い時の光
-		XMFLOAT4 scale2;	// x 叩く前から剥がれている割合
+		XMFLOAT4 scale2;	// x 叩く前から剥がれている割合, y 反射を描く(F1 診断), z 発光を描く(F1 診断)
 	} wp{};
 	static_assert(sizeof(WpParams) % 16 == 0, "cbuffer size must be a multiple of 16 bytes");
 	const PropMaterial& mat = PropMaterials::Find("Weapon");
@@ -644,7 +644,7 @@ void SceneForge::DrawWeapon()
 	// マスクが読めない時は黒皮を出さない(灰色の既定テクスチャで全面が皮に覆われない様に)
 	const float scaleOpacity = (m_wpScaleMask && m_wpScaleMask->GetResource()) ? m_scaleOpacity : 0.0f;
 	wp.scale    = { m_scaleTiling, m_scaleSoft, scaleOpacity, m_scaleGlow };
-	wp.scale2   = { m_scaleStart, 0.0f, 0.0f, 0.0f };
+	wp.scale2   = { m_scaleStart, m_wpShowReflect ? 1.0f : 0.0f, m_wpShowGlow ? 1.0f : 0.0f, 0.0f };
 
 	SetBlendMode(BLEND_NONE);
 	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);

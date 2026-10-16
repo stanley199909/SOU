@@ -21,7 +21,7 @@ cbuffer WpParam : register(b0)
     float4   material;   // x roughness, y metallic (GameData/PropMaterials "Weapon")
     float4   hot;        // x shade on the side facing away from the light, y rim strength, z rim sharpness, w glow gain
     float4   scale;      // x tiling, y soft edge, z opacity, w glow
-    float4   scale2;     // x already fallen off at progress 0
+    float4   scale2;     // x already fallen off at progress 0, y draw reflection (F1 diagnostic), z draw glow (F1 diagnostic)
 };
 #include "SunShadow.hlsli"
 #include "Lighting.hlsli"
@@ -39,7 +39,7 @@ static const float  HOT_BASE_TINT  = 0.35;                        // glow = heat
 // Reflected light of a surface, from the scene's lights (sun with shadow, forge fire, room).
 float3 Reflected(float3 base, float rough, float metal, float3 n, float3 v, float3 l, float3 wp, float sunVisible)
 {
-    float3 c = AmbientLight(base, rough, metal, n, v, ambient.rgb * ambient.w);
+    float3 c = AmbientLight(base, rough, metal, n, v, ambient.rgb * ambient.w, ambient.rgb);
     c += BRDF(base, rough, metal, n, v, l) * sun.w * sunVisible;
     c += FireLight(base, rough, metal, n, v, wp, fire.xyz, fire.w);
     return c;
@@ -56,7 +56,7 @@ float4 main(PIN i) : SV_TARGET
     // --- steel: PBR reflection (the ground edge becomes bright and smooth) ---
     float3 steel = lerp(tex.Sample(samp, i.uv).rgb, GROUND_STEEL, ground);
     float  rough = clamp(lerp(material.x, GROUND_ROUGH, ground), MIN_ROUGHNESS, 1);
-    float3 col = Reflected(steel, rough, material.y, n, v, l, i.wp, sunVisible);
+    float3 col = Reflected(steel, rough, material.y, n, v, l, i.wp, sunVisible) * scale2.y;
 
     // --- glow of the hot steel (emission) ---
     //   Half-Lambert shading toward the real sun + a Fresnel-like rim, so the bevels, the edge and
@@ -67,7 +67,11 @@ float4 main(PIN i) : SV_TARGET
     float  rim   = hot.y * pow(1.0 - nv, hot.z);
     float  heat  = smoothstep(HOT_START, HOT_FULL, i.col.a);
     float3 glow  = (i.col.rgb * (HOT_BASE_TINT + (1 - HOT_BASE_TINT) * steel) * shade + i.col.rgb * rim) * hot.w;
-    col += glow * heat;
+    // Reflection fades out as the steel heats up: real 1000 C steel emits far more light than it reflects
+    // from the room, so the reflection is invisible next to the glow. Our glow is artist-scaled (~1), so
+    // simply ADDING the reflection pushed it past 1 and ACES + bloom turned forging-hot steel white
+    // (2026-10-16 F5: yellow glow + grey reflection = white). Cold steel keeps the full PBR reflection.
+    col = col * (1 - heat) + glow * heat * scale2.z;
 
     // --- forge scale (black oxide): the more a face was hammered, the more it has flaked off ---
     //   mask grey = thickness. The face's forging progress is the threshold: thin scale goes first,
@@ -75,9 +79,9 @@ float4 main(PIN i) : SV_TARGET
     float  m       = scaleMask.Sample(samp, i.uv * scale.x).r;
     float  thr     = lerp(scale2.x, 1.0 + scale.y, saturate(i.work));
     float  covered = smoothstep(thr - scale.y, thr, m) * (1.0 - ground);
-    float3 scaleCol = Reflected(SCALE_COLD_COL, SCALE_ROUGH, 0, n, v, l, i.wp, sunVisible);   // matte black, lit like everything else
+    float3 scaleCol = Reflected(SCALE_COLD_COL, SCALE_ROUGH, 0, n, v, l, i.wp, sunVisible) * scale2.y;   // matte black, lit like everything else
     float  heatLuma = dot(i.col.rgb, LUMA_WEIGHTS);
-    scaleCol += SCALE_EMBER * heatLuma * scale.w * shade * heat;                                // hot scale glows dull red
+    scaleCol = scaleCol * (1 - heat) + SCALE_EMBER * heatLuma * scale.w * shade * heat * scale2.z;   // hot scale glows dull red (same fade as the steel)
     col = lerp(col, scaleCol, covered * scale.z);
     return float4(col, 1.0);
 }

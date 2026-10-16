@@ -39,21 +39,22 @@ float3 BRDF(float3 base, float rough, float metal, float3 n, float3 v, float3 l)
 }
 
 // Light from the whole surroundings (sky through the window, bounce light) until a real
-// environment map (IBL) is added.
-//   diffuse  = base * ambient * (1-metal)                (same as before the unification)
-//   specular = F * ambient, ONLY for metals (scaled by metal)
-// Why only metals: 'ambient' here is the indoor FILL (an artist-boosted light so dark corners stay
-// readable), not the real brightness of the room. Reflecting it as a bright uniform environment on
-// every surface turned the whole interior milky white, worst at grazing angles (floor, far walls)
-// -- 2026-10-15 F5. Metals still need it: they have no diffuse, so without any ambient reflection
-// they turn pitch black in the shade (the classic "PBR metal looks like black plastic" pitfall).
+// environment map (IBL) is added. Two different "ambient" inputs on purpose:
+//   diffuse  = base * diffuseAmbient * (1-metal)       diffuseAmbient  = room color x indoor FILL boost
+//   specular = F * specularAmbient, ONLY for metals     specularAmbient = room color WITHOUT the boost
+// The FILL boost (x4, F1 "Indoor fill strength") is an artist lift so dark corners stay readable --
+// it is not how bright the room really is. Reflecting it (a mirror shows the real surroundings):
+//   - on every surface turned the interior milky white, worst at grazing angles (2026-10-15 F5)
+//   - on metals made the blade and the anvil top a bluish white at any temperature (2026-10-16 F5)
+// Metals still need some reflection: they have no diffuse, so without it they turn pitch black in
+// the shade (the classic "PBR metal looks like black plastic" pitfall).
 // The proper fix is IBL: reflect what the room actually looks like (dark room -> dark reflection).
-float3 AmbientLight(float3 base, float rough, float metal, float3 n, float3 v, float3 ambient)
+float3 AmbientLight(float3 base, float rough, float metal, float3 n, float3 v, float3 diffuseAmbient, float3 specularAmbient)
 {
     float nv = saturate(dot(n, v));
     float3 f0 = SurfaceF0(base, metal);
     float3 f = f0 + (max((1 - rough).xxx, f0) - f0) * pow(1 - nv, 5);	// roughness-aware Schlick Fresnel (Lagarde)
-    return ((1 - metal) * base + f * metal) * ambient;
+    return (1 - metal) * base * diffuseAmbient + f * metal * specularAmbient;
 }
 
 // The forge fire as a point light at firePos with the given intensity (inverse-square falloff,
@@ -76,7 +77,11 @@ float3 PerturbNormal(float3 n, float3 position, float2 uv, float3 mapN)
     float3 p2 = cross(dp2, n), p1 = cross(n, dp1);
     float3 t = p2 * duv1.x + p1 * duv2.x;
     float3 b = p2 * duv1.y + p1 * duv2.y;
-    float invScale = rsqrt(max(max(dot(t, t), dot(b, b)), EPSILON));
+    // t and b are TINY (pixel size in metres x UV change per pixel, squared ~1e-12), so the guard
+    // must be far smaller than EPSILON (1e-4): with EPSILON the guard always won, t/b shrank to ~0
+    // and the normal map had no visible effect (2026-10-16, measured with Tools/pbr_material_probe).
+    const float TANGENT_LEN2_MIN = 1e-30;	// only stops a true divide-by-zero
+    float invScale = rsqrt(max(max(dot(t, t), dot(b, b)), TANGENT_LEN2_MIN));
     float3 detail = t * invScale * mapN.x + b * invScale * mapN.y + n * mapN.z;
     return dot(detail, detail) > EPSILON ? normalize(detail) : n;
 }

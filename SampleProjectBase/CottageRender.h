@@ -2,6 +2,7 @@
 #pragma once
 #include "Model.h"
 #include "SunStage.h"
+#include "LitRender.h"
 #include "CameraBase.h"
 #include "TextureCache.h"
 #include <array>
@@ -142,7 +143,7 @@ inline void Draw(Model* model, FXMMATRIX world, CameraBase* camera,
     const float uvScale=XMVectorGetX(XMVector3Length(world.r[0]))*kFbxUnitsPerMeter;
     params.eye={eye.x,eye.y,eye.z,uvScale};
     params.sun=settings.sun; params.ambient=settings.ambient;
-    params.fire={firePos[0],firePos[1],firePos[2],settings.ambient.w};
+    params.fire={firePos[0],firePos[1],firePos[2],settings.ambient.w*LitRender::FireIntensityScale()};	// same fire brightness as the props (flicker / bellows)
     params.lighting={settings.outdoorFill,0,0,0};
     params.lightVP=SunStage::Data().lightVP;
     params.shadow={SunStage::Data().hasShadow?1.0f:0.0f,1.0f/SunStage::ShadowSize,SunStage::ShadowDepthBias,SunStage::ReceiverOffset};

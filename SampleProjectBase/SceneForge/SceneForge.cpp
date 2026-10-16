@@ -957,7 +957,7 @@ void SceneForge::UpdatePlay(float tick)
 	else if (!bellows && m_heatSndOn) { Audio::Stop(Audio::SE_FORGE_LOOP);           m_heatSndOn = false; }
 	if (bellows) Haptics::Hold(RUMBLE_BELLOWS);	// 踏んでいる間ずっと(離せば次のフレームで止まる)
 	// 炉の光: 踏めば燃え上がって部屋が明るくなり、離すとゆっくり落ち着く(上りと下りで速さが違う)
-	m_fireBoost = Lerp::Damp(m_fireBoost, bellows ? FIRE_BELLOWS_BOOST : 1.0f, bellows ? FIRE_BOOST_RISE : FIRE_BOOST_FALL, tick);
+	m_fireBoost = Lerp::Damp(m_fireBoost, bellows ? m_fireBellowsBoost : 1.0f, bellows ? FIRE_BOOST_RISE : FIRE_BOOST_FALL, tick);
 
 	// --- 過熱で放置すると鋼全体が焼けていく(損傷が蓄積)＋ジュー音 ---
 	//   冷却と同じく鉄の物理なので simOn で進める(F1中は温度と一緒に止まる)。
@@ -1118,9 +1118,18 @@ void SceneForge::UpdateReboundHaptics()
 //--- 炉の火の明るさの倍率 = 揺らぎ(正弦波の重ね合わせ)× ふいご(m_fireBoost)
 float SceneForge::FireLightScale() const
 {
+	const float t = m_time * m_fireFlickerSpeed;
 	float wave = 0.0f;
-	for (int i = 0; i < 3; ++i) wave += FIRE_FLICKER_WEIGHT[i] * sinf(m_time * FIRE_FLICKER_FREQ[i] + FIRE_FLICKER_PHASE[i]);
-	return (1.0f + FIRE_FLICKER_AMOUNT * wave) * m_fireBoost;
+	for (int i = 0; i < 3; ++i) wave += FIRE_FLICKER_WEIGHT[i] * sinf(t * FIRE_FLICKER_HZ[i] * XM_2PI + FIRE_FLICKER_PHASE[i]);
+	return fmaxf(1.0f + m_fireFlickerAmount * wave, 0.0f) * m_fireBoost;
+}
+
+//--- 揺れた火の位置 = 炉床の位置 + 軸ごとに速さの違う正弦波。炎が跳ねると、照らされた物の明暗とハイライトが動く
+void SceneForge::FireLightPos(float out[3]) const
+{
+	const float t = m_time * m_fireFlickerSpeed;
+	for (int i = 0; i < 3; ++i)
+		out[i] = m_coalPos[i] + m_fireJitter * sinf(t * FIRE_JITTER_HZ[i] * XM_2PI + FIRE_FLICKER_PHASE[i]);
 }
 
 //--- 鉄の柔らかさ = 緑帯の中の位置 0(下端=硬い)..1(上端=柔らかい)。打撃の音色と跳ね返りの量に使う
@@ -1977,7 +1986,8 @@ void SceneForge::Update(float tick)
 void SceneForge::Draw()
 {
 	UpdateGrassMap();	// 草の踏み跡の貼图を更新(一時的に描画先を差し替え→戻す)。シーンを描き始める前に
-	LitRender::SetFire(m_coalPos, FireLightScale());	// 炉の火(位置 + 明るさ)= このフレームの描画で使う全員がここから読む
+	float firePos[3]; FireLightPos(firePos);
+	LitRender::SetFire(firePos, FireLightScale());	// 炉の火(揺れた位置 + 明るさ)= このフレームの描画で使う全員がここから読む
     CottageRender::ClearExterior();
 	ApplyViewCamera();	// Update と同じ規約でDrawでも適用(GetViewの前に)
 	DrawModelsTest();	// 先に不透明な3Dモデル(金床)を描く
