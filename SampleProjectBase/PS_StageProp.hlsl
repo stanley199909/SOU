@@ -75,7 +75,7 @@ float4 main(PS_IN p):SV_TARGET {
     float3 l=sun.xyz/max(length(sun.xyz),EPSILON);
 
     float visible=shadow.x>.5?SunVisibility(p.worldPos,geometryNormal):1;
-    float3 col=AmbientLight(base,rough,metal,n,v,ambient.rgb*ambient.w,ambient.rgb)*ao;   // AO only darkens the indirect light
+    float3 col=AmbientLight(base,rough,metal,n,v,p.worldPos,ambient.rgb*ambient.w,ambient.rgb)*ao;   // AO only darkens the indirect light
     [branch] if(visible>0 && sun.w>0)
         col+=BRDF(base,rough,metal,n,v,l)*sun.w*visible;
     col+=FireLight(base,rough,metal,n,v,p.worldPos,fire.xyz,fire.w);

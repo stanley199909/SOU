@@ -20,6 +20,7 @@
 #include "AimSystem.h"
 #include "Lerp.h"
 #include "LitRender.h"
+#include "ReflectionProbe.h"
 #include "SceneForge/SceneForge_Internal.h"
 #include <cstdlib>
 #include <cmath>
@@ -200,6 +201,8 @@ void SceneForge::Init()
 		m_wpTex = TextureCache::Get("Assets/MM_Blacksmith_Pack/Medieval_Sword_Blade/Blade_BaseColor.png");
 		// 氧化皮マスクは「色」でなく「厚みのデータ」なので sRGB 変換をしない(false)=灰度がそのまま閾値と比べられる
 		m_wpScaleMask = TextureCache::Get("Assets/Model/weapon/forge_scale_mask.png", false);
+		// 法線マップも「データ」= sRGB 変換しない。OpenGL 式(緑+ = UV の V+)= PerturbNormal の規約そのまま
+		m_wpNormalTex = TextureCache::Get("Assets/MM_Blacksmith_Pack/Medieval_Sword_Blade/Blade_Normal_OpenGL.png", false);
 	}
 
 	// 光る炭ベッド用シェーダー(pos/uv/col レイアウト + テクスチャ)。
@@ -371,6 +374,7 @@ void SceneForge::Uninit()
 {
 	SaveTuning();	// F1で調整したハンマー/カメラ値を書き出す(次回起動で復元)
 	m_grassMap.Uninit();	// 草の踏み跡の貼图(ブレンドステートを解放)
+	ReflectionProbe::Uninit();	// 反射プローブの立方体画像(次に入った時に撮り直す)
 	DestroyObj("VS_Forge");
 	DestroyObj("PS_Forge");
 	DestroyObj("PS_Spark");
@@ -907,7 +911,7 @@ void SceneForge::UpdatePlay(float tick)
 {
 	// F1(デバッグUI)を開いている間、画面フェード(遷移)中、および走動モード中はゲーム入力を凍結する。
 	// ※走動中・走動⇔工位の移動アニメ中に打鉄/加熱/工程FSMが動かないよう条件に含める。
-	bool inputOn = !DebugUI::IsVisible() && !m_fade.IsBusy() && !m_walkMode && !Transitioning();
+	bool inputOn = !ToolUiOpen() && !m_fade.IsBusy() && !m_walkMode && !Transitioning();
 
 	// --- 工位から出る: E。翻面中は出ない(火钳を持ったまま離れない)。ESC は一時停止メニュー専用(2026-10-08)。
 	//   淬火の動画(刃が水に入った後)も取り消せない=出られない。
@@ -936,7 +940,7 @@ void SceneForge::UpdatePlay(float tick)
 	//   自然冷却は鉄そのものの物理なので simOn で毎フレーム進める=走動中も冷める。
 	//   熱源は炉の炭火: 鉄が炉に置かれている間(m_workAt==Hearth)だけ熱が入る。
 	//   風箱(R長押し)は炉の工位で玩家が行う行為なので inputOn の時だけ=炭火に追加で熱を送る。
-	const bool simOn  = !DebugUI::IsVisible() && !m_fade.IsBusy();
+	const bool simOn  = !ToolUiOpen() && !m_fade.IsBusy();
 	const bool inFire = !m_carrying && m_workAt == Station::Hearth;
 	const bool bellows = inputOn && m_station == Station::Hearth && InputActions::Held(Action::Bellows);
 	if (bellows) m_bellowsTime += tick;	// 操作の案内: ふいごを踏んだ秒(LessonMetric: Bellows)
@@ -1727,7 +1731,7 @@ void SceneForge::UpdateResult(float /*tick*/)
 //--- 開ける時: 遊んでいて、F1 でも画面遷移中でもなく、タイトルからの導入運鏡も終わっている。
 bool SceneForge::CanPause() const
 {
-	return m_state == GAME_PLAY && !DebugUI::IsVisible() && !m_fade.IsBusy() && m_introPhase == IntroPhase::None;
+	return m_state == GAME_PLAY && !ToolUiOpen() && !m_fade.IsBusy() && m_introPhase == IntroPhase::None;
 }
 
 void SceneForge::OpenPause()
@@ -1749,7 +1753,7 @@ void SceneForge::OpenPause()
 void SceneForge::UpdateCursorVisibility()
 {
 	const bool menuScreen = (m_state != GAME_PLAY) || m_paused;
-	const bool want = DebugUI::IsVisible() || (menuScreen && InputPrompts::Device() == InputDevice::KeyboardMouse);
+	const bool want = ToolUiOpen() || (menuScreen && InputPrompts::Device() == InputDevice::KeyboardMouse);
 	if (want != m_cursorShown) { ShowCursor(want); m_cursorShown = want; }
 }
 
@@ -1861,6 +1865,7 @@ void SceneForge::Update(float tick)
 	m_door.Update(tick);	// 扉の開閉の回転(E で切り替えた後、入力と無関係に最後まで回り切る)
 	m_grassMapDt += tick;	// 草の踏み跡が薄れる時間(GPU の Fade は Draw の最初でまとめて)
 
+	if (IsKeyTrigger(VK_F2)) m_lightPanelOpen = !m_lightPanelOpen;	// 設計者用: ライティング確認パネル(HUD.cpp DrawLightPanel)
 	UpdateCursorVisibility();	// 一時停止中も決める(下で return する前に)
 
 	// --- 一時停止メニュー(ESC)。開いている間は世界を止める(以下の更新を全部飛ばす=時間・温度・粒子も止まる) ---
@@ -1873,13 +1878,13 @@ void SceneForge::Update(float tick)
 		ReturnToTitle(true);
 
 	// プレイテスト計時: 遊んでいる時間だけ(導入カメラ・F1・画面フェード中は数えない。一時停止は上で return 済み)
-	if (m_state == GAME_PLAY && m_introPhase == IntroPhase::None && !DebugUI::IsVisible() && !m_fade.IsBusy())
+	if (m_state == GAME_PLAY && m_introPhase == IntroPhase::None && !ToolUiOpen() && !m_fade.IsBusy())
 		TickPlaytestTimer(tick);
 
 	// F8 = 全調整値を起動時スナップショットへ一発リセット(F1デバッグ表示中のみ=誤爆防止)。
 	if (DebugUI::IsVisible() && IsKeyTrigger(VK_F8)) RestoreTuning();
 	// PLAY中かつF1非表示・遷移中でないときだけ操作を受け付ける(ApplyCameraより先に)。
-	bool canControl = (m_state == GAME_PLAY && !DebugUI::IsVisible() && !m_fade.IsBusy());
+	bool canControl = (m_state == GAME_PLAY && !ToolUiOpen() && !m_fade.IsBusy());
 	if (canControl)
 	{
 		// 互動の注視判定(①範囲 ②視線)。走動中以外(工位/移動アニメ中)は対象なし=提示がフェードアウト。
@@ -1988,9 +1993,14 @@ void SceneForge::Draw()
 	UpdateGrassMap();	// 草の踏み跡の貼图を更新(一時的に描画先を差し替え→戻す)。シーンを描き始める前に
 	float firePos[3]; FireLightPos(firePos);
 	LitRender::SetFire(firePos, FireLightScale());	// 炉の火(揺れた位置 + 明るさ)= このフレームの描画で使う全員がここから読む
+	// 反射プローブ: まだ撮っていなければ(=開始の最初のフレーム)、または F1「Recapture」で撮る。本描画の前に(描画先を一時的に差し替える)
+	if (!ReflectionProbe::HasCapture() || ReflectionProbe::ConsumeRecaptureRequest()) CaptureReflectionProbe();
+	UpdateProbeRoomBox();	// ボックスプロジェクションの部屋の箱(家を動かしても追従。変わった時だけ GPU へ)
     CottageRender::ClearExterior();
 	ApplyViewCamera();	// Update と同じ規約でDrawでも適用(GetViewの前に)
 	DrawModelsTest();	// 先に不透明な3Dモデル(金床)を描く
+	ReflectionProbe::DrawDebugBall(GetObj<CameraBase>("Camera"));	// F1「Show probe ball」: 撮れた画像を映す鏡の球
+	ReflectionProbe::DrawRoomBox(GetObj<CameraBase>("Camera"));		// F1「Show room box」: ボックスプロジェクションの部屋の箱(橙の線)
 	// 鉄は置かれた工位に描く。運んでいる間は手のビューモデルとして最後に描く(DrawViewmodel。めり込み防止)。
 	// 拍子表の再生中は普通に描く(置く時、炉の中などへ入って行く鉄が道具に正しく隠れる様に)。
 	if (!m_carrying || SequencePlaying())

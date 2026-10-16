@@ -5,6 +5,7 @@
 // file-local helpers declared in SceneForge_Internal.h.
 #include "CottageRender.h"
 #include "LitRender.h"
+#include "ReflectionProbe.h"
 #include "SceneForge/SceneForge.h"
 #include "SceneForge/SceneForge_Internal.h"
 #include "DirectX.h"
@@ -1026,6 +1027,10 @@ void SceneForge::UpdateTracker()
 	const int n = (int)m_recipe->steps.size();
 	if ((int)m_trackerRows.size() != n) m_trackerRows.assign(n, TrackerRow{});
 	// 同じフレームで複数の行が切り替わる事がある(工程が進んだ瞬間など)。音は種類ごとに1回だけ鳴らす。
+	// 工程リストが画面に出ていない間(タイトル→金床の導入カメラ中)は、済の状態だけ合わせて音もアニメも出さない。
+	//   開始時は鉄が熱い(START_HEAT)ので最初の「加熱」は1フレーム目で自動で済になる。玩家がした事ではなく、
+	//   リストも見えていないのに鉛筆の音だけが鳴った(2026-10-16 F5)。リストが出た時には線が引き終わっている。
+	const bool silent = !PlayHudVisible();
 	bool struck = false, erased = false;
 	for (int i = 0; i < n; ++i)
 	{
@@ -1034,6 +1039,7 @@ void SceneForge::UpdateTracker()
 		if (now != row.completed)
 		{
 			row.completed = now;
+			if (silent) { row.changedAt = TrackerRow{}.changedAt; continue; }	// 既定(ずっと前)=線は引き終わった状態
 			row.changedAt = m_time;
 			(now ? struck : erased) = true;
 		}
@@ -1310,6 +1316,179 @@ int SceneForge::DrawChoicePanel(const char* head, const char* const* labels, int
 		}
 	}
 	return clicked;
+}
+
+//====================================================================
+//  設計者用パネル F2 = ライティング確認
+//  光源を1つずつ消して「この明るさ/色はどの光から来ているか」を確かめる道具。
+//  imgui の調整窓(F1)ではなく、ゲームと同じ羊皮紙+日本語で、項目を絞って描く。
+//  光の強さ(調整値)は変えない=見比べる為だけの切り替え(保存しない)。
+//====================================================================
+void SceneForge::DrawLightPanel()
+{
+	LightToggles& on = LitRender::Toggles();
+	// 項目の表(データ)。recapture = 反射プローブの写真に写る光 → 切り替えたら撮り直す(反射の中だけ古い光が残らない様に)
+	struct Row { const char* label; bool* flag; bool recapture; };
+	const Row ROWS[] = {
+		{ (const char*)u8"炉の火（直接光）",       &on.fire,         true  },
+		{ (const char*)u8"太陽（直接光）",         &on.sun,          true  },
+		{ (const char*)u8"環境光（部屋の拡散光）", &on.ambient,      true  },
+		{ (const char*)u8"環境光の向きと色（IBL）", &on.iblDirection, false },
+		{ (const char*)u8"映り込み（IBL 反射）",   &on.reflections,  false },
+	};
+	const int NROW = (int)_countof(ROWS);
+	// まとめて切り替える型(プリセット)。値の並びは ROWS と同じ
+	struct Preset { const char* label; bool values[_countof(ROWS)]; };
+	const Preset PRESETS[] = {
+		{ (const char*)u8"すべて点ける",   { true,  true,  true,  true,  true  } },
+		{ (const char*)u8"太陽の光だけ",   { false, true,  false, true,  false } },
+		{ (const char*)u8"炉の火の光だけ", { true,  false, false, true,  false } },
+	};
+	const int NPRESET = (int)_countof(PRESETS);
+
+	ImVec2 disp = ImGui::GetIO().DisplaySize;
+	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	const float PANEL_W_RATIO = 0.26f;		// パネルの幅(画面幅比)
+	const float RIGHT_MARGIN  = 0.02f;		// 画面右端からの余白(画面幅比)
+	const float TOP_RATIO     = 0.16f;		// パネル上端(画面高さ比)。上の案内の紙片と重ならない高さ
+	const float CORNER_RATIO  = 0.06f;		// 羊皮紙の隅の大きさ(画面高さ比)
+	const float HEAD_RATIO    = 0.034f;		// 見出しの文字の高さ
+	const float HINT_RATIO    = 0.020f;		// 操作の案内の文字の高さ
+	const float ITEM_RATIO    = 0.026f;		// 項目の文字の高さ
+	const float ROW_RATIO     = 0.046f;		// 1行の高さ
+	const float SECTION_GAP   = 0.6f;		// 光源とプリセットの間(行の高さ比)
+	const float INSET_X       = 0.9f;		// 文字の左右の余白(隅の大きさ比)
+	const float INSET_TOP     = 0.8f, INSET_BOTTOM = 0.7f;	// 上下の余白(隅の大きさ比)
+	const float DOT_R_RATIO   = 0.009f;		// 点灯の印(●/○)の半径(画面高さ比)
+	const float DOT_LINE_W    = 2.0f;		// ○ の線の太さ(px)
+	const ImU32 INK_HEAD = IM_COL32( 60,  38,  22, 255);	// 工程リストと同じインク
+	const ImU32 INK_ITEM = IM_COL32( 60,  42,  28, 230);
+	const ImU32 INK_OFF  = IM_COL32( 60,  42,  28, 120);	// 消している光 = 薄いインク
+	const ImU32 INK_SEL  = IM_COL32(150,  32,  18, 255);	// マウスが乗っている行 = 朱
+	const ImU32 INK_LINE = IM_COL32( 60,  42,  28,  90);	// 区切り線
+
+	const float corner = disp.y * CORNER_RATIO;
+	const float row    = disp.y * ROW_RATIO;
+	const float panelW = disp.x * PANEL_W_RATIO;
+	const float headH  = disp.y * (HEAD_RATIO + HINT_RATIO) + row * 0.5f;
+	// 光の強さのつまみ(調整値そのものを変える = 保存できる)。値は CottageRender::Data() = F1 と同じ所
+	CottageRender::Settings& light = CottageRender::Data();
+	struct Slider { const char* label; float* value; float maxValue; };
+	const float SUN_MAX = 64.0f, FIRE_MAX = 64.0f;	// つまみの右端(F1 の上限 128 の半分 = 細かく合わせやすい)
+	const Slider SLIDERS[] = {
+		{ (const char*)u8"太陽の強さ",   &light.sun.w,     SUN_MAX  },
+		{ (const char*)u8"炉の火の強さ", &light.ambient.w, FIRE_MAX },	// ambient.w = 炉の火の強さ(CottageRender の並び)
+	};
+	const int NSLIDER = (int)_countof(SLIDERS);
+	const int NSAVE   = 1;	// 「この明るさを保存」の行
+	const float panelH = corner * INSET_TOP + headH + row * NROW + row * SECTION_GAP + row * NSLIDER + row * NSAVE
+	                   + row * SECTION_GAP + row * NPRESET + corner * INSET_BOTTOM;
+	const ImVec2 pa(disp.x * (1.0f - RIGHT_MARGIN) - panelW, disp.y * TOP_RATIO);
+	const ImVec2 pb(pa.x + panelW, pa.y + panelH);
+	DrawParchment(dl, m_uiFrame.get(), pa, pb, corner);
+
+	const float lx = pa.x + corner * INSET_X, rx = pb.x - corner * INSET_X;
+	float y = pa.y + corner * INSET_TOP;
+	{
+		const float px = disp.y * HEAD_RATIO;
+		dl->AddText(DebugUI::FontJPFor(px), px, ImVec2(lx, y), INK_HEAD, (const char*)u8"ライティング確認");
+		y += px;
+		const float hp = disp.y * HINT_RATIO;
+		dl->AddText(DebugUI::FontJPFor(hp), hp, ImVec2(lx, y), INK_OFF, (const char*)u8"クリック / 数字キーで切替・F2 で閉じる");
+		y += hp + row * 0.5f;
+	}
+
+	const ImVec2 mouse = ImGui::GetIO().MousePos;
+	const bool   click = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+	const float  ipx   = disp.y * ITEM_RATIO;
+	ImFont* f = DebugUI::FontJPFor(ipx);
+	bool needRecapture = false;
+	auto rowHit = [&](float top) { return mouse.x >= pa.x && mouse.x <= pb.x && mouse.y >= top && mouse.y < top + row; };
+
+	// --- 光源ごとの切り替え(1〜5 キーでも) ---
+	for (int i = 0; i < NROW; ++i, y += row)
+	{
+		const bool hover = rowHit(y);
+		const bool key   = IsKeyTrigger((BYTE)('1' + i));
+		if ((hover && click) || key)
+		{
+			*ROWS[i].flag = !*ROWS[i].flag;
+			needRecapture |= ROWS[i].recapture;
+		}
+		const bool lit = *ROWS[i].flag;
+		const float ty = y + (row - ipx) * 0.5f;
+		char label[96];
+		snprintf(label, sizeof(label), "%d  %s", i + 1, ROWS[i].label);
+		dl->AddText(f, ipx, ImVec2(lx, ty), hover ? INK_SEL : (lit ? INK_ITEM : INK_OFF), label);
+		const float r = disp.y * DOT_R_RATIO;
+		const ImVec2 c(rx - r, y + row * 0.5f);
+		if (lit) dl->AddCircleFilled(c, r, hover ? INK_SEL : INK_ITEM);	// ● = 点いている
+		else     dl->AddCircle(c, r, hover ? INK_SEL : INK_OFF, 0, DOT_LINE_W);	// ○ = 消している
+	}
+
+	// --- 光の強さ(ドラッグ)。離した時に反射の写真を撮り直す(ドラッグ中に毎フレーム撮ると重い) ---
+	y += row * SECTION_GAP * 0.5f;
+	dl->AddLine(ImVec2(lx, y), ImVec2(rx, y), INK_LINE, 1.0f);
+	y += row * SECTION_GAP * 0.5f;
+	const float BAR_START = 0.50f;		// つまみの棒が始まる位置(パネル内の幅比。左は名前)
+	const float BAR_H     = 0.18f;		// 棒の太さ(行の高さ比)
+	const float KNOB_R    = 0.22f;		// つまみの丸の半径(行の高さ比)
+	const float barL = lx + (rx - lx) * BAR_START, barR = rx - row * KNOB_R;
+	if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) && m_lightPanelDrag >= 0)
+	{
+		m_lightPanelDrag = -1;
+		ReflectionProbe::RequestRecapture();
+	}
+	for (int s = 0; s < NSLIDER; ++s, y += row)
+	{
+		const bool hover = rowHit(y);
+		if (hover && click && mouse.x >= barL - row * KNOB_R) { m_lightPanelDrag = s; m_lightPanelSaved = false; }	// 棒の上だけ(名前を押して 0 にならない様に)
+		if (m_lightPanelDrag == s)
+		{
+			const float t = fminf(fmaxf((mouse.x - barL) / (barR - barL), 0.0f), 1.0f);
+			*SLIDERS[s].value = t * SLIDERS[s].maxValue;
+		}
+		const bool active = hover || m_lightPanelDrag == s;
+		char label[64];
+		snprintf(label, sizeof(label), "%s  %.1f", SLIDERS[s].label, *SLIDERS[s].value);
+		dl->AddText(f, ipx, ImVec2(lx, y + (row - ipx) * 0.5f), active ? INK_SEL : INK_ITEM, label);
+		const float cy = y + row * 0.5f, bh = row * BAR_H;
+		const float t  = fminf(*SLIDERS[s].value / SLIDERS[s].maxValue, 1.0f);
+		const float kx = barL + (barR - barL) * t;
+		dl->AddRectFilled(ImVec2(barL, cy - bh * 0.5f), ImVec2(barR, cy + bh * 0.5f), INK_LINE, bh * 0.5f);
+		dl->AddRectFilled(ImVec2(barL, cy - bh * 0.5f), ImVec2(kx, cy + bh * 0.5f), active ? INK_SEL : INK_ITEM, bh * 0.5f);
+		dl->AddCircleFilled(ImVec2(kx, cy), row * KNOB_R, active ? INK_SEL : INK_ITEM);
+	}
+	{
+		const bool hover = rowHit(y);
+		if (hover && click) m_lightPanelSaved = CottageRender::Save();	// Assets/cottage_materials.txt(F1 の「Save cottage look」と同じ)
+		const char* text = m_lightPanelSaved ? (const char*)u8"保存しました" : (const char*)u8"この明るさを保存";
+		dl->AddText(f, ipx, ImVec2(lx, y + (row - ipx) * 0.5f), hover ? INK_SEL : INK_ITEM, text);
+		y += row;
+	}
+
+	// --- まとめて切り替え ---
+	y += row * SECTION_GAP * 0.5f;
+	dl->AddLine(ImVec2(lx, y), ImVec2(rx, y), INK_LINE, 1.0f);
+	y += row * SECTION_GAP * 0.5f;
+	for (int p = 0; p < NPRESET; ++p, y += row)
+	{
+		const bool hover = rowHit(y);
+		if (hover && click)
+			for (int i = 0; i < NROW; ++i)
+				if (*ROWS[i].flag != PRESETS[p].values[i]) { *ROWS[i].flag = PRESETS[p].values[i]; needRecapture |= ROWS[i].recapture; }
+		bool active = true;	// 今の状態がこの型と同じか(同じなら ▸ を付ける)
+		for (int i = 0; i < NROW; ++i) active &= (*ROWS[i].flag == PRESETS[p].values[i]);
+		const float ty = y + (row - ipx) * 0.5f;
+		dl->AddText(f, ipx, ImVec2(lx, ty), hover ? INK_SEL : INK_ITEM, PRESETS[p].label);
+		if (active)
+		{
+			const float m = disp.y * DOT_R_RATIO, my = y + row * 0.5f, mx = rx - m;
+			dl->AddTriangleFilled(ImVec2(mx - m, my - m), ImVec2(mx - m, my + m), ImVec2(mx + m * 0.6f, my), INK_SEL);
+		}
+	}
+
+	if (needRecapture) ReflectionProbe::RequestRecapture();	// 反射の写真も今の光で撮り直す(次のフレーム)
 }
 
 //--- 「レッスン完了」: 画面中央の羊皮紙に課程の名前と完了。課程の一覧と同じ見た目(羊皮紙+インク)。
@@ -1603,12 +1782,13 @@ void SceneForge::DrawUI()
 	case GAME_TITLE:  DrawTitleUI();  break;
 	case GAME_PLAY:
 		// タイトル→金床へカメラが移っている間は何も出さない(ロゴは既に消えている。映像だけを見せる)。
-		if (m_introPhase != IntroPhase::CameraMove) DrawPlayUI();
+		if (PlayHudVisible()) DrawPlayUI();
 		if (m_paused) DrawPauseMenu();
 		break;
 	case GAME_RESULT: DrawResultUI(); break;
 	}
 	if (m_state == GAME_PLAY && m_courseComplete) DrawCourseComplete();	// チュートリアルの課程を終えた
+	if (m_lightPanelOpen) DrawLightPanel();	// F2: 設計者用のライティング確認(ゲームと同じ羊皮紙の見た目)
 	// プレイテスト計時: 遊んでいる間(導入カメラ・終幕の映像中は出さない)と結果画面(=最終の内訳を見る)
 	if (m_showPlaytestTimer
 	 && ((m_state == GAME_PLAY && m_introPhase == IntroPhase::None && !m_clearDecided) || m_state == GAME_RESULT))
@@ -1626,6 +1806,11 @@ void SceneForge::DrawUI()
 		ImGui::Begin("Forge Tuning (F1)");
 	CottageRender::Controls();
 	LitRender::Controls();	// 道具の材質(法線/ORM の見比べ)
+	if (ReflectionProbe::Controls())	// 反射プローブ(IBL): 撮り直し・鏡の球で撮れた画像を確かめる
+	{
+		ImGui::SliderFloat("Probe height above anvil", &m_probeLift, 0.0f, 1.5f, "%.2f m");	// 変えたら Recapture
+		ImGui::SliderFloat("Room box inset", &m_probeBoxInset, 0.0f, 1.0f, "%.2f m");		// 橙の箱を壁の内面へ(撮り直し不要)
+	}
 	if (ImGui::CollapsingHeader("Forge light (flicker)"))	// 炉の火の光: 揺らぎ・位置の揺れ・ふいご(保存しない調整用。良い値は header の既定へ)
 	{
 		ImGui::SliderFloat("Flicker amount", &m_fireFlickerAmount, 0.0f, 0.8f, "%.2f");		// 明るさの揺れの深さ(±割合)
@@ -1713,9 +1898,7 @@ void SceneForge::DrawUI()
 			ImGui::SliderFloat("Off Y", &m_wpOff[1], -1.0f, 1.0f, "%.3f");
 			ImGui::SliderFloat("Off Z", &m_wpOff[2], -1.0f, 1.0f, "%.3f");
 			ImGui::TextDisabled("-- Hot steel (form must read while glowing) --");
-			ImGui::SliderFloat("Hot shade", &m_wpHotShade, 0.0f, 1.0f, "%.2f");	// 背光面の明るさ(1=旧の平らな発光)
-			ImGui::SliderFloat("Rim",       &m_wpRimK,     0.0f, 2.0f, "%.2f");	// 縁の明るさ
-			ImGui::SliderFloat("Rim power", &m_wpRimPow,   1.0f, 8.0f, "%.1f");	// 縁へ寄る鋭さ
+			ImGui::SliderFloat("Reflection while hot", &m_wpHotReflect, 0.0f, 1.0f, "%.2f");	// 1=物理どおり(反射+発光)。0=旧の「熱いと反射を消す」
 			ImGui::SliderFloat("Hot gain",  &m_wpHotGain,  0.3f, 1.5f, "%.2f");
 			ImGui::Checkbox("Blade: reflection", &m_wpShowReflect); ImGui::SameLine();	// 診断: 白く見える原因が反射か発光かを切り分ける
 			ImGui::Checkbox("Blade: glow", &m_wpShowGlow);	// 発光全体の明るさ(白飛び防止)

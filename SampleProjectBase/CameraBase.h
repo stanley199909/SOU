@@ -30,6 +30,8 @@ public:
 
 	float GetFovY() { return m_fovy; }
 	void  SetFovY(float fovyRad) { m_fovy = fovyRad; }	// 縦画角(rad)。狭い=沈浸・寄り
+	float GetAspect() const { return m_aspect; }
+	void  SetAspect(float aspect) { m_aspect = aspect; }	// 横/縦。反射プローブは正方形の面を撮るので一時的に 1 にする
 
 protected:
 	DirectX::XMFLOAT3 m_pos, m_look, m_up;

@@ -1,5 +1,6 @@
 ﻿#include "LitRender.h"
 #include "SunStage.h"
+#include "ReflectionProbe.h"
 #include "CottageRender.h"
 #include "TextureCache.h"
 #include "PropMaterials.h"
@@ -9,6 +10,7 @@ using namespace DirectX;
 
 namespace
 {
+	LightToggles s_toggles;	// F2 パネルの光源 ON/OFF(全員がここを読む)
 	float s_firePos[3] = {};
 	float s_fireScale  = 1.0f;
 	// F1 の見比べ用(既定 = 全部使う)。保存はしない(確かめる為だけの切り替え)
@@ -53,10 +55,12 @@ namespace LitRender
 		const auto& r     = SunStage::Data();
 		const auto& light = CottageRender::Data();	// 光の情報はここだけから読む
 		const XMFLOAT3 eye = camera ? camera->GetPos() : XMFLOAT3(0, 0, 0);
+		const LightToggles& on = s_toggles;
 		l.eye     = { eye.x, eye.y, eye.z, 0.0f };
 		l.sun     = light.sun;
-		l.ambient = { light.ambient.x, light.ambient.y, light.ambient.z, light.windowExtra.w };	// 色 + 屋内の環境光の強さ
-		l.fire    = { s_firePos[0], s_firePos[1], s_firePos[2], light.ambient.w * s_fireScale };	// 位置 + 炉の火の強さ(F1 の調整値 × ゲームの状態)
+		l.sun.w  *= on.sun ? 1.0f : 0.0f;
+		l.ambient = { light.ambient.x, light.ambient.y, light.ambient.z, light.windowExtra.w * (on.ambient ? 1.0f : 0.0f) };	// 色 + 屋内の環境光の強さ
+		l.fire    = { s_firePos[0], s_firePos[1], s_firePos[2], light.ambient.w * s_fireScale * (on.fire ? 1.0f : 0.0f) };	// 位置 + 炉の火の強さ(F1 の調整値 × ゲームの状態)
 		l.lightVP = r.lightVP;
 		l.shadow  = { r.hasShadow ? 1.0f : 0.0f, 1.0f / SunStage::ShadowSize, SunStage::ShadowDepthBias, SunStage::ReceiverOffset };
 		return l;
@@ -64,6 +68,8 @@ namespace LitRender
 
 	void BindShadow() { SunStage::BindShadow(); }
 	float FireIntensityScale() { return s_fireScale; }
+	bool NormalMapsEnabled() { return s_useNormalMaps; }
+	LightToggles& Toggles() { return s_toggles; }
 
 	void Draw(Model* model, FXMMATRIX world, CameraBase* camera, const PropMaterial& mat)
 	{
@@ -100,6 +106,7 @@ namespace LitRender
 			r.propPS.SetTexture(0, model->GetTextureAt(mesh->materialID));
 			r.propPS.Bind();
 			SunStage::BindShadow();
+			ReflectionProbe::BindForLighting();	// t6/t7 = 部屋の反射(IBL)。Bind() が空にした後に置く
 			mesh->mesh->Draw();
 		}
 		r.propPS.SetTexture(1, nullptr);

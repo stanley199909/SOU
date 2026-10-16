@@ -132,6 +132,9 @@
     <ClCompile Include="Model.cpp">
       <Filter>ソース ファイル\System</Filter>
     </ClCompile>
+    <ClCompile Include="ReflectionProbe.cpp">
+      <Filter>ソース ファイル\System</Filter>
+    </ClCompile>
     <ClCompile Include="LitRender.cpp">
       <Filter>ソース ファイル\System</Filter>
     </ClCompile>
@@ -330,6 +333,9 @@
       <Filter>ヘッダー ファイル\System</Filter>
     </ClInclude>
     <ClInclude Include="Model.h">
+      <Filter>ヘッダー ファイル\System</Filter>
+    </ClInclude>
+    <ClInclude Include="ReflectionProbe.h">
       <Filter>ヘッダー ファイル\System</Filter>
     </ClInclude>
     <ClInclude Include="LitRender.h">

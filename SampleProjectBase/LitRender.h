@@ -25,13 +25,26 @@ struct SceneLightParams
 	DirectX::XMFLOAT4   shadow;		// 影: 有効 / 1テクセル / 深度バイアス / 受け側のずらし
 };
 
+// 光源ごとの ON/OFF(設計者用 F2 パネル)。見比べる為だけの切り替え=保存しない。光の強さ(調整値)は変えず、使うかどうかだけ。
+//   描く全員(道具・壁・刀身・反射プローブ)がここを読む=どこか1つだけ光が残る、が起きない。
+struct LightToggles
+{
+	bool fire         = true;	// 炉の火の直接光(点光源)
+	bool sun          = true;	// 太陽の直接光(窓から差す光・屋外)
+	bool ambient      = true;	// 環境光の拡散(部屋全体を照らす間接光)
+	bool iblDirection = true;	// 環境光の拡散に向きと色を付ける(IBL)。OFF = 一様な補光
+	bool reflections  = true;	// 環境の映り込み(IBL の鏡面反射)
+};
+
 namespace LitRender
 {
+	LightToggles& Toggles();
 	// 炉の火(ワールドの位置 + 明るさの倍率)。描く前に毎フレーム1回。倍率はゲームの状態から決める(揺らぎ・ふいご)。1 = 調整値のまま
 	void SetFire(const float pos[3], float intensityScale = 1.0f);
 	SceneLightParams Lights(CameraBase* camera);	// 光の情報(CottageRender::Data() + 炉の位置)。独自の描き方をする物(刀身)もここから読む
 	float FireIntensityScale();					// 炉の火の明るさの倍率(揺らぎ・ふいご)。壁(CottageRender)もこれを掛ける
 	void BindShadow();							// 太陽の影の深度を t3 へ
 	void Draw(Model* model, DirectX::FXMMATRIX world, CameraBase* camera, const PropMaterial& material);
+	bool NormalMapsEnabled();	// F1「Normal maps」(刀身も同じ切り替えに従う)
 	void Controls();	// F1: 法線/ORM の画像の有無を切り替えて見比べる・法線の向き(DirectX/OpenGL式)を確かめる
 }

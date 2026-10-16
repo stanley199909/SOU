@@ -10,6 +10,7 @@
 #include "SceneForge/SceneForge.h"
 #include "SceneForge/SceneForge_Internal.h"
 #include "PropParts.h"
+#include "ReflectionProbe.h"
 #include "DirectX.h"
 #include "MeshBuffer.h"
 #include "Shader.h"
@@ -225,6 +226,46 @@ void SceneForge::DrawScenery()
 
 }
 
+//--- 反射プローブ(IBL 第1段): 金床の少し上から、動かない場面(部屋・道具・炭)を 6 方向に撮って立方体の画像にする。
+//    撮らない物: 刃・ハンマー・手の火钳・火花/余燼 = 動く物。毎フレームは撮り直さないので、写すと位置がずれた反射になる。
+//    炉の火は揺らぎの平均の明るさ(倍率 1)で撮る=反射の中の火は揺れない(静的プローブの普通の割り切り)。
+void SceneForge::CaptureReflectionProbe()
+{
+	CameraBase* cam = GetObj<CameraBase>("Camera");
+	if (!cam || m_props.empty()) return;
+	const XMFLOAT3 pos(m_barAnchor.x, m_barAnchor.y + m_probeLift, m_barAnchor.z);
+	float firePos[3]; FireLightPos(firePos);
+	LitRender::SetFire(firePos, 1.0f);
+	ReflectionProbe::Capture(cam, pos, [this]()
+	{
+		CottageRender::ClearExterior();	// 本描画と同じく空の色で塗ってから
+		DrawScenery();
+	});
+	LitRender::SetFire(firePos, FireLightScale());	// このフレームの本描画の火に戻す
+}
+
+//--- ボックスプロジェクションの部屋の箱: 家のモデルの境界箱(8隅)を今の配置でワールドへ運び、m_probeBoxInset だけ内側へ縮める。
+//    軸に沿った箱(AABB)なので、家の向き(Yaw)が 90° の倍数の時に壁とぴったり合う(今は 0°)。
+void SceneForge::UpdateProbeRoomBox()
+{
+	Prop*  house = GetProp(CottageDoor::HOUSE_KEY);
+	Model* m     = GetObj<Model>(CottageDoor::HOUSE_KEY);
+	if (!house || !m) return;
+	XMFLOAT3 lmn, lmx; m->GetLocalAABB(lmn, lmx);
+	const XMMATRIX world = PropWorld(*house);
+	XMVECTOR mn = XMVectorReplicate(FLT_MAX), mx = XMVectorReplicate(-FLT_MAX);
+	for (int i = 0; i < 8; ++i)
+	{
+		const XMVECTOR c = XMVector3TransformCoord(XMVectorSet((i & 1) ? lmx.x : lmn.x, (i & 2) ? lmx.y : lmn.y, (i & 4) ? lmx.z : lmn.z, 1.0f), world);
+		mn = XMVectorMin(mn, c); mx = XMVectorMax(mx, c);
+	}
+	const XMVECTOR inset = XMVectorReplicate(m_probeBoxInset);
+	XMFLOAT3 bmn, bmx;
+	XMStoreFloat3(&bmn, XMVectorAdd(mn, inset));
+	XMStoreFloat3(&bmx, XMVectorSubtract(mx, inset));
+	ReflectionProbe::SetRoomBox(bmn, bmx);
+}
+
 //--- 自作の光る炭ベッド。合成炭テクスチャを明るく描き、時間で明滅させる(Bloomで光る)
 void SceneForge::DrawCoalBed()
 {
@@ -302,7 +343,7 @@ void SceneForge::DrawWater()
 	XMFLOAT3 eye = cam->GetPos();
 	cb[2] = XMFLOAT4(eye.x, eye.y, eye.z, m_waterSize[0] / std::max(m_waterSize[1], MIN_WATER_WIDTH));
 	const auto& lighting = CottageRender::Data();
-	cb[3] = XMFLOAT4(lighting.ambient.x, lighting.ambient.y, lighting.ambient.z, lighting.windowExtra.w);
+	cb[3] = XMFLOAT4(lighting.ambient.x, lighting.ambient.y, lighting.ambient.z, lighting.windowExtra.w * (LitRender::Toggles().ambient ? 1.0f : 0.0f));	// F2「環境光」に従う
 	// cb[4] = 水面の全長/全幅 + yaw の cos/sin(PS が波の傾きを板のローカルからワールドへ回す)
 	// cb[5] = 高さ貼图の1テクセルの UV 幅(中心差分の幅)
 	cb[4] = XMFLOAT4(m_waterSize[0] * 2.0f, m_waterSize[1] * 2.0f, cosf(m_waterYaw), sinf(m_waterYaw));
@@ -316,6 +357,7 @@ void SceneForge::DrawWater()
 	SetBlendMode(BLEND_ALPHA);
 	SetDepthTest(DEPTH_DISABLE);
 	vs->Bind(); ps->Bind();
+	ReflectionProbe::BindForLighting();			// t6〜t8 = 部屋の反射(IBL)。水面は窓や炉口を映す
 	vs->SetTexture(0, m_waterHeightTex.get());	// VS t0 = 波の高さ(頂点を上下)
 	ps->SetTexture(0, refr);					// t0 = 屈折元(背後のシーン)
 	ps->SetTexture(1, depth);					// t1 = シーン深度(R32_FLOAT)

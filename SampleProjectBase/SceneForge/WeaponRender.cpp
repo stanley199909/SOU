@@ -4,6 +4,7 @@
 // All SceneForge members share the class declaration in SceneForge.h and the
 // file-local helpers declared in SceneForge_Internal.h.
 #include "LitRender.h"
+#include "ReflectionProbe.h"
 #include "PropMaterials.h"
 #include "SceneForge/SceneForge.h"
 #include "SceneForge/SceneForge_Internal.h"
@@ -632,19 +633,20 @@ void SceneForge::DrawWeapon()
 	{
 		SceneLightParams light;
 		XMFLOAT4 material;	// x 粗さ, y 金属度
-		XMFLOAT4 hot;		// x 光の当たらない面の明るさ, y 縁の明るさ, z 縁の鋭さ, w 発光の明るさ
+		XMFLOAT4 hot;		// x 熱い間も残す反射の割合, yz 未使用, w 発光の明るさ
 		XMFLOAT4 scale;		// x 繰り返し, y 境目の柔らかさ, z 濃さ, w 熱い時の光
-		XMFLOAT4 scale2;	// x 叩く前から剥がれている割合, y 反射を描く(F1 診断), z 発光を描く(F1 診断)
+		XMFLOAT4 scale2;	// x 叩く前から剥がれている割合, y 反射を描く(F1 診断), z 発光を描く(F1 診断), w 法線マップ有り
 	} wp{};
 	static_assert(sizeof(WpParams) % 16 == 0, "cbuffer size must be a multiple of 16 bytes");
 	const PropMaterial& mat = PropMaterials::Find("Weapon");
 	wp.light    = LitRender::Lights(cam);
 	wp.material = { mat.roughness, mat.metallic, 0.0f, 0.0f };
-	wp.hot      = { m_wpHotShade, m_wpRimK, m_wpRimPow, m_wpHotGain };
+	wp.hot      = { m_wpHotReflect, 0.0f, 0.0f, m_wpHotGain };
+	const bool hasNormal = m_wpNormalTex && m_wpNormalTex->GetResource() && LitRender::NormalMapsEnabled();	// F1「Normal maps」は道具と共通
 	// マスクが読めない時は黒皮を出さない(灰色の既定テクスチャで全面が皮に覆われない様に)
 	const float scaleOpacity = (m_wpScaleMask && m_wpScaleMask->GetResource()) ? m_scaleOpacity : 0.0f;
 	wp.scale    = { m_scaleTiling, m_scaleSoft, scaleOpacity, m_scaleGlow };
-	wp.scale2   = { m_scaleStart, m_wpShowReflect ? 1.0f : 0.0f, m_wpShowGlow ? 1.0f : 0.0f, 0.0f };
+	wp.scale2   = { m_scaleStart, m_wpShowReflect ? 1.0f : 0.0f, m_wpShowGlow ? 1.0f : 0.0f, hasNormal ? 1.0f : 0.0f };
 
 	SetBlendMode(BLEND_NONE);
 	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
@@ -652,9 +654,11 @@ void SceneForge::DrawWeapon()
 	ps->Bind();
 	ps->WriteBuffer(0, &wp);						// b0 = 光 + 材質 + 熱/黒皮
 	LitRender::BindShadow();						// t3 = 太陽の影(道具と同じ影を受ける)
+	ReflectionProbe::BindForLighting();				// t6/t7 = 部屋の反射(IBL)。道具と同じ部屋を映す
 	if (m_wpTex) ps->SetTexture(0, m_wpTex.get());	// t0 = 鋼テクスチャ(BaseColor)
 	if (m_wpScaleMask && m_wpScaleMask->GetResource())
 		ps->SetTexture(1, m_wpScaleMask.get());		// t1 = 氧化皮の厚みマスク
+	ps->SetTexture(2, hasNormal ? m_wpNormalTex.get() : nullptr);	// t2 = 法線マップ(凹凸)
 	m_wpMesh->Draw();
 }
 

@@ -16,6 +16,7 @@ Texture2D    sceneTex : register(t0);   // scene behind the water (refraction so
 Texture2D    depthTex : register(t1);   // scene depth (R32_FLOAT view of the DSV)
 Texture2D    heightTex : register(t2);  // WaterSim heights (m). u = quad length, v = width
 SamplerState samp     : register(s0);
+#include "Lighting.hlsli"   // IBL: the water reflects the real room (reflection probe), like every other surface
 
 cbuffer WaterCB : register(b0)
 {
@@ -47,7 +48,8 @@ static const float  FRESNEL_POWER = 5;                // Schlick approximation
 static const float3 ABSORPTION_TINT = float3(0.10, 0.14, 0.12);
 static const float  MAX_ABSORPTION = 0.32;
 static const float  CONTACT_STRENGTH = 0.04;
-static const float  INDOOR_REFLECTION_SCALE = 0.08;   // diffuse fill is not a bright sky reflection
+static const float  INDOOR_REFLECTION_SCALE = 0.08;   // fallback without IBL: diffuse fill is not a bright sky reflection
+static const float  WATER_ROUGH = MIN_ROUGHNESS;      // calm water is a near-perfect mirror (the waves already tilt the normal)
 static const float3 FOAM_COLOUR       = float3(0.80, 0.83, 0.85);
 static const float  FOAM_SLOPE_START  = 0.25;  // wave slope where the water starts to look churned
 static const float  FOAM_SLOPE_GAIN   = 2.0;   // how quickly it turns milky above that slope
@@ -100,10 +102,16 @@ float4 main(PS_IN p) : SV_TARGET
     // --- Absorption, fresnel reflection, contact line. ---------------------------
     float3 col = lerp(behind, behind * ABSORPTION_TINT, depth01 * MAX_ABSORPTION);
     float  fresnel = WATER_F0 + (1 - WATER_F0) * pow(1 - saturate(dot(n, v)), FRESNEL_POWER);
-    col = lerp(col, room.rgb * room.a * INDOOR_REFLECTION_SCALE, fresnel);
+    // Reflection of the room: the photo of the reflection probe (window, forge mouth...). Without light
+    // in the room it is black too, so unlit water is invisible like everything else (2026-10-16 F5: the
+    // water kept a faint glow with every light switched off).
+    bool ibl;
+    float3 reflection = IblSpecular(WATER_F0.xxx, WATER_ROUGH, n, v, p.worldPos, ibl);   // includes the Fresnel (BRDF LUT)
+    if (ibl) col = col * (1 - fresnel) + reflection;
+    else     col = lerp(col, room.rgb * room.a * INDOOR_REFLECTION_SCALE, fresnel);
     float contact = 1 - saturate(thick / max(params2.z, MIN_DISTANCE));
     col += room.rgb * room.a * contact * CONTACT_STRENGTH;
-    col = lerp(col, FOAM_COLOUR * (room.rgb * room.a + INDOOR_REFLECTION_SCALE), foam);   // churned water, lit by the room
+    col = lerp(col, FOAM_COLOUR * room.rgb * room.a, foam);   // churned water, lit by the room (was "+ a constant" = foam glowed in the dark)
 
     // The refraction sample already contains the background: output opaque,
     // alpha-blending on top would add the background a second time.

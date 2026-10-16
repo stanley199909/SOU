@@ -190,6 +190,22 @@ void SceneForge::BuildCollisionWorld()
 		}
 	}
 
+	// 置いてある刃(金床などの上。手に持っている時は除く=自分の手の物にぶつからない)。
+	//   刃は金床より長く両端がはみ出すので、金床の凸包だけでは刃の中まで歩いて入れた
+	//   → カメラが近裁剪面(0.2m)より刃に近づき、刃が切れて中が見えた(2026-10-16 F5)。
+	//   刃は叩くたびに形が変わる(モーフ)ので、凸包はキャッシュせず毎フレーム作る。
+	//   m_wpVtx は BuildWeaponMorph がワールド座標で作った頂点(前フレームの描画分=1フレーム遅れは無害)。
+	if (m_wpOk && !m_carrying && !m_wpVtx.empty())
+	{
+		const float headY = m_walkFloorY + PLAYER_BODY_HEIGHT;	// 道具と同じ: 背丈より上は頭上を通る
+		std::vector<XMFLOAT3> body;
+		body.reserve(m_wpVtx.size());
+		for (const WpVtx& v : m_wpVtx)
+			if (v.pos.y <= headY) body.push_back(v.pos);
+		Collision2D::Hull h = FlatHull(body);
+		if (!h.empty()) m_collision.hulls.push_back(std::move(h));
+	}
+
 	// 建物の壁線
 	if (Prop* house = GetProp(CottageDoor::HOUSE_KEY))
 	{

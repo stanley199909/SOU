@@ -3,6 +3,7 @@
 #include "Model.h"
 #include "SunStage.h"
 #include "LitRender.h"
+#include "ReflectionProbe.h"
 #include "CameraBase.h"
 #include "TextureCache.h"
 #include <array>
@@ -148,6 +149,11 @@ inline void Draw(Model* model, FXMMATRIX world, CameraBase* camera,
     params.lightVP=SunStage::Data().lightVP;
     params.shadow={SunStage::Data().hasShadow?1.0f:0.0f,1.0f/SunStage::ShadowSize,SunStage::ShadowDepthBias,SunStage::ReceiverOffset};
     params.window=settings.window; params.windowExtra=settings.windowExtra;
+    // F2 light toggles (LitRender::Toggles): same switches as the props, so no light is left on in one place only
+    const LightToggles& on=LitRender::Toggles();
+    if(!on.sun) params.sun.w=0.0f;
+    if(!on.fire) params.fire.w=0.0f;
+    if(!on.ambient) { params.windowExtra.w=0.0f; params.lighting.x=0.0f; }
     XMStoreFloat4x4(&params.worldToLocal,XMMatrixTranspose(XMMatrixInverse(nullptr,world)));
     for (unsigned int i=0; i<model->GetMeshNum(); ++i)
     {
@@ -176,6 +182,7 @@ inline void Draw(Model* model, FXMMATRIX world, CameraBase* camera,
         ps->SetTexture(4,settings.materials[9].base.get());
         ps->Bind();
         SunStage::BindShadow();
+        ReflectionProbe::BindForLighting();   // t6/t7 = room reflection (IBL), after Bind() cleared the slots
         mesh->mesh->Draw();
     }
     // No stale normal/roughness SRVs in subsequent water/particle passes.

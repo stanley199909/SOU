@@ -21,6 +21,7 @@
 #include "InteractionMap.h"	// 真上から正射影で見た「最近押された所」の貼图(草の倒れ等)
 #include "InputPrompts.h"	// GameLogic: 操作案内の絵と呼び名(今使っている機器=キーボード・マウス/手柄 に合わせる)
 #include "Haptics.h"		// GameLogic: 手柄の震動(一発/持続を混ぜて送る)
+#include "DebugUI.h"		// F1 調整窓の表示状態(ToolUiOpen)
 #include <DirectXMath.h>
 #include <memory>
 #include <vector>
@@ -123,6 +124,16 @@ private:
 	void  LoadLayout();						// stage_layout.txt を読み、プロップ/炭の配置を上書き(編集シーンと共有)
 	DirectX::XMMATRIX PropWorld(Prop& p);	// アンカー方式のワールド行列(地面に自動設置)
 	void  DrawScenery();		// 装飾モデルをまとめて描画
+	//--- 設計者用パネル(F2 = ライティング確認)。imgui の調整窓(F1)とは別の、ゲームと同じ見た目(羊皮紙+日本語)の道具
+	bool  m_lightPanelOpen = false;	// F2 で開閉。開いている間はゲームの入力と時間を止める(F1 と同じ)
+	bool  ToolUiOpen() const { return DebugUI::IsVisible() || m_lightPanelOpen; }	// 調整用の画面が開いている=ゲーム入力を止める(判定はここ1つ)
+	void  DrawLightPanel();			// F2 パネルの描画とクリック処理(HUD.cpp)
+	int   m_lightPanelDrag = -1;	// F2 パネルで今ドラッグしている強さのつまみ(-1 = 無し)
+	bool  m_lightPanelSaved = false;	// 「この明るさを保存」を押した直後(保存済みの表示)
+	void  CaptureReflectionProbe();	// 反射プローブ(IBL): 金床の上から部屋を 360° 撮る(開始時に1回 + F1「Recapture」)。Scenery.cpp
+	float m_probeLift = 0.4f;		// プローブを砧面から上げる高さ(m)。刃・ハンマーが反射する辺りの視点
+	void  UpdateProbeRoomBox();		// ボックスプロジェクション用の「部屋の箱」= 家の境界箱を内側へ縮めた物(毎フレーム。変わった時だけ GPU へ)
+	float m_probeBoxInset = 0.25f;	// 家の境界箱から内側へ縮める量(m)。壁の厚み・屋根の張り出し分。F1 の橙の箱を壁の内面に合わせる
 	void  DrawHammer3D();		// 3Dハンマー(蓄力で上がり打撃で振り下ろす。金床を離れたら右腰)
 	DirectX::XMMATRIX HammerWorld(Model* hammer, bool withRecoil = true);	// 金床で構える/打つハンマーの行列(描画と火花で共用。火花は反冲無しの落ちた所)
 	DirectX::XMMATRIX HammerHipWorld(Model* hammer);	// 右腰に下げたハンマーの行列
@@ -837,7 +848,7 @@ private:
 	static constexpr float FACE_DONE_VOLUME      = 0.8f;	// 面(表/裏)が仕上がった瞬間の「完成」の合図(SE_FACE_DONE)の音量
 	static constexpr float FACE_DONE_FINAL_PITCH = 1.12f;	// 両面とも済んだ(工程の完了)時は一段高く鳴らす(連続撃破音の様に上がっていく)
 	static constexpr float GROOVE_RING_PITCH = 1.12f;		// リズムに乗った打撃の金床音の音程倍率(少し高い=澄んだ「キン」)
-	float m_wpHotGain    = 0.85f;				// 熱い鋼の発光全体の明るさ(白飛びで黒皮や形が消えるのを防ぐ)
+	float m_wpHotGain    = 0.85f;				// 熱い鋼の発光全体の明るさ
 	int   m_wpN = 0;							// 1段の頂点数
 	bool  m_wpOk = false;						// 読み込み成功&段間で頂点数一致
 	float m_forgeProg = 0.0f;					// 全体進捗 0..1(=各区域の平均。F1のプレビュー用)
@@ -911,9 +922,8 @@ private:
 	//--- 熱い鋼の見え方(発光していても形が読める様に。F1「Weapon」→ Hot steel)
 	bool  m_wpShowReflect = true;				// F1 診断: 刀身の反射(太陽・炉・部屋)を描くか
 	bool  m_wpShowGlow    = true;				// F1 診断: 刀身の熱の発光を描くか
-	float m_wpHotShade = 0.35f;					// 光の当たらない面の明るさ(0..1。小=明暗が強い=倒角/表裏がはっきり)
-	float m_wpRimK     = 0.6f;					// 縁(輪郭/稜線)を温度色で明るくする強さ
-	float m_wpRimPow   = 3.0f;					// 縁の明るさがどれだけ縁だけに寄るか(大=細い線)
+	float m_wpHotReflect = 1.0f;				// 熱い間も反射(太陽・炉・部屋)を残す割合。1=物理どおり(発光と反射は足し算)。2026-10-16 旧「反射を熱で消す」をやめた
+	std::shared_ptr<Texture> m_wpNormalTex;	// 刀身の法線マップ(素材パックの Blade_Normal_OpenGL)。冷/熱どちらでも凹凸が読める
 	void  LoadWeaponStages();					// Assets/Model/weapon/stage_*.fbx を読む
 	DirectX::XMMATRIX WeaponWorld();			// 武器ローカル→ワールドのフィット変換(照準/描画で共用)
 	DirectX::XMMATRIX WeaponSpin() const;		// 翻面回転(長軸まわりに m_flipAngle)。WeaponWorld と法線変換で共用
@@ -1094,6 +1104,7 @@ private:
 	};
 	std::vector<TrackerRow> m_trackerRows;			// 配方の工程と同じ数(UpdateTracker が合わせる)
 	void  UpdateTracker();							// 各行の completed を判定し、切り替わりを検出(毎フレーム)
+	bool  PlayHudVisible() const { return m_introPhase != IntroPhase::CameraMove; }	// 遊び中の HUD が画面に出ているか(DrawUI と UpdateTracker が同じ判定を使う)
 	bool  RowCompleted(int i, bool wasCompleted) const;	// i 行目は今「済」か(加熱の行は温度で生きている)
 	float ReadyTemp(StepName next) const;			// その工程を始めるのに十分な温度(加熱の行が「済」になる)
 	float MinWorkTemp(StepName next) const;		// その工程ができる最低温度(下回ると加熱の行が「済」でなくなる)
