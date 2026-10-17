@@ -21,7 +21,7 @@ public:
 
     // Tunables (public, like HingedDoor, so UI sliders can bind to them).
     float time01      = 0.22f;   // 0..1 through one day. 0 = sunrise, 0.25 = noon, 0.5 = sunset (start: morning)
-    float dayLengthSec = 240.0f; // real seconds for one full day (short so the light visibly moves)
+    float dayLengthSec = 1200.0f; // real seconds for one full day (20 min: daytime lasts ~10 min = one forging session; 240 s felt too fast, 2026-10-17)
     float tiltRad     = 0.925f;  // how far the sun's circle leans toward the window side (rad, 53 deg -> noon elevation 37 deg)
     bool  running     = true;    // false = time stands still (look at one moment)
 };

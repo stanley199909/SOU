@@ -54,7 +54,7 @@ namespace InputPrompts
 	const char* PointerIcon(AxisPrompt a);	// その操作の「本体」の絵(マウス本体 / 左か右のスティック)。動かして見せる教学に使う
 	const char* ShortName(Action a);// 一番短い呼び名(物の上の丸に入れる1文字: 「E」/「A」)
 
-	// 文の中の {Use} {Interact} {Bellows} {Pedal} {GrindPress} {Flip} {Look} {Move} {Hand} {Tilt} を、今の機器の呼び名へ置き換える。
+	// 文の中の {Use} {Interact} {Grab} {Bellows} {Pedal} {GrindPress} {Flip} {Look} {Move} {Hand} {Tilt} を、今の機器の呼び名へ置き換える。
 	//   {Hand} = 手で動かす物(マウス / 左スティック)、{Tilt} = 回す物(マウス / 右スティック)
 	// 印の無い文はそのまま返す。返す文字列は次に同じ文を同じ機器で頼まれるまで有効(中で覚えておく)。
 	const char* Format(const char* text);

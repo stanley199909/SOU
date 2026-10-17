@@ -364,6 +364,10 @@ void SceneForge::UpdateModeTrans(float tick)
 	m_canStrike = false;							// 工位に入った直後の誤打防止(一度離すまで叩かない)
 	if (m_introPhase == IntroPhase::CameraMove) FinishIntro();	// タイトル→金床の導入もここで終わり(BGM 切替、HUD が出る)
 	m_modeTrans = ModeTrans::None;
+
+	// Q/X で出た時: 走動になったその場で、火钳で掴む拍子表を始める(走動中に鉄を見て Q を押したのと同じ流れ)
+	if (m_walkMode && m_gripAfterExit && !m_carrying) PlaySequence(SEQ_GRIP_IRON, m_workAt);
+	m_gripAfterExit = false;
 }
 
 //--- 過渡中のカメラ: 開始視点 → 到着先 を SmoothStep で補間(出だしと着地がなめらか)。

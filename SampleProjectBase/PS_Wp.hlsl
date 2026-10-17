@@ -33,11 +33,13 @@ struct PIN { float4 pos:SV_POSITION; float3 nrm:TEXCOORD0; float2 uv:TEXCOORD3; 
 
 static const float3 SCALE_COLD_COL = float3(0.06, 0.055, 0.05);   // cold forge scale = sooty near-black
 static const float  SCALE_ROUGH    = 1.0;                         // forge scale is matte
-static const float3 SCALE_EMBER    = float3(1.0, 0.30, 0.08);     // dull dark-red glow of hot scale (not the steel's yellow-white)
+static const float3 SCALE_EMBER    = float3(1.0, 0.30, 0.08);     // dull dark-red the hot scale leans toward (not the steel's yellow-white)
+static const float  SCALE_REDDEN   = 0.7;                         // how far the scale's glow leans from the steel's heat color toward SCALE_EMBER (scale surface is a little cooler)
 static const float3 LUMA_WEIGHTS   = float3(0.2126, 0.7152, 0.0722); // Rec.709 luminance: take only the brightness of the heat color
 static const float3 GROUND_STEEL   = float3(0.78, 0.80, 0.83);   // ground (sharpened) steel color
 static const float  GROUND_ROUGH   = 0.08;                        // ground face is nearly mirror smooth
 static const float  HOT_START = 0.06, HOT_FULL = 0.45;            // temperature where the glow starts / is full
+static const float  EMISSIVITY_MIN = 0.6;                         // floor: hot forged steel is oxidized (real emissivity ~0.6-0.9), so it never goes dark at grazing angles
 static const float  HOT_BASE_TINT  = 0.35;                        // glow = heat color x (this + (1-this) x steel texture): keeps the texture visible in the glow
 
 // Reflected light of a surface, from the scene's lights (sun with shadow, forge fire, room).
@@ -59,16 +61,20 @@ float Emissivity(float3 f0, float nv)
     float3 f = f0 + (1 - f0) * pow(1 - nv, 5);
     float e = 1 - dot(f, LUMA_WEIGHTS);
     float eFacing = 1 - dot(f0, LUMA_WEIGHTS);
-    return saturate(e / max(eFacing, EPSILON));
+    return max(saturate(e / max(eFacing, EPSILON)), EMISSIVITY_MIN);
 }
 
 float4 main(PIN i) : SV_TARGET
 {
+    float3 v = normalize(eye.xyz - i.wp);
     float3 geometryN = normalize(i.nrm);
+    // Two-sided: the blade is a thin plate seen from either face (and it is flipped over while forging).
+    // A normal pointing AWAY from the eye gives nv = 0 -> Kirchhoff emissivity 0 -> no glow (suspected cause of
+    // 2026-10-17 "only the scale glows": the scale does not use emissivity). Turn it toward the eye.
+    if (dot(geometryN, v) < 0) geometryN = -geometryN;
     float3 n = geometryN;
     if (scale2.w > 0.5)
         n = PerturbNormal(geometryN, i.wp, i.uv, normalMap.Sample(samp, i.uv).xyz * 2 - 1);
-    float3 v = normalize(eye.xyz - i.wp);
     float3 l = sun.xyz / max(length(sun.xyz), EPSILON);
     float  ground = saturate(i.sharp);
     float  sunVisible = shadow.x > .5 ? SunVisibility(i.wp, geometryN) : 1;
@@ -96,7 +102,12 @@ float4 main(PIN i) : SV_TARGET
     float  covered = smoothstep(thr - scale.y, thr, m) * (1.0 - ground);
     float3 scaleCol = Reflected(SCALE_COLD_COL, SCALE_ROUGH, 0, n, v, l, i.wp, sunVisible) * scale2.y * reflectKeep;   // matte black, lit like everything else
     float  heatLuma = dot(i.col.rgb, LUMA_WEIGHTS);
-    scaleCol += SCALE_EMBER * heatLuma * scale.w * heat * scale2.z;   // hot scale glows dull red
+    // The scale is a thin skin at the SAME temperature as the steel -> it glows with the same heat color and the
+    // same gain (hot.w), only a little dimmer/redder (insulating skin = slightly cooler surface).
+    // 2026-10-17: before, it glowed a fixed dim red without the gain -> most of the blade (still scaled) looked
+    // the same at every temperature.
+    float3 scaleHeatCol = lerp(i.col.rgb, SCALE_EMBER * heatLuma, SCALE_REDDEN);
+    scaleCol += scaleHeatCol * scale.w * hot.w * heat * scale2.z;
     col = lerp(col, scaleCol, covered * scale.z);
     return float4(col, 1.0);
 }

@@ -119,10 +119,15 @@ const char* SceneForge::PromptLabel(const Interactable& it) const
 //--- ①範囲 ②視線 の2判定で「今 E で互動できる物件」m_focus を決める。複数当たれば優先度が高い物、同じなら視線上で一番手前。
 void SceneForge::UpdateInteract(float tick)
 {
+	// 「使う」(E/A: 工位・扉)と「掴む」(Q/X: 鉄)は別のキー=別々に一番を選ぶ。
+	//   以前は同じキーで、視線の先が鉄か工位かで意味が変わった → 少し狙いがずれると鉄を掴むつもりが工位に入った(2026-10-15 試遊)
 	int best = -1;
 	int bestPri = -1;
 	float bestT = FLT_MAX;
 	XMFLOAT3 bestCenter(0, 0, 0);
+	int grab = -1;
+	float grabT = FLT_MAX;
+	XMFLOAT3 grabCenter(0, 0, 0);
 
 	if (m_state == GAME_PLAY && m_walkMode && !Transitioning() && !SequencePlaying())
 	{
@@ -150,6 +155,17 @@ void SceneForge::UpdateInteract(float tick)
 			AimSystem::Hit h = AimSystem::Raycast(eye, fwd, XMMatrixIdentity(), pmn, pmx, 1);
 			if (!h.valid) continue;
 
+			if (it.action == InteractAction::GripIron)	// 掴む方は別に選ぶ(一番手前の鉄)
+			{
+				if (h.t < grabT)
+				{
+					grabT = h.t;
+					grab = i;
+					grabCenter = XMFLOAT3((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f, (mn.z + mx.z) * 0.5f);
+				}
+				continue;
+			}
+
 			const int pri = InteractPriority(it);
 			if (pri > bestPri || (pri == bestPri && h.t < bestT))
 			{
@@ -173,6 +189,10 @@ void SceneForge::UpdateInteract(float tick)
 	}
 	m_promptAlpha = Lerp::Damp(m_promptAlpha, best >= 0 ? 1.0f : 0.0f, m_promptLambda, tick);
 	m_player.SetCanInteract(best >= 0);			// Player::WantInteract の前提(両判定 true の時だけ E が効く)
+
+	m_grabFocus = grab;
+	if (grab >= 0) m_grabPromptPoint = grabCenter;	// 消える時は最後の位置のままフェードアウト
+	m_grabPromptAlpha = Lerp::Damp(m_grabPromptAlpha, grab >= 0 ? 1.0f : 0.0f, m_promptLambda, tick);
 }
 
 //--- E を押された物件の行為。
@@ -207,55 +227,68 @@ void SceneForge::DoInteract(const Interactable& it)
 	}
 }
 
-//--- 物件の上に「E」ボタンを描く。物件の中心をスクリーンへ投影し、そこに丸いキーアイコンを置く。
-//    CPU 側の投影は転置しない行列(GetView(false)/GetProj(false))を使う(shader 用の既定は転置済み)。
+namespace
+{
+	// ワールドの点 → 画面の点(CPU 側の投影は転置しない行列 GetView(false)/GetProj(false))。カメラの後ろなら false
+	bool ProjectToScreen(CameraBase* cam, const XMFLOAT3& p, ImVec2& out)
+	{
+		XMFLOAT4X4 v4 = cam->GetView(false), p4 = cam->GetProj(false);
+		XMVECTOR clip = XMVector4Transform(XMVectorSet(p.x, p.y, p.z, 1.0f), XMLoadFloat4x4(&v4) * XMLoadFloat4x4(&p4));
+		const float w = XMVectorGetW(clip);
+		if (w <= 0.0f) return false;
+		const ImVec2 disp = ImGui::GetIO().DisplaySize;	// 解像度非依存(画面比で配置)
+		out = ImVec2(( XMVectorGetX(clip) / w * 0.5f + 0.5f) * disp.x, (-XMVectorGetY(clip) / w * 0.5f + 0.5f) * disp.y);
+		return true;
+	}
+
+	// 丸いキーの印 + その下の一言(押すと何が起きるか)。見た目の寸法は画面の高さに対する比
+	const float PROMPT_R_RATIO = 0.030f;	// 丸の半径
+	void DrawKeyPrompt(ImDrawList* dl, ImVec2 c, float alpha, Action action, const char* label)
+	{
+		const ImVec2 disp = ImGui::GetIO().DisplaySize;
+		const float RING_RATIO = 0.004f, TEXT_RATIO = 0.034f;	// 外枠の太さ / キーの文字の高さ
+		const float LABEL_RATIO = 0.026f, LABEL_GAP = 0.010f;	// 一言の文字の高さ / 丸との間
+		const float r = disp.y * PROMPT_R_RATIO, ring = disp.y * RING_RATIO;
+		const int   a = (int)(255 * alpha);
+		dl->AddCircleFilled(c, r, IM_COL32(15, 12, 10, (int)(a * 0.85f)));	// 暗い円盤
+		dl->AddCircle(c, r, IM_COL32(240, 225, 200, a), 0, ring);			// 明るい外枠
+		ImFont* f = DebugUI::FontBody() ? DebugUI::FontBody() : ImGui::GetFont();
+		const float px = disp.y * TEXT_RATIO;
+		const char* key = InputPrompts::ShortName(action);	// その動作に割り当てたキー/ボタンの1文字(今の機器)
+		const ImVec2 ts = f->CalcTextSizeA(px, FLT_MAX, 0.0f, key);
+		dl->AddText(f, px, ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), IM_COL32(255, 200, 120, a), key);	// 暖色=鍛冶の火
+		if (!label || !label[0]) return;
+		const float lpx = disp.y * LABEL_RATIO;
+		ImFont* jp = DebugUI::FontJPFor(lpx);	// 文言は日本語(游明朝)。キーの文字だけ英字フォント
+		const ImVec2 ls = jp->CalcTextSizeA(lpx, FLT_MAX, 0.0f, label);
+		const ImVec2 lp(c.x - ls.x * 0.5f, c.y + r + disp.y * LABEL_GAP);
+		DrawSubtitleBox(dl, lp.x, lp.y, lp.x + ls.x, lp.y + ls.y, lpx, alpha);	// 字幕の箱(明るい背景でも読める)
+		DrawOutlinedText(dl, jp, lpx, lp.x, lp.y, IM_COL32(240, 225, 200, a), label);
+	}
+}
+
+//--- 物件の上にキーの印を描く: 「使う」(E/A) と「掴む」(Q/X) は別々の印。
+//    鉄は工位の上に置かれている(金床の砧面・炉の炭床)ので、2つの印がほぼ同じ所に出る → 重なる時は左右へ離す。
 void SceneForge::DrawInteractPrompt()
 {
-	if (m_promptAlpha < 0.01f) return;
 	CameraBase* cam = GetObj<CameraBase>("Camera");
 	if (!cam) return;
-
-	XMFLOAT4X4 v4 = cam->GetView(false), p4 = cam->GetProj(false);
-	XMVECTOR clip = XMVector4Transform(
-		XMVectorSet(m_promptPoint.x, m_promptPoint.y, m_promptPoint.z, 1.0f),
-		XMLoadFloat4x4(&v4) * XMLoadFloat4x4(&p4));
-	float w = XMVectorGetW(clip);
-	if (w <= 0.0f) return;	// カメラの後ろ
-
-	ImVec2 disp = ImGui::GetIO().DisplaySize;	// 解像度非依存(画面比で配置)
-	float sx = ( XMVectorGetX(clip) / w * 0.5f + 0.5f) * disp.x;
-	float sy = (-XMVectorGetY(clip) / w * 0.5f + 0.5f) * disp.y;
-
-	// 見た目の寸法は画面の高さに対する比(=ウィンドウサイズが変わっても同じ見え方)
-	const float R_RATIO    = 0.030f;	// 丸の半径
-	const float RING_RATIO = 0.004f;	// 外枠の太さ
-	const float TEXT_RATIO = 0.034f;	// 「E」(手柄なら「A」)の文字の高さ
-	const float r    = disp.y * R_RATIO;
-	const float ring = disp.y * RING_RATIO;
-	const int   a    = (int)(255 * m_promptAlpha);
-
-	ImDrawList* dl = ImGui::GetForegroundDrawList();
-	dl->AddCircleFilled(ImVec2(sx, sy), r, IM_COL32(15, 12, 10, (int)(a * 0.85f)));	// 暗い円盤
-	dl->AddCircle(ImVec2(sx, sy), r, IM_COL32(240, 225, 200, a), 0, ring);			// 明るい外枠
-
-	ImFont* f  = DebugUI::FontBody() ? DebugUI::FontBody() : ImGui::GetFont();
-	float   px = disp.y * TEXT_RATIO;
-	const char* key = InputPrompts::ShortName(Action::Interact);	// 「使う」に割り当てたキー/ボタンの1文字(今の機器)
-	ImVec2  ts = f->CalcTextSizeA(px, FLT_MAX, 0.0f, key);
-	dl->AddText(f, px, ImVec2(sx - ts.x * 0.5f, sy - ts.y * 0.5f), IM_COL32(255, 200, 120, a), key);	// 暖色=鍛冶の火
-
-	// 丸の下に「押すと何が起きるか」を一言(鉄を掴む/ここに置く/ここで作業/鉄はここに無い…)。
-	if (m_promptLabel && m_promptLabel[0])
+	const ImVec2 disp = ImGui::GetIO().DisplaySize;
+	ImVec2 useP, grabP;
+	const bool useOn  = m_promptAlpha     >= 0.01f && ProjectToScreen(cam, m_promptPoint, useP);
+	const bool grabOn = m_grabPromptAlpha >= 0.01f && ProjectToScreen(cam, m_grabPromptPoint, grabP);
+	const float OVERLAP_RADII = 4.0f;	// 2つの丸の中心がこれ(半径の倍数)より近いと重なって見える
+	const float SPREAD_RADII  = 2.6f;	// 重なる時、それぞれを中点から左右へこれだけ離す(半径の倍数。下の一言も重ならない幅)
+	const float r = disp.y * PROMPT_R_RATIO;
+	if (useOn && grabOn && fabsf(useP.x - grabP.x) < r * OVERLAP_RADII && fabsf(useP.y - grabP.y) < r * OVERLAP_RADII)
 	{
-		const float LABEL_RATIO = 0.026f;	// 文言の文字の高さ
-		const float LABEL_GAP   = 0.010f;	// 丸との間
-		float  lpx = disp.y * LABEL_RATIO;
-		ImFont* jp = DebugUI::FontJPFor(lpx);	// 文言は日本語(游明朝。大きさに一番近い実寸)。「E」だけ英字フォント
-		ImVec2 ls  = jp->CalcTextSizeA(lpx, FLT_MAX, 0.0f, m_promptLabel);
-		ImVec2 lp(sx - ls.x * 0.5f, sy + r + disp.y * LABEL_GAP);
-		DrawSubtitleBox(dl, lp.x, lp.y, lp.x + ls.x, lp.y + ls.y, lpx, a / 255.0f);	// 字幕の箱(明るい背景でも読める)
-		DrawOutlinedText(dl, jp, lpx, lp.x, lp.y, IM_COL32(240, 225, 200, a), m_promptLabel);
+		const ImVec2 mid((useP.x + grabP.x) * 0.5f, (useP.y + grabP.y) * 0.5f);
+		grabP = ImVec2(mid.x - r * SPREAD_RADII, mid.y);	// 掴む = 左
+		useP  = ImVec2(mid.x + r * SPREAD_RADII, mid.y);	// 使う = 右
 	}
+	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	if (useOn)  DrawKeyPrompt(dl, useP,  m_promptAlpha,     Action::Interact, m_promptLabel);
+	if (grabOn) DrawKeyPrompt(dl, grabP, m_grabPromptAlpha, Action::Grab,     (const char*)u8"火ばさみで鉄を掴む");
 }
 
 //--- F1: 互動範囲の箱(①)を線で表示。
@@ -279,7 +312,7 @@ void SceneForge::DrawInteractBoxes()
 		bool inRange = foot.x >= mn.x && foot.x <= mx.x && foot.z >= mn.z && foot.z <= mx.z;
 
 		XMFLOAT4 col = !InteractEnabled(it) ? XMFLOAT4(1.0f, 0.25f, 0.2f, 1.0f)
-		             : (i == m_focus)              ? XMFLOAT4(1.0f, 0.9f, 0.2f, 1.0f)
+		             : (i == m_focus || i == m_grabFocus) ? XMFLOAT4(1.0f, 0.9f, 0.2f, 1.0f)
 		             : inRange                     ? XMFLOAT4(0.2f, 1.0f, 0.3f, 1.0f)
 		                                           : XMFLOAT4(0.6f, 0.6f, 0.6f, 1.0f);
 		Geometory::SetColor(col);

@@ -159,6 +159,9 @@ private:
 	int   BuildBarMesh();		// 高さ場 m_h[][] から3D鉄板の頂点を生成(戻り値=頂点数)
 	void  Draw3DBillet();		// 3Dの光る鉄板を描画
 	void DrawHeatGauge();	// 温度ゲージ(HUD)
+	bool HeatGaugeZone(float& lo, float& hi, StepName* forStep = nullptr) const;	// 今の工程で見せる温度の幅(温度が関係ない工程は false=ゲージを出さない)。forStep=どの工程の幅か
+	bool HeatGaugeInUse() const;	// 今いる所で温度を見て判断するか(炉 / 鍛造中の金床 / 焼入れ中の水槽)。それ以外はゲージを薄くする
+	float m_gaugeAlpha = 1.0f;		// 温度ゲージの濃さ(使う所=1 / 使わない所=GAUGE_IDLE_ALPHA へなめらかに)
 	void DoStrike();		// 蓄力を解放して1打(変形＋フィードバック)
 
 private:
@@ -446,6 +449,7 @@ private:
 	static constexpr float TRANS_MIN_TIME = 1.0f;	// 過渡の最短(秒。近くても一瞬で飛ばない)
 	static constexpr float TRANS_MAX_TIME = 2.0f;	// 過渡の最長(秒。遠くても待たせすぎない)
 	bool   Transitioning() const { return m_modeTrans != ModeTrans::None; }
+	bool   m_gripAfterExit = false;	// 工位を Q/X で出た=出終わったら続けて鉄を掴む(E で出た時は false)
 	void   BeginEnterStation(Station s);	// 走動→工位の過渡を開始(刃もその工位へ置く)
 	static DirectX::XMFLOAT3 BedLongAxis(float yaw, const float size[2]);	// 炭床/水面の四角の長辺の水平方向
 	void   SetupStationView(Station s);		// 工位の視点方向などを玩家の今の位置から決める(置く拍子表が置き場所の向きを先に知る為にも使う)
@@ -471,7 +475,10 @@ private:
 	};
 	static const Interactable INTERACTABLES[];
 	static const int          NUM_INTERACTABLES;
-	int   m_focus = -1;							// 今 E で互動できる物件(INTERACTABLES の番号)。-1=無し
+	int   m_focus = -1;							// 今 E(使う)で互動できる物件(INTERACTABLES の番号。鉄以外)。-1=無し
+	int   m_grabFocus = -1;						// 今 Q(掴む)で掴める鉄(INTERACTABLES の番号)。-1=無し。キーを分けた=狙いが少しずれても誤って工位に入らない
+	DirectX::XMFLOAT3 m_grabPromptPoint = { 0,0,0 };	// 「Q 掴む」の提示を出す点(鉄の中心)
+	float m_grabPromptAlpha = 0.0f;				// 同 フェード 0..1
 	DirectX::XMFLOAT3 m_promptPoint = { 0,0,0 };	// 提示を出すワールド点(最後に注視した物件の中心)
 	float m_promptAlpha  = 0.0f;				// 提示のフェード 0..1(出る/消えるをなめらかに)
 	const char* m_promptLabel = "";				// 「E」の下の一言(最後に注視した物件の文言。PromptLabel)
@@ -849,7 +856,7 @@ private:
 	float m_scaleTiling  = 10.0f;				// マスクを UV に何回繰り返すか(大=細かい皮)
 	float m_scaleSoft    = 0.08f;				// 剥がれ際のぼかし幅(マスクの灰度単位)
 	float m_scaleOpacity = 0.9f;				// 黒皮の不透明度(1=地金を完全に隠す)
-	float m_scaleGlow    = 0.10f;				// 熱い時、黒皮が暗い赤でどれだけ光るか(温度の明るさに対する比。皮は断熱層で地金より暗い)
+	float m_scaleGlow    = 0.20f;				// 熱い時、黒皮がどれだけ光るか(地金の発光に対する比)。同じ温度でも皮は断熱層で表面が冷たい=暗い赤の斑に見える。地金と見分けがつく暗さ(2026-10-17)
 	float m_scaleStart   = 0.35f;				// 叩く前から剥がれている薄い皮(マスク灰度)。大=開局から地金が多く見える=斑な黒皮
 	float m_scaleHoldMax = 0.70f;				// 長手セルが完成するまでの剥がれ具合の上限(0..1)。小=未完成の所に皮が多く残る=見分けやすい
 	//--- 打撃の跡の光(2026-10-08): 叩いた所だけが一瞬明るくなる=「今どこを打ったか」を鉄の上で見せる(UI でない)。
@@ -863,7 +870,7 @@ private:
 	static constexpr float FACE_DONE_VOLUME      = 0.8f;	// 面(表/裏)が仕上がった瞬間の「完成」の合図(SE_FACE_DONE)の音量
 	static constexpr float FACE_DONE_FINAL_PITCH = 1.12f;	// 両面とも済んだ(工程の完了)時は一段高く鳴らす(連続撃破音の様に上がっていく)
 	static constexpr float GROOVE_RING_PITCH = 1.12f;		// リズムに乗った打撃の金床音の音程倍率(少し高い=澄んだ「キン」)
-	float m_wpHotGain    = 0.85f;				// 熱い鋼の発光全体の明るさ
+	float m_wpHotGain    = 1.0f;				// 熱い鋼の発光全体の明るさ。2026-10-17: 2.5 は「地金が光らない」別の原因(発射率0)を補おうとした誤った値=直した後は白飛びした
 	int   m_wpN = 0;							// 1段の頂点数
 	bool  m_wpOk = false;						// 読み込み成功&段間で頂点数一致
 	float m_forgeProg = 0.0f;					// 全体進捗 0..1(=各区域の平均。F1のプレビュー用)
@@ -1212,6 +1219,9 @@ private:
 	static constexpr float HEAT_TRACK_W_RATIO = 0.46f;	// 槽の幅(画面幅比)。画面中央に置く。槽の左端=温度0 / 右端=温度1
 	static constexpr float HEAT_TRACK_H_RATIO = 0.026f;	// 槽の高さ(画面高さ比)
 	static constexpr float HEAT_TRACK_Y_RATIO = 0.80f;	// 槽の上端(画面高さ比)
+	static constexpr float GAUGE_IDLE_ALPHA   = 0.20f;	// 温度を使わない所(歩いている等)のゲージの濃さ。消すと「鉄が冷めていく」が見えなくなるので薄く残す
+	static constexpr float GAUGE_FADE_OUT_LAMBDA = 1.5f;	// 薄くなる速さ(Damp率, 1/秒)。ゆっくり(約2秒)=目を引かない
+	static constexpr float GAUGE_FADE_IN_LAMBDA  = 6.0f;	// 濃くなる速さ。使う所に着いたらすぐ読める様に速く(課の出る速さと同じ)
 	// できてから「弾ける+確認音」までの間。叩いた瞬間にできる(金床の音と重なる)ので、少し遅らせて「カン！…チーン」と聞かせる。
 	static constexpr float LESSON_POP_DELAY   = 0.2f;
 	static constexpr float LESSON_NUDGE_SEC   = 8.0f;	// チュートリアル: この秒数進まなければ絵を脈打たせる(アイドルヒント)

@@ -25,6 +25,7 @@ namespace
 	{
 		{ Action::Use,         { VK_LBUTTON },           { P::RT } },
 		{ Action::Interact,    { 'E' },                  { P::A } },
+		{ Action::Grab,        { 'Q' },                  { P::X } },
 		{ Action::Bellows,     { 'R' },                  { P::LT } },
 		{ Action::Pedal,       { VK_RBUTTON, VK_SPACE }, { P::RT } },
 		{ Action::GrindPress,  { VK_LBUTTON },           { P::LT } },

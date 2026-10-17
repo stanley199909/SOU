@@ -386,8 +386,48 @@ static ImU32 HeatColor(float h, float alpha = 1.0f)
 //    「どこからどこまでが適温か」は画像に描かず、温度の定数(IDEAL_MIN 等)から程序で決めて紋理をその範囲だけ貼る
 //    (UV で切り出す)。=温度を調整しても絵が合わなくならない。画像が無ければ従来の矩形の描画に戻る。
 //    画像はどれも周りに大きな透明の余白があるので、中身の位置(px)を測って定数にした(元画像の寸法に対する比で使う)。
+//--- 温度ゲージが今「どの温度の幅」を見せるか。温度が意味を持つ工程の時だけ true。
+//    加熱の工程は「次の工程のための加熱」なので、次の工程(鍛造/焼入れ)の幅を見せる。
+//    研ぎは温度と関係ない → ゲージを出さない(2026-10-15 試遊: 研ぎ中に出ていて「温度を管理する工程」と誤解された)。
+bool SceneForge::HeatGaugeZone(float& lo, float& hi, StepName* forStep) const
+{
+	if (!m_recipe || m_stepIdx < 0 || m_stepIdx >= (int)m_recipe->steps.size()) return false;
+	StepName t = m_recipe->steps[m_stepIdx].type;
+	if (t == StepName::Heat && m_stepIdx + 1 < (int)m_recipe->steps.size()) t = m_recipe->steps[m_stepIdx + 1].type;
+	if (forStep) *forStep = t;
+	switch (t)
+	{
+	case StepName::Forge:  lo = IDEAL_MIN;       hi = IDEAL_MAX;       return true;	// 叩ける温度
+	case StepName::Quench: lo = QUENCH_MIN_TEMP; hi = QUENCH_MAX_TEMP; return true;	// 焼きが入る温度
+	default:               return false;
+	}
+}
+
+//--- 今いる所で、玩家が温度を見て判断するか(=ゲージを濃く出す)。
+//    炉 = いつ出すか / 金床(鍛造の工程)= 叩けるか / 水槽(焼入れの工程)= 入れてよいか。
+//    歩いている・移動の演出中・その工程と関係ない工位では使わない → 薄くする(2026-10-17 試遊: 使わない時に出ていると誤解を招く)。
+//    消さないのは、歩いている間に鉄が冷めていくのが見える様に(次に炉へ戻るかの判断材料)。
+bool SceneForge::HeatGaugeInUse() const
+{
+	StepName step;
+	float lo, hi;
+	if (m_walkMode || Transitioning() || !HeatGaugeZone(lo, hi, &step)) return false;
+	switch (m_station)
+	{
+	case Station::Hearth: return true;
+	case Station::Anvil:  return step == StepName::Forge;
+	case Station::Trough: return step == StepName::Quench;
+	default:              return false;
+	}
+}
+
 void SceneForge::DrawHeatGauge()
 {
+	float zoneLo = 0.0f, zoneHi = 0.0f;
+	if (!HeatGaugeZone(zoneLo, zoneHi)) return;	// 温度が関係ない工程(研ぎ)では出さない
+	const bool gaugeInUse = HeatGaugeInUse();
+	m_gaugeAlpha = Lerp::Damp(m_gaugeAlpha, gaugeInUse ? 1.0f : GAUGE_IDLE_ALPHA, gaugeInUse ? GAUGE_FADE_IN_LAMBDA : GAUGE_FADE_OUT_LAMBDA, ImGui::GetIO().DeltaTime);
+	const int ga = (int)(255 * m_gaugeAlpha);	// ゲージ全体(画像・文字)に掛ける不透明度
 	ImDrawList* dl = ImGui::GetForegroundDrawList();
 
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
@@ -420,7 +460,7 @@ void SceneForge::DrawHeatGauge()
 		const float TRACK_Y_RATIO = HEAT_TRACK_Y_RATIO;		// 槽の上端(画面高さ比)
 		const float MARKER_H_RATIO = 0.040f;	// 指針の高さ(画面高さ比)。heat_gauge_marker_ui.png はこの2倍(1080p)で縮小済み
 		const float MARKER_DIP     = 0.35f;		// 指針の先を槽へ食い込ませる量(槽の高さに対する比)
-		const ImU32 TINT = IM_COL32(255, 255, 255, 255);
+		const ImU32 TINT = IM_COL32(255, 255, 255, ga);
 
 		const float kx = frame->GetWidth() / F_W, ky = frame->GetHeight() / F_H;	// 書き出し解像度が変わった時の換算
 		const float tw = disp.x * TRACK_W_RATIO, th = disp.y * TRACK_H_RATIO;
@@ -454,10 +494,21 @@ void SceneForge::DrawHeatGauge()
 		};
 		const float IDEAL_V_TOP = 243.0f, IDEAL_V_BOTTOM = 481.0f;	// heat_zone_ideal.png の不透明な帯
 		const float OVER_V_TOP  = 265.0f, OVER_V_BOTTOM  = 462.0f;	// heat_zone_over.png の不透明な帯
-		DrawZone(m_gaugeIdeal.get(), IDEAL_MIN, IDEAL_MAX, IDEAL_V_TOP, IDEAL_V_BOTTOM);
+		DrawZone(m_gaugeIdeal.get(), zoneLo, zoneHi, IDEAL_V_TOP, IDEAL_V_BOTTOM);	// 今の工程に合う温度の幅(鍛造 / 焼入れ)
 		DrawZone(m_gaugeOver.get(),  OVERHEAT,  1.0f,      OVER_V_TOP,  OVER_V_BOTTOM);
 
 		DrawFrame(overlay);	// ③ 金の縁が②の端を覆う
+
+		// 何のゲージか一目で分かる様に、左に「鉄の温度」(説明なしでは温度と分からなかった。2026-10-15 試遊)
+		{
+			const float LABEL_RATIO = 0.024f, LABEL_GAP = 0.6f;	// 文字の高さ(画面高さ比) / 外框の左端との間(文字の高さ比)
+			const float lpx = disp.y * LABEL_RATIO;
+			ImFont* f = DebugUI::FontJPFor(lpx);
+			const char* label = (const char*)u8"鉄の温度";
+			const ImVec2 sz = f->CalcTextSizeA(lpx, FLT_MAX, 0.0f, label);
+			const float lyc = (ty0 + ty1) * 0.5f;
+			DrawOutlinedText(dl, f, lpx, lx0 - lpx * LABEL_GAP - sz.x, lyc - sz.y * 0.5f, IM_COL32(240, 225, 200, ga), label);
+		}
 
 		// --- 指針: 先端(下の頂点)を今の温度の位置に。槽へ少し食い込ませる ---
 		//   heat_gauge_marker_ui.png は中身だけを切り出し、画面での大きさの2倍へ高品質(Lanczos)で縮小済み
@@ -478,7 +529,7 @@ void SceneForge::DrawHeatGauge()
 			const char* label = (const char*)u8"▲ ここで叩く";
 			const ImVec2 sz = f->CalcTextSizeA(lpx, FLT_MAX, 0.0f, label);
 			const float cxg = (heatX(IDEAL_MIN) + heatX(IDEAL_MAX)) * 0.5f;
-			dl->AddText(f, lpx, ImVec2(cxg - sz.x * 0.5f, fy1 + lpx * GAP), IM_COL32(150, 235, 150, 255), label);
+			dl->AddText(f, lpx, ImVec2(cxg - sz.x * 0.5f, fy1 + lpx * GAP), IM_COL32(150, 235, 150, ga), label);
 		}
 		return;
 	}
@@ -697,16 +748,19 @@ void SceneForge::DrawPlayUI()
 		{ AxisPrompt::Move,       (const char*)u8"移動" },
 		{ AxisPrompt::Look,       (const char*)u8"見回す" },
 		{ Action::Interact,       (const char*)u8"使う" },
+		{ Action::Grab,           (const char*)u8"掴む" },
 	};
 	static const KeyHint ANVIL_HINTS[] = {
 		{ AxisPrompt::Aim,        (const char*)u8"狙う" },
 		{ Action::Use,            (const char*)u8"長押し：ハンマー" },
 		{ Action::Flip,           (const char*)u8"長押し：裏返す" },
+		{ Action::Grab,           (const char*)u8"掴んで運ぶ" },
 		{ Action::Interact,       (const char*)u8"離れる" },
 	};
 	static const KeyHint HEARTH_HINTS[] = {
 		{ Action::Bellows,        (const char*)u8"長押し：ふいごで風を送る" },
-		{ Action::Interact,       (const char*)u8"炉から出す" },
+		{ Action::Grab,           (const char*)u8"掴んで出す" },
+		{ Action::Interact,       (const char*)u8"離れる" },
 	};
 	static const KeyHint GRIND_HINTS[] = {
 		{ Action::Pedal,          (const char*)u8"連打：ペダル" },
@@ -714,10 +768,12 @@ void SceneForge::DrawPlayUI()
 		{ AxisPrompt::HandHorizontal, (const char*)u8"左右：滑らせる" },
 		{ AxisPrompt::TiltVertical,   (const char*)u8"上下：刃の角度" },
 		{ Action::Flip,           (const char*)u8"長押し：裏返す" },
+		{ Action::Grab,           (const char*)u8"掴んで運ぶ" },
 		{ Action::Interact,       (const char*)u8"離れる" },
 	};
 	static const KeyHint TROUGH_HINTS[] = {
 		{ Action::Use,            (const char*)u8"水に沈める" },
+		{ Action::Grab,           (const char*)u8"掴んで運ぶ" },
 		{ Action::Interact,       (const char*)u8"離れる" },
 	};
 	static const KeyHint QUENCH_STIR_HINTS[] = {
@@ -2029,7 +2085,7 @@ void SceneForge::DrawUI()
 			ImGui::SliderFloat("Off Z", &m_wpOff[2], -1.0f, 1.0f, "%.3f");
 			ImGui::TextDisabled("-- Hot steel (form must read while glowing) --");
 			ImGui::SliderFloat("Reflection while hot", &m_wpHotReflect, 0.0f, 1.0f, "%.2f");	// 1=物理どおり(反射+発光)。0=旧の「熱いと反射を消す」
-			ImGui::SliderFloat("Hot gain",  &m_wpHotGain,  0.3f, 1.5f, "%.2f");
+			ImGui::SliderFloat("Hot gain",  &m_wpHotGain,  0.3f, 6.0f, "%.2f");
 			ImGui::Checkbox("Blade: reflection", &m_wpShowReflect); ImGui::SameLine();	// 診断: 白く見える原因が反射か発光かを切り分ける
 			ImGui::Checkbox("Blade: glow", &m_wpShowGlow);	// 発光全体の明るさ(白飛び防止)
 			ImGui::TextDisabled("-- Forge scale (black oxide, knocked off by hammering) --");
@@ -2155,6 +2211,7 @@ void SceneForge::DrawUI()
 			ImGui::SliderFloat("Exit step back",     &m_exitStepBack, 0.0f, 2.0f, "%.2f");	// 退出時に金床から下がる距離
 			ImGui::SliderFloat("Interact look pad",  &m_lookPad,      0.0f, 0.5f, "%.2f");	// 視線判定の箱の膨らみ(大=狙いやすい)
 			ImGui::Text("interact focus: %s", m_focus >= 0 ? INTERACTABLES[m_focus].propKey : "-");
+			ImGui::Text("grab focus: %s", m_grabFocus >= 0 ? INTERACTABLES[m_grabFocus].propKey : "-");
 			ImGui::SliderFloat("Mouse sens",  &m_walkSens,     0.0006f, 0.0050f, "%.4f");	// 視角感度(低=重い)
 			ImGui::SliderFloat("Pitch limit", &m_walkPitchLim, 0.3f,  1.55f,  "%.2f");	// 上下の振り切り制限(rad)
 			ImGui::SliderFloat("Eye height",  &m_walkEyeH,     0.8f,  2.2f,   "%.2f");	// 目線の高さ

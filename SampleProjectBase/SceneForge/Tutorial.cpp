@@ -28,17 +28,17 @@ const SceneForge::LessonDef SceneForge::LESSONS[] =
 	//  id                  絵                        キー             一言(キー名は {印} で書く=今の機器の呼び名に置き換わる)                                           need   idle   誤り
 	// --- 金床 ---
 	{ LessonId::Flip,      LessonAnim::FlipHold,      NO_KEY,           (const char*)u8"{Flip}を長押しして、刃を裏返す",                1.0f,  0.0f,  3 },	// 片面が済んだら(打ち続けるより先に)
-	{ LessonId::LeaveCold, LessonAnim::PressKey,      Action::Interact, (const char*)u8"鉄が冷えた。{Interact}で金床を離れ、炉で熱し直す",   1.0f,  0.0f,  3 },	// 救急: 冷打を重ねたら
+	{ LessonId::LeaveCold, LessonAnim::PressKey,      Action::Grab,     (const char*)u8"鉄が冷えた。{Grab}で鉄を掴み、炉へ運んで熱し直す", 1.0f,  0.0f,  3 },	// 救急: 冷打を重ねたら
 	{ LessonId::Aim,       LessonAnim::MouseVertical, NO_KEY,           (const char*)u8"{Hand}を上下に動かして、叩く場所を狙う",       0.5f,  0.0f,  3 },
 	{ LessonId::Strike,    LessonAnim::StrikeHold,    NO_KEY,           (const char*)u8"{Use}を長押しして力を溜め、離して叩く",   1.0f, 10.0f,  0 },
 	{ LessonId::ReadGauge, LessonAnim::PointGauge,    NO_KEY,           (const char*)u8"温度ゲージの緑の間だけ、叩くと形が変わる",     3.0f,  0.0f,  0 },
 	{ LessonId::HitScale,  LessonAnim::PointUp,       NO_KEY,           (const char*)u8"表面の黒い皮が残っている所を叩く",            0.3f,  0.0f,  0 },	// 術語(黒皮/酸化スケール/金肌)でなく見た目で言う=時代設定に依らない(2026-10-14)
 	// --- 炉 ---
-	{ LessonId::TakeOut,   LessonAnim::PressKey,      Action::Interact, (const char*)u8"十分に熱くなった。{Interact}で炉を離れる",          1.0f,  0.0f,  0 },
+	{ LessonId::TakeOut,   LessonAnim::PressKey,      Action::Grab,     (const char*)u8"十分に熱くなった。{Grab}で鉄を掴んで炉から出す", 1.0f,  0.0f,  0 },
 	{ LessonId::Bellows,   LessonAnim::HoldKey,       Action::Bellows,  (const char*)u8"{Bellows}を長押しして、ふいごで風を送る",           0.3f,  3.0f,  0 },
 	{ LessonId::WaitHot,   LessonAnim::PointGauge,    NO_KEY,           (const char*)u8"温度ゲージの印が、囲んだ所に入るまで待つ",     1.0f,  0.0f,  0 },
 	// --- 走動・搬運(通常モードの救急は無し: 行き先の ▼ が点滅する) ---
-	{ LessonId::GripIron,  LessonAnim::PressKey,      Action::Interact, (const char*)u8"鉄を見て、{Interact}で火ばさみで掴む",               1.0f,  0.0f,  0 },
+	{ LessonId::GripIron,  LessonAnim::PressKey,      Action::Grab,     (const char*)u8"鉄を見て、{Grab}で火ばさみで掴む",           1.0f,  0.0f,  0 },
 	{ LessonId::PutDown,   LessonAnim::PressKey,      Action::Interact, (const char*)u8"{Interact}で鉄を置く",                               1.0f,  0.0f,  0 },
 	{ LessonId::WalkTo,    LessonAnim::Walk,          NO_KEY,           (const char*)u8"{Move}で、▼の印へ歩く",                     1.0f,  0.0f,  0 },
 	// --- 砥石(救急の回数 10 回 = 誤りの独白 0.8 秒ごとに1回なので、約 8 秒続けて間違えたら。2026-10-12 ユーザー決定。旧 2 回は探っている途中に出た) ---
@@ -130,9 +130,9 @@ bool SceneForge::LessonActive(LessonId id) const
 //--- 走動中、行き先(鉄を取りに行く時は鉄 / 持っている時は工位)を見ていて E が効くか。
 bool SceneForge::FocusOnGuideTarget() const
 {
+	if (!m_carrying && m_workAt != m_guideGoal) return m_grabFocus >= 0;	// 鉄を取りに行く所(掴む方は別に選ぶ=m_grabFocus)
 	if (m_focus < 0) return false;
 	const Interactable& it = INTERACTABLES[m_focus];
-	if (!m_carrying && m_workAt != m_guideGoal) return it.action == InteractAction::GripIron;	// 鉄を取りに行く所
 	return it.action == InteractAction::EnterStation && it.station == m_guideGoal;
 }
 
@@ -198,7 +198,7 @@ void SceneForge::PopLesson(LessonState& l)
 void SceneForge::UpdateLessons(float dt)
 {
 	static_assert(_countof(LESSONS) == (size_t)LessonId::Count, "every LessonId needs exactly one row in LESSONS");
-	const float LEARNED_VOLUME = 0.7f;
+	const float LEARNED_VOLUME = 0.8f;
 	const float METRIC_EPS     = 1e-5f;
 
 	// 狙いを動かした量(Aim の「できた」量)。前フレームとの差の累計
@@ -290,6 +290,7 @@ void SceneForge::UpdateLessons(float dt)
 //  描画: 動く絵 + 一言(全ての課で同じ位置・同じ見た目・同じ確認音)
 //  動く絵は m_lessonClock(設定の「教学アニメの速さ」を掛けた時計)で動かす。押した長さの輪など「実際の進み」は速さに関係しない
 //====================================================================
+static const float LESSON_CENTER_X  = 0.70f;	// 画面の横位置(画面幅比)。中央は金床と刃=作業する所なので右へ寄せる(2026-10-17 試遊: 中央の案内が視界を塞ぐ)
 static const float LESSON_CENTER_Y  = 0.60f;	// 画面の縦位置(刃の少し下)=淬火/研ぎの動く案内と同じ
 static const float LESSON_ICON_RATIO = 0.085f;	// アイコンの大きさ(画面高さ比)=同上
 static const float LESSON_SHADOW_PX  = 2.0f;
@@ -365,7 +366,7 @@ void SceneForge::DrawAxisLesson(AxisPrompt axisPrompt, int towards, float alpha,
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
 	ImDrawList* dl = ImGui::GetForegroundDrawList();
 	const float size = disp.y * LESSON_ICON_RATIO * scale;
-	const ImVec2 c(disp.x * 0.5f, disp.y * LESSON_CENTER_Y);
+	const ImVec2 c(disp.x * LESSON_CENTER_X, disp.y * LESSON_CENTER_Y);
 	const ImVec2 axis = vertical ? ImVec2(0.0f, 1.0f) : ImVec2(1.0f, 0.0f);	// + = 下 / 右
 	const float t01 = fmodf(m_lessonClock, SWING_SEC) / SWING_SEC;
 	float off, movePlus;	// 中心からのずれ / 動いている向き(+ = 下・右)
@@ -395,7 +396,7 @@ void SceneForge::DrawStrikeHoldLesson(float alpha, float scale, unsigned int tin
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
 	ImDrawList* dl = ImGui::GetForegroundDrawList();
 	const float size = disp.y * LESSON_ICON_RATIO * scale;
-	const ImVec2 c(disp.x * 0.5f, disp.y * LESSON_CENTER_Y);
+	const ImVec2 c(disp.x * LESSON_CENTER_X, disp.y * LESSON_CENTER_Y);
 	const float t = fmodf(m_lessonClock, HOLD_SEC + STRIKE_SEC);
 	const char* key = InputPrompts::Icon(Action::Use);			// 左クリック / RT
 	const std::string outline = std::string(key ? key : "") + "_outline";	// 離している絵
@@ -429,7 +430,7 @@ void SceneForge::DrawHoldKeyLesson(Action action, float alpha, float scale, unsi
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
 	ImDrawList* dl = ImGui::GetForegroundDrawList();
 	const float size = disp.y * LESSON_ICON_RATIO * scale;
-	const ImVec2 c(disp.x * 0.5f, disp.y * LESSON_CENTER_Y);
+	const ImVec2 c(disp.x * LESSON_CENTER_X, disp.y * LESSON_CENTER_Y);
 	const float t = fmodf(m_lessonClock, HOLD_SEC + REST_SEC);
 	if (t < HOLD_SEC)
 	{
@@ -461,7 +462,7 @@ void SceneForge::DrawHoldProgressPrompt(Action action, float fill01, bool presse
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
 	ImDrawList* dl = ImGui::GetForegroundDrawList();
 	const float size = disp.y * LESSON_ICON_RATIO * scale;
-	const ImVec2 c(disp.x * 0.5f, disp.y * LESSON_CENTER_Y);
+	const ImVec2 c(disp.x * LESSON_CENTER_X, disp.y * LESSON_CENTER_Y);
 	std::string outline;
 	const char* key = LessonKeyIcon(action, outline);
 	DrawLessonIcon(dl, pressed ? key : outline.c_str(), ImVec2(c.x, c.y + (pressed ? size * LESSON_PRESS_SINK : 0.0f)), size, alpha, tint);
@@ -480,7 +481,7 @@ void SceneForge::DrawTapKeyLesson(Action action, float alpha, float scale, unsig
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
 	ImDrawList* dl = ImGui::GetForegroundDrawList();
 	const float size = disp.y * LESSON_ICON_RATIO * scale;
-	const ImVec2 c(disp.x * 0.5f, disp.y * LESSON_CENTER_Y);
+	const ImVec2 c(disp.x * LESSON_CENTER_X, disp.y * LESSON_CENTER_Y);
 	const float p = fmodf(m_lessonClock, PERIOD) / PERIOD;
 	if (p < PRESS_FRAC) DrawLessonIcon(dl, key, ImVec2(c.x, c.y + size * LESSON_PRESS_SINK), size, alpha, tint);
 	else                DrawLessonIcon(dl, outline.c_str(), c, size, alpha, tint);
@@ -538,7 +539,7 @@ void SceneForge::DrawPointUpLesson(float alpha, float scale, unsigned int tint)
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
 	ImDrawList* dl = ImGui::GetForegroundDrawList();
 	const float size = disp.y * LESSON_ICON_RATIO * scale;
-	const ImVec2 c(disp.x * 0.5f, disp.y * LESSON_CENTER_Y);
+	const ImVec2 c(disp.x * LESSON_CENTER_X, disp.y * LESSON_CENTER_Y);
 	const float bob = sinf(m_lessonClock * BOB_HZ * XM_2PI) * size * BOB_AMP;
 	DrawLessonArrow(dl, ImVec2(c.x, c.y - size * 0.5f + bob), -1.0f, size, alpha, (tint == WHITE) ? LESSON_RING_COL : tint);	// 普段は橙、できた瞬間は金
 }
@@ -743,7 +744,7 @@ XMFLOAT2 SceneForge::LessonCenter(LessonAnim anim) const
 	const float WALK_Y_RATIO = 0.74f;	// 同(画面高さ比)
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
 	if (anim == LessonAnim::Walk) return XMFLOAT2(disp.x * WALK_X_RATIO, disp.y * WALK_Y_RATIO);
-	return XMFLOAT2(disp.x * 0.5f, disp.y * LESSON_CENTER_Y);
+	return XMFLOAT2(disp.x * LESSON_CENTER_X, disp.y * LESSON_CENTER_Y);
 }
 
 //--- WASD: 4つのキーを並べ(上段 W / 下段 A S D)、順に押される。
@@ -799,7 +800,7 @@ void SceneForge::DrawGrindRunLesson(float alpha, float scale, unsigned int tint)
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
 	ImDrawList* dl = ImGui::GetForegroundDrawList();
 	const float size = disp.y * LESSON_ICON_RATIO * scale;
-	const ImVec2 c(disp.x * 0.5f, disp.y * LESSON_CENTER_Y);
+	const ImVec2 c(disp.x * LESSON_CENTER_X, disp.y * LESSON_CENTER_Y);
 	const bool  holdOK = InputActions::Held(Action::GrindPress);
 	const bool  tapOK  = m_wheel.Speed01() >= GRIND_WORK_MIN_SPEED;
 	std::string holdOutline, tapOutline;

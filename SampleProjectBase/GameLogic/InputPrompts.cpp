@@ -141,6 +141,7 @@ namespace
 	{
 		{ "{Use}",      Action::Use },
 		{ "{Interact}", Action::Interact },
+		{ "{Grab}",     Action::Grab },
 		{ "{Bellows}",  Action::Bellows },
 		{ "{Pedal}",    Action::Pedal },
 		{ "{GrindPress}", Action::GrindPress },

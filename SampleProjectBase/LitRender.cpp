@@ -15,7 +15,7 @@ namespace
 	XMFLOAT3 s_sunDir   = { 0.0f, 1.0f, 0.0f };
 	float    s_daylight = 1.0f;
 	bool     s_sunSet   = false;
-	const float NIGHT_FILL = 0.12f;	// 夜の環境光 = 昼の何割(月・星・外の残り光)
+	const float NIGHT_FILL = 0.35f;	// 夜の環境光 = 昼の何割(月・星・外の残り光)。0.12 では夜に何も見えなかった(2026-10-17)。ゲームとして読める明るさを優先
 	const float NIGHT_SKY  = 0.015f;	// 夜の空(窓の外)の明るさ = 昼の何割(ほぼ黒い紺。0.04 では夜でも灰色に見えた)
 	float s_firePos[3] = {};
 	float s_fireScale  = 1.0f;

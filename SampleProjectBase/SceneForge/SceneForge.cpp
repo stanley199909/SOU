@@ -436,6 +436,7 @@ void SceneForge::StartGame()
 	m_walkMode = true;
 	m_modeTrans = ModeTrans::None;	// 走動⇔工位の移動アニメも解除
 	m_focus = -1; m_promptAlpha = 0.0f;	// 互動の状態も初期化
+	m_grabFocus = -1; m_grabPromptAlpha = 0.0f; m_gripAfterExit = false;
 	m_walkPitch = 0.0f;
 	m_player.Init(DirectX::XMFLOAT3(0.0f, m_walkFloorY, -2.0f), 0.0f);	// 開始位置/向きを戻す
 	m_door.Reset();			// 裏口の扉は閉じた状態から
@@ -923,6 +924,16 @@ void SceneForge::UpdatePlay(float tick)
 	{
 		m_charging = false; m_charge = 0.0f;	// 蓄力中なら破棄(暴発させない)
 		BeginExitStation();
+		return;
+	}
+	// --- 工位から鉄を掴んで出る: Q/X。E と同じ条件で出て、出終わったら続けて火钳で掴む(UpdateModeTrans)。
+	//   鉄匠は鉄を置いて離れてから取りに戻らない=火钳で掴んだまま出る。「E で出る → 鉄を見て Q」の2手を1手に(2026-10-17 ユーザー決定)。
+	if (inputOn && m_flipPhase == FlipPhase::None && !quenchLocked && InputActions::Pressed(Action::Grab)
+	    && m_workAt == m_station && !m_carrying)
+	{
+		m_charging = false; m_charge = 0.0f;
+		BeginExitStation();
+		m_gripAfterExit = Transitioning();	// 出始めた時だけ(既に過渡中で出られなかった時は掴まない)
 		return;
 	}
 
@@ -1935,6 +1946,8 @@ void SceneForge::Update(float tick)
 			// 互動: ①範囲 ②視線 の両方が true の物件だけ E が効く(Interaction.cpp)。
 			//   金床=工位へ移動 / 火钳=取って工位へ移動→翻面。退出(工位→走動)は UpdatePlay 側で E。
 			if (m_player.WantInteract() && m_focus >= 0) DoInteract(INTERACTABLES[m_focus]);
+			// 鉄を掴むのは別のキー(Q/X)。鉄は工位の上にあるので、同じキーだと「工位に入る」つもりで掴んでしまう(試遊 10-15)
+			else if (m_grabFocus >= 0 && InputActions::Pressed(Action::Grab)) DoInteract(INTERACTABLES[m_grabFocus]);
 		}
 		else if (m_flipPhase != FlipPhase::None)
 		{
