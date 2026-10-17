@@ -4,6 +4,7 @@
 #include "Input.h"
 #include "DebugUI.h"
 #include "Defines.h"	// SSAA_SCALE
+#include "AutoExposure.h"	// 自動露出(目の慣れ)
 #include <math.h>
 
 using namespace DirectX;
@@ -156,7 +157,21 @@ float4 main(PIN i):SV_TARGET
 	float lm=FxLuma(m),lnw=FxLuma(nw),lne=FxLuma(ne),lsw=FxLuma(sw),lse=FxLuma(se);
 	float lmin=min(lm,min(min(lnw,lne),min(lsw,lse)));
 	float lmax=max(lm,max(max(lnw,lne),max(lsw,lse)));
-	if((lmax-lmin) < max(0.0625, lmax*0.125)) return float4(ACESFilm(m),1.0);
+	float e=i.color.r;	// exposure (auto exposure, AutoExposure.cpp): applied to the HDR colour right before ACES
+	if((lmax-lmin) < max(0.0625, lmax*0.125))
+	{
+		// Not an edge: sharpen the fine detail a little (the 3D scene is drawn at a lower internal
+		// resolution and stretched up, which softens the metal texture). Unsharp mask = push the pixel
+		// away from the average of its neighbours, then CLAMP it inside the neighbours' min..max so it
+		// can never overshoot into a bright/dark halo -- the core idea of AMD FidelityFX CAS
+		// (contrast adaptive sharpening). Search: "contrast adaptive sharpening", "unsharp mask".
+		const float SHARPEN = 0.8;	// strength (0 = off)
+		float3 avg = (nw + ne + sw + se) * 0.25;
+		float3 lo = min(m, min(min(nw, ne), min(sw, se)));
+		float3 hi = max(m, max(max(nw, ne), max(sw, se)));
+		float3 sharp = clamp(m + (m - avg) * SHARPEN, lo, hi);
+		return float4(ACESFilm(sharp*e),1.0);
+	}
 	float2 dir;
 	dir.x=-((lnw+lne)-(lsw+lse));
 	dir.y= ((lnw+lsw)-(lne+lse));
@@ -166,8 +181,8 @@ float4 main(PIN i):SV_TARGET
 	float3 a=0.5*(tex.Sample(samp,uv+dir*(1.0/3.0-0.5)).rgb+tex.Sample(samp,uv+dir*(2.0/3.0-0.5)).rgb);
 	float3 b=a*0.5+0.25*(tex.Sample(samp,uv+dir*-0.5).rgb+tex.Sample(samp,uv+dir*0.5).rgb);
 	float lb=FxLuma(b);
-	if(lb<lmin||lb>lmax) return float4(ACESFilm(a),1.0);
-	return float4(ACESFilm(b),1.0);
+	if(lb<lmin||lb>lmax) return float4(ACESFilm(a*e),1.0);
+	return float4(ACESFilm(b*e),1.0);
 }
 )EOT";
 
@@ -186,7 +201,7 @@ float3 ACESFilm(float3 x){
 float4 main(PIN i):SV_TARGET
 {
     float3 c = tex.Sample(samp, i.uv).rgb;
-    return float4(ACESFilm(c), 1.0);
+    return float4(ACESFilm(c * i.color.r), 1.0);   // r = exposure (auto exposure)
 }
 )EOT";
 
@@ -196,9 +211,9 @@ void PostProcess::Init(UINT width, UINT height)
 	m_height = height;
 
 	// シーン描画用のオフスクリーンRTを作成(SSAA: 画面のSSAA_SCALE倍で描き、合成時に縮小)
-	m_sceneRT.Create(DXGI_FORMAT_R16G16B16A16_FLOAT, width * SSAA_SCALE, height * SSAA_SCALE);
+	m_sceneRT.Create(DXGI_FORMAT_R16G16B16A16_FLOAT, RenderPixels(width), RenderPixels(height));
 	// water refraction snapshot (sceneRTと同解像度でコピー)
-	m_refractRT.Create(DXGI_FORMAT_R16G16B16A16_FLOAT, width * SSAA_SCALE, height * SSAA_SCALE);
+	m_refractRT.Create(DXGI_FORMAT_R16G16B16A16_FLOAT, RenderPixels(width), RenderPixels(height));
 	// ブルーム用は半解像度(軽くて柔らかくなる)
 	m_brightRT.Create(DXGI_FORMAT_R8G8B8A8_UNORM, width / 2, height / 2);
 	m_blurRT.Create(DXGI_FORMAT_R8G8B8A8_UNORM, width / 2, height / 2);
@@ -216,6 +231,7 @@ void PostProcess::Init(UINT width, UINT height)
 
 void PostProcess::Uninit()
 {
+	AutoExposure::Uninit();
 	m_fxaaPS.reset();
 	m_tonemapPS.reset();
 	m_ppPS.reset();
@@ -225,6 +241,7 @@ void PostProcess::Uninit()
 void PostProcess::Update(float tick)
 {
 	m_time += tick;
+	AutoExposure::Update(tick);	// 目の慣れ: 露出を目標へ少しずつ近づける
 
 	// SHIFTはシーン切り替えに使われているので、押していない時だけ操作を受け付ける
 	if (IsKeyPress(VK_SHIFT)) return;
@@ -250,7 +267,7 @@ void PostProcess::DrawUI()
 	ImGui::Begin("Post Process");
 
 	// SSAA確認用: 実際の離屏描画解像度(sceneRT)。1280x720でなく2560x1440等ならSSAA有効。
-	ImGui::Text("Render res (SSAA): %u x %u", m_width * SSAA_SCALE, m_height * SSAA_SCALE);
+	ImGui::Text("Render res: %u x %u", RenderPixels(m_width), RenderPixels(m_height));
 	ImGui::Separator();
 
 	ImGui::RadioButton("Bloom", &m_mode, MODE_BLOOM);
@@ -279,6 +296,14 @@ void PostProcess::DrawUI()
 
 void PostProcess::Begin(DepthStencil* pDSV)
 {
+	// 内部解像度(設定の「画質」)が変わっていたら、場面の描画先と深度を新しい大きさで作り直す
+	const UINT rw = RenderPixels(m_width), rh = RenderPixels(m_height);
+	if (m_sceneRT.GetWidth() != rw || m_sceneRT.GetHeight() != rh)
+	{
+		m_sceneRT.Create(DXGI_FORMAT_R16G16B16A16_FLOAT, rw, rh);
+		m_refractRT.Create(DXGI_FORMAT_R16G16B16A16_FLOAT, rw, rh);
+		if (pDSV) pDSV->Create(rw, rh, false);
+	}
 	// 描画先をオフスクリーンRTへ
 	RenderTarget* pRT = &m_sceneRT;
 	SetRenderTargets(1, &pRT, pDSV);
@@ -312,6 +337,7 @@ void PostProcess::End(RenderTarget* pScreen)
 	// ==== ブルームモード(パーティクル向け・既定) ====
 	if (m_mode == MODE_BLOOM)
 	{
+		AutoExposure::Measure(&m_sceneRT);	// 今の絵の平均の明るさを測る(読み取りは数フレーム後=待たない)
 		SetDepthTest(DEPTH_DISABLE);
 		SetSamplerState(SAMPLER_LINEAR);
 
@@ -337,10 +363,11 @@ void PostProcess::End(RenderTarget* pScreen)
 		// 4) 合成: 画面 = sceneRT + brightRT(加算)
 		SetRenderTargets(1, &pScreen, nullptr);
 		SetBlendMode(BLEND_NONE);
-		if (m_fxaa) DrawFXAA(&m_sceneRT);						// 元の絵(エッジを均す)
-		else        DrawFull(&m_sceneRT, m_tonemapPS.get(), XMFLOAT4(1, 1, 1, 1));	// FXAA無しでも必ずACESで収光
+		const float e = AutoExposure::Exposure();				// 自動露出(目の慣れ)。色の r で ACES の直前に掛ける
+		if (m_fxaa) DrawFXAA(&m_sceneRT, e);					// 元の絵(エッジを均す)
+		else        DrawFull(&m_sceneRT, m_tonemapPS.get(), XMFLOAT4(e, e, e, 1));	// FXAA無しでも必ずACESで収光
 		SetBlendMode(BLEND_ADD);
-		float b = m_bloomStrength * intensity;
+		float b = m_bloomStrength * intensity * e;				// にじむ光も同じ露出で(窓を見て目が慣れたら光のにじみも弱まる)
 		DrawFull(&m_brightRT, nullptr, XMFLOAT4(b, b, b, 1));	// にじむ光を加算
 
 		SetBlendMode(BLEND_ALPHA);
@@ -414,13 +441,13 @@ void PostProcess::DrawEffect(int effect, float ox, float oy, float sx, float sy,
 }
 
 // FXAAの1パス(全画面)。rcpFrame=1テクセル。エッジ(幾何の輪郭)のチラつきを均す。
-void PostProcess::DrawFXAA(Texture* src)
+void PostProcess::DrawFXAA(Texture* src, float exposure)
 {
 	struct FParam { float rcp[2]; float _pad[2]; } p = {};
-	p.rcp[0] = 1.0f / (float)(m_width  * SSAA_SCALE);
-	p.rcp[1] = 1.0f / (float)(m_height * SSAA_SCALE);
+	p.rcp[0] = 1.0f / (float)RenderPixels(m_width);	// FXAA は内部解像度の 1 画素単位で隣を見る
+	p.rcp[1] = 1.0f / (float)RenderPixels(m_height);
 	m_fxaaPS->WriteBuffer(0, &p);
-	DrawFull(src, m_fxaaPS.get(), XMFLOAT4(1, 1, 1, 1));
+	DrawFull(src, m_fxaaPS.get(), XMFLOAT4(exposure, exposure, exposure, 1));	// r = 露出(シェーダーが ACES の前に掛ける)
 }
 
 // ブルームの1パス(全画面)を描画

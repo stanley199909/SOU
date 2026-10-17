@@ -472,8 +472,10 @@ void SceneStageEditor::DrawWater()
 	ps->SetTexture(1, depth);	// t1 = scene depth
 	m_waterMesh->Draw();
 
-	ID3D11ShaderResourceView* pNull[2] = { nullptr, nullptr };
-	GetContext()->PSSetShaderResources(0, 2, pNull);
+	// Clear through the Shader (it remembers its textures and re-binds them on the next Bind();
+	// after a quality change the old scene/depth textures are freed -> must not be re-bound).
+	ps->SetTexture(0, nullptr);
+	ps->SetTexture(1, nullptr);
 	SetRenderTargets(1, &scene, depth);
 	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
 }

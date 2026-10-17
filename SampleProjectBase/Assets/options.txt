@@ -1,0 +1,3 @@
+lessonspeed 2
+rumble 4
+quality 0

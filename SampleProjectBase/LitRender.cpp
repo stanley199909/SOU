@@ -11,6 +11,12 @@ using namespace DirectX;
 namespace
 {
 	LightToggles s_toggles;	// F2 パネルの光源 ON/OFF(全員がここを読む)
+	// 時刻(SunCycle)が決める太陽。SetSun が呼ばれるまでは保存した向き・昼の明るさ(編集シーン等)
+	XMFLOAT3 s_sunDir   = { 0.0f, 1.0f, 0.0f };
+	float    s_daylight = 1.0f;
+	bool     s_sunSet   = false;
+	const float NIGHT_FILL = 0.12f;	// 夜の環境光 = 昼の何割(月・星・外の残り光)
+	const float NIGHT_SKY  = 0.015f;	// 夜の空(窓の外)の明るさ = 昼の何割(ほぼ黒い紺。0.04 では夜でも灰色に見えた)
 	float s_firePos[3] = {};
 	float s_fireScale  = 1.0f;
 	// F1 の見比べ用(既定 = 全部使う)。保存はしない(確かめる為だけの切り替え)
@@ -57,14 +63,31 @@ namespace LitRender
 		const XMFLOAT3 eye = camera ? camera->GetPos() : XMFLOAT3(0, 0, 0);
 		const LightToggles& on = s_toggles;
 		l.eye     = { eye.x, eye.y, eye.z, 0.0f };
-		l.sun     = light.sun;
-		l.sun.w  *= on.sun ? 1.0f : 0.0f;
-		l.ambient = { light.ambient.x, light.ambient.y, light.ambient.z, light.windowExtra.w * (on.ambient ? 1.0f : 0.0f) };	// 色 + 屋内の環境光の強さ
+		l.sun     = Sun();	// 今の太陽(時刻で動く向き × 昼の明るさ × F2 の ON/OFF)
+		l.ambient = { light.ambient.x, light.ambient.y, light.ambient.z, light.windowExtra.w * FillScale() };	// 色 + 屋内の環境光の強さ(夜は暗い)
 		l.fire    = { s_firePos[0], s_firePos[1], s_firePos[2], light.ambient.w * s_fireScale * (on.fire ? 1.0f : 0.0f) };	// 位置 + 炉の火の強さ(F1 の調整値 × ゲームの状態)
 		l.lightVP = r.lightVP;
 		l.shadow  = { r.hasShadow ? 1.0f : 0.0f, 1.0f / SunStage::ShadowSize, SunStage::ShadowDepthBias, SunStage::ReceiverOffset };
 		return l;
 	}
+
+	void SetSun(const XMFLOAT3& towardSun, float daylight)
+	{
+		s_sunDir   = towardSun;
+		s_daylight = daylight;
+		s_sunSet   = true;
+	}
+
+	XMFLOAT4 Sun()
+	{
+		const XMFLOAT4& saved = CottageRender::Data().sun;	// w = 昼の太陽の強さ(調整値)。向きは時刻が決める(未設定なら保存値)
+		const XMFLOAT3 dir = s_sunSet ? s_sunDir : XMFLOAT3(saved.x, saved.y, saved.z);
+		return XMFLOAT4(dir.x, dir.y, dir.z, saved.w * s_daylight * (s_toggles.sun ? 1.0f : 0.0f));
+	}
+
+	// 夜も真っ暗にはしない(月明かり・星明かり・外の残り光)。床の値は調整値と別の固定の割合
+	float FillScale() { return (s_toggles.ambient ? 1.0f : 0.0f) * (NIGHT_FILL + (1.0f - NIGHT_FILL) * s_daylight); }
+	float SkyScale()  { return NIGHT_SKY + (1.0f - NIGHT_SKY) * s_daylight; }
 
 	void BindShadow() { SunStage::BindShadow(); }
 	float FireIntensityScale() { return s_fireScale; }

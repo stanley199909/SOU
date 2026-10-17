@@ -19,7 +19,7 @@ cbuffer Bake : register(b0)
 };
 struct PIN { float4 pos:SV_POSITION; float2 uv:TEXCOORD0; };
 
-static const uint  SAMPLE_COUNT = 256;   // one-time bake: quality over speed (still a few ms)
+static const uint  SAMPLE_COUNT = 64;    // per texel. Filtered importance sampling (mip lookup below) keeps 64 smooth; 256 cost too much when the sun moves
 static const float MIN_WEIGHT   = 0.0001;
 
 // Direction through texel uv of a cube face, D3D layout (matches the capture's look/up per face).

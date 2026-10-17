@@ -135,6 +135,15 @@
     <ClCompile Include="ReflectionProbe.cpp">
       <Filter>ソース ファイル\System</Filter>
     </ClCompile>
+    <ClCompile Include="VolumetricLight.cpp">
+      <Filter>ソース ファイル\System</Filter>
+    </ClCompile>
+    <ClCompile Include="AutoExposure.cpp">
+      <Filter>ソース ファイル\System</Filter>
+    </ClCompile>
+    <ClCompile Include="GpuProfiler.cpp">
+      <Filter>ソース ファイル\System</Filter>
+    </ClCompile>
     <ClCompile Include="LitRender.cpp">
       <Filter>ソース ファイル\System</Filter>
     </ClCompile>
@@ -214,6 +223,9 @@
       <Filter>ソース ファイル\App\GameLogic</Filter>
     </ClCompile>
     <ClCompile Include="GameLogic\HingedDoor.cpp">
+      <Filter>ソース ファイル\App\GameLogic</Filter>
+    </ClCompile>
+    <ClCompile Include="GameLogic\SunCycle.cpp">
       <Filter>ソース ファイル\App\GameLogic</Filter>
     </ClCompile>
     <ClCompile Include="GameLogic\ScreenFade.cpp">
@@ -338,6 +350,15 @@
     <ClInclude Include="ReflectionProbe.h">
       <Filter>ヘッダー ファイル\System</Filter>
     </ClInclude>
+    <ClInclude Include="VolumetricLight.h">
+      <Filter>ヘッダー ファイル\System</Filter>
+    </ClInclude>
+    <ClInclude Include="AutoExposure.h">
+      <Filter>ヘッダー ファイル\System</Filter>
+    </ClInclude>
+    <ClInclude Include="GpuProfiler.h">
+      <Filter>ヘッダー ファイル\System</Filter>
+    </ClInclude>
     <ClInclude Include="LitRender.h">
       <Filter>ヘッダー ファイル\System</Filter>
     </ClInclude>
@@ -402,6 +423,9 @@
       <Filter>ヘッダー ファイル\App\GameLogic</Filter>
     </ClInclude>
     <ClInclude Include="GameLogic\HingedDoor.h">
+      <Filter>ヘッダー ファイル\App\GameLogic</Filter>
+    </ClInclude>
+    <ClInclude Include="GameLogic\SunCycle.h">
       <Filter>ヘッダー ファイル\App\GameLogic</Filter>
     </ClInclude>
     <ClInclude Include="GameLogic\ScreenFade.h">

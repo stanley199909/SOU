@@ -53,7 +53,7 @@ private:
 	void DrawEffect(int effect, float ox, float oy, float sx, float sy, float intensity);
 	// ブルーム合成
 	void DrawBloom(int mode, Texture* src, float threshold, float dx, float dy, float tx, float ty);
-	void DrawFXAA(Texture* src);	// エッジ抗鋸歯(幾何の輪郭のチラつき)
+	void DrawFXAA(Texture* src, float exposure);	// エッジ抗鋸歯(幾何の輪郭のチラつき)+ 露出 + ACES
 	void DrawFull(Texture* src, Shader* ps, DirectX::XMFLOAT4 color);
 
 private:

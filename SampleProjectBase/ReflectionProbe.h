@@ -21,10 +21,10 @@ class CameraBase;
 //====================================================================
 namespace ReflectionProbe
 {
-    static const unsigned FACE_SIZE = 128;   // pixels per face: reflections are blurred anyway, and it keeps the capture cheap
+    static const unsigned FACE_SIZE = 64;    // pixels per face: reflections are blurred anyway. 128 cost ~14 ms per capture on the iGPU (F3, 2026-10-17)
     // Prefiltered cube: mip m holds the reflection of roughness m / (PREFILTER_MIPS-1).
-    // 6 levels = 128, 64, 32, 16, 8, 4 px: the roughest level is so blurry that 4 px per face is plenty.
-    static const unsigned PREFILTER_MIPS = 6;
+    // 5 levels = 64, 32, 16, 8, 4 px: the roughest level is so blurry that 4 px per face is plenty.
+    static const unsigned PREFILTER_MIPS = 5;
     // Where the lit shaders find the IBL (step 3): t6 = prefiltered cube, t7 = BRDF LUT, s1 = IBL sampler.
     // Above the slots every lit shader already uses (t0..t4).
     static const unsigned IBL_SLOT_ENV = 6;
@@ -49,6 +49,7 @@ namespace ReflectionProbe
     // Cheap to call every frame: uploads only when the box changed.
     void SetRoomBox(const DirectX::XMFLOAT3& boxMin, const DirectX::XMFLOAT3& boxMax);
     void DrawRoomBox(CameraBase* camera);    // F1 "Show room box": orange lines, seen through walls
+    bool RoomBox(DirectX::XMFLOAT3& boxMin, DirectX::XMFLOAT3& boxMax);   // false until SetRoomBox was called
     DirectX::XMFLOAT3 Position();
 
     // Debug view (F1): a mirror ball at the probe position. It reflects the captured cube, and is

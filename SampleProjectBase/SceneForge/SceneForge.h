@@ -22,6 +22,8 @@
 #include "InputPrompts.h"	// GameLogic: 操作案内の絵と呼び名(今使っている機器=キーボード・マウス/手柄 に合わせる)
 #include "Haptics.h"		// GameLogic: 手柄の震動(一発/持続を混ぜて送る)
 #include "DebugUI.h"		// F1 調整窓の表示状態(ToolUiOpen)
+#include "SunCycle.h"		// GameLogic: 太陽の時刻(小屋の周りを回る太陽)
+#include "Defines.h"		// 画質(内部解像度の倍率 RenderScale)
 #include <DirectXMath.h>
 #include <memory>
 #include <vector>
@@ -128,8 +130,19 @@ private:
 	bool  m_lightPanelOpen = false;	// F2 で開閉。開いている間はゲームの入力と時間を止める(F1 と同じ)
 	bool  ToolUiOpen() const { return DebugUI::IsVisible() || m_lightPanelOpen; }	// 調整用の画面が開いている=ゲーム入力を止める(判定はここ1つ)
 	void  DrawLightPanel();			// F2 パネルの描画とクリック処理(HUD.cpp)
+	bool  m_profilerPanelOpen = false;	// F3 = 処理の重さ(GPU の各段階の時間)。見るだけ=ゲームは止めない
+	void  DrawProfilerPanel();		// F3 パネル(HUD.cpp)
 	int   m_lightPanelDrag = -1;	// F2 パネルで今ドラッグしている強さのつまみ(-1 = 無し)
 	bool  m_lightPanelSaved = false;	// 「この明るさを保存」を押した直後(保存済みの表示)
+	//--- 太陽の時刻(昼夜)。小屋の周りを回る太陽 = 光の筋・窓の光・影が時間で動く
+	SunCycle m_sun;
+	DirectX::XMFLOAT3 m_sunApplied = { 0.0f, 1.0f, 0.0f };	// 描画に渡している向き(前フレームの値=動いた角度を測る為)
+	bool  m_sunAppliedSet = false;
+	float m_sunSinceCaptureDeg = 0.0f;	// 前に反射の写真を撮ってから太陽が動いた角度
+	static constexpr float SHADOW_RANGE_M = 20.0f;			// 太陽の影を作る範囲(カメラ中心の正方形, m)。小さい=影が細かい/遠くの影は出ない
+	static constexpr float PROBE_RECAPTURE_DEG = 8.0f;		// 太陽がこれだけ動いたら反射の写真を撮り直す(6面の描画は重いので毎回はしない)
+	void  UpdateSun(float dt);		// 時刻を進め、描画に渡す太陽を決める(Scenery.cpp)
+	bool  m_capturingProbe = false;	// 反射の写真を撮っている最中(DrawScenery が影の地図を作り直さない)
 	void  CaptureReflectionProbe();	// 反射プローブ(IBL): 金床の上から部屋を 360° 撮る(開始時に1回 + F1「Recapture」)。Scenery.cpp
 	float m_probeLift = 0.4f;		// プローブを砧面から上げる高さ(m)。刃・ハンマーが反射する辺りの視点
 	void  UpdateProbeRoomBox();		// ボックスプロジェクション用の「部屋の箱」= 家の境界箱を内側へ縮めた物(毎フレーム。変わった時だけ GPU へ)
@@ -735,7 +748,7 @@ private:
 	//--- 設定(一時停止メニューの「設定」。2026-10-12 ユーザー要望: F1 と分けて、玩家が自分で調整できる所)
 	//    今は「教学アニメの速さ」だけ。段階の中から選ぶ(◀ ▶)。選んでいる間は横に瞄準の指示図を実際の速さで動かして見せる。
 	//    保存 = Assets/options.txt(調整値 forge_tuning.txt とは別=玩家の好み)。
-	enum class OptionItem { LessonSpeed, Rumble, Back, Count };
+	enum class OptionItem { LessonSpeed, Rumble, Quality, Back, Count };
 	bool  m_optionsOpen    = false;				// 設定の画面を開いているか(一時停止の中)
 	int   m_optionsSel     = 0;					// 選んでいる行
 	int   m_optionsRequest = -1;				// 決定された行(描画側のクリック / キー)。UpdateOptions で実行
@@ -747,6 +760,8 @@ private:
 	static constexpr float RUMBLE_STEPS[] = { 0.0f, 0.25f, 0.5f, 0.75f, 1.0f };	// 選べる震動の強さ(0 = オフ)
 	static constexpr int   RUMBLE_DEFAULT = 4;	// 既定 = 100%(手応え表の値そのまま)
 	int   m_rumbleIdx = RUMBLE_DEFAULT;
+	static constexpr float QUALITY_STEPS[] = { RENDER_SCALE_STANDARD, RENDER_SCALE_HIGH };	// 画質 = 3D の内部解像度の倍率(Defines.h)。標準 = 内顯で 60fps / 高画質 = 細部がくっきり
+	int   m_qualityIdx = 0;					// 既定 = 標準(軽い)
 	static constexpr Rumble RUMBLE_PREVIEW     = { 0.6f, 0.4f, 0.0f, 0.6f };	// 設定で強さを変えた時に一度震わせる見本(変えた結果がその場で分かる)
 	static constexpr float  RUMBLE_PREVIEW_SEC = 0.25f;
 	float m_lessonClock    = 0.0f;				// 教学アニメの時計(秒)= 経過 × 速さ。一時停止中も進む(設定の見本が動く)
@@ -964,6 +979,7 @@ private:
 		std::vector<Collision2D::Hull> hullsLocal;	// 衝突用: モデル空間の頂点を床(XZ)へ投影した凸包(塊ごとなら複数)。空=ぶつからない
 	};
 	std::vector<Prop> m_props;
+	void  PropSphere(const Prop& p, DirectX::FXMMATRIX world, DirectX::XMFLOAT3& center, float& radius) const;	// 境界球(ワールド)。カリング用(Scenery.cpp)
 	float m_groundY = 0.0f;	// 床の高さ(金床のワールドAABB下面から算出)
 	bool  m_showScenery = true;
 	//--- 石墙(AI生成FBX)専用PBR: UVが壊れているため triplanar(Box投影)で Poly Haven の実PBR貼图を worldPos から投影する

@@ -11,6 +11,7 @@
 #include "SceneForge/SceneForge_Internal.h"
 #include "PropParts.h"
 #include "ReflectionProbe.h"
+#include "GpuProfiler.h"
 #include "DirectX.h"
 #include "MeshBuffer.h"
 #include "Shader.h"
@@ -172,45 +173,118 @@ void SceneForge::LoadLayout()
 	fclose(fp);
 }
 
+//--- 物の境界球(ワールド)。読込時にキャッシュしたモデル空間の境界箱(p.aabbMin/Max)から。
+//    配置は 一様スケール × Y回転 × 平行移動 なので、半径 = スケール × 対角線の半分。
+void SceneForge::PropSphere(const Prop& p, FXMMATRIX world, XMFLOAT3& center, float& radius) const
+{
+	const XMFLOAT3& a = p.aabbMin; const XMFLOAT3& b = p.aabbMax;
+	XMStoreFloat3(&center, XMVector3TransformCoord(XMVectorSet((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f, (a.z + b.z) * 0.5f, 1.0f), world));
+	radius = XMVectorGetX(XMVector3Length(world.r[0])) * 0.5f * XMVectorGetX(XMVector3Length(XMVectorSet(b.x - a.x, b.y - a.y, b.z - a.z, 0.0f)));
+}
+
+namespace
+{
+	// 視錐台カリング(view frustum culling): カメラに写る範囲(視錐台)の6枚の面を作り、
+	// 物の境界球が1枚でも面の外側に完全に出ていれば描かない。屋内から見えない屋外の木・草、
+	// 反射の写真の各面で写らない物を GPU に送らずに済む。
+	// 面の取り出し方 = Gribb & Hartmann 2001(view×proj の列の和/差。D3D は z が 0..1 なので近い面は第3列そのまま)
+	// 検索: "view frustum culling", "Gribb Hartmann frustum planes" / JP: 視錐台カリング
+	struct Frustum { XMVECTOR planes[6]; };
+
+	Frustum MakeFrustum(CameraBase* cam)
+	{
+		const XMFLOAT4X4 v = cam->GetView(false), pr = cam->GetProj(false);
+		const XMMATRIX m = XMMatrixTranspose(XMLoadFloat4x4(&v) * XMLoadFloat4x4(&pr));	// 行 = 元の列
+		Frustum f;
+		f.planes[0] = m.r[3] + m.r[0];	// 左
+		f.planes[1] = m.r[3] - m.r[0];	// 右
+		f.planes[2] = m.r[3] + m.r[1];	// 下
+		f.planes[3] = m.r[3] - m.r[1];	// 上
+		f.planes[4] = m.r[2];			// 近
+		f.planes[5] = m.r[3] - m.r[2];	// 遠
+		for (XMVECTOR& pl : f.planes) pl = XMPlaneNormalize(pl);
+		return f;
+	}
+
+	bool SphereVisible(const Frustum& f, const XMFLOAT3& c, float r)
+	{
+		const XMVECTOR p = XMLoadFloat3(&c);
+		for (const XMVECTOR& pl : f.planes)
+			if (XMVectorGetX(XMPlaneDotCoord(pl, p)) < -r) return false;	// 球が丸ごと面の外側
+		return true;
+	}
+}
+
 //--- 装飾モデルをまとめて描画(不透明。鉄条より先に)
 void SceneForge::DrawScenery()
 {
     std::vector<SunStage::Item> casters;
     XMFLOAT3 shadowCenter(0,3,0);
+    // 影を落とす物は「影の範囲(カメラ中心の正方形)」に掛かる物だけ。範囲外の屋外の木・石・草まで毎フレーム
+    // 影の地図へ描いていた(2026-10-17 F3: 太陽の影 約3ms)。境界箱の球で判定する(安い・取りこぼさない)
+    CameraBase* camForShadow = GetObj<CameraBase>("Camera");
+    const XMFLOAT3 camPos = camForShadow ? camForShadow->GetPos() : shadowCenter;
+    const float SQRT2 = 1.41421356f;
+    const float shadowReach = SHADOW_RANGE_M * 0.5f * SQRT2;	// 正方形の中心から角までの距離
     for(auto& p:m_props) {
         if(p.key=="StGround" || p.hidden) continue;
         auto world=PropWorld(p);
         if(p.key=="StCottage") XMStoreFloat3(&shadowCenter,XMVector3TransformCoord(XMVectorSet(0,150,0,1),world));
-        casters.push_back(SunStage::MakeItem(GetObj<Model>(p.key.c_str()),world));
+        Model* model = GetObj<Model>(p.key.c_str());
+        if (!model) continue;
+        float radius; XMFLOAT3 cc;
+        PropSphere(p, world, cc, radius);	// 読込時にキャッシュした境界箱から(毎フレーム全頂点を調べない)
+        const float dx = cc.x - camPos.x, dz = cc.z - camPos.z;
+        if (sqrtf(dx*dx + dz*dz) - radius > shadowReach) continue;	// 影の範囲に全く掛からない
+        casters.push_back(SunStage::MakeItem(model,world));
     }
     if (Model* door = GetObj<Model>(CottageDoor::DOOR_KEY); door && GetProp(CottageDoor::HOUSE_KEY))	// 扉も影を落とす(今の角度で)
         casters.push_back(SunStage::MakeItem(door, DoorWorld()));
-    SunStage::Prepare(casters,CottageRender::Data().sun,shadowCenter);
-    SunStage::Sky(GetObj<CameraBase>("Camera"),CottageRender::Data().sun,CottageRender::Data().exteriorSky);
+    const XMFLOAT4 sunNow=LitRender::Sun();
+    const XMFLOAT4 sunDirOnly(sunNow.x,sunNow.y,sunNow.z,1.0f);   // the shadow map depends only on the DIRECTION (brightness changes must not re-render it)
+    // 影の範囲は「家全体の 48m」でなく「見ている人の周り」だけ(1テクセル 2.3cm → 約 1cm)。
+    //   窓から差す光の縁が細かくなる=太陽が動いた時に光の縁が前後に揺れて見えるのを抑える(2026-10-17 F5「先-1再+1」)。
+    //   中心はカメラ(歩けば付いて来る。テクセル単位に吸着するので歩いても影の縁は這わない)。
+    if (CameraBase* cam = GetObj<CameraBase>("Camera")) shadowCenter = cam->GetPos();
+    // 反射の写真を撮っている間は影の地図を作り直さない(本描画で作った物をそのまま使う)。
+    //   撮影のカメラ(金床の上)を中心に作り直すと、撮影で1回 + 本描画に戻って1回 = 毎回 2 回余計に描いていた
+    if (!m_capturingProbe)
+    { GpuProfiler::Scope t((const char*)u8"　・太陽の影（場面の内訳）"); SunStage::Prepare(casters,sunDirOnly,shadowCenter,SHADOW_RANGE_M); }
+    const XMFLOAT4& skySaved=CottageRender::Data().exteriorSky; const float skyK=LitRender::SkyScale();
+    // 空は不透明な物を全部描いた「後」に、何も描かれていない画素だけへ(深度テスト)。
+    //   前は最初に画面全体へ描いて、その上を家で塗り潰していた=屋内では丸ごと無駄(2026-10-17 F3: 空 0.8ms)
+    auto drawSky = [&]()
+    {
+        GpuProfiler::Scope t(!m_capturingProbe ? (const char*)u8"　・空" : nullptr);
+        SunStage::Sky(GetObj<CameraBase>("Camera"),sunNow,XMFLOAT4(skySaved.x*skyK,skySaved.y*skyK,skySaved.z*skyK,skyK),true);   // the sky darkens at night (w = the same factor for the horizon/clouds)
+    };
 
-	if (!m_showScenery) return;
+	if (!m_showScenery) { drawSky(); return; }
+	CameraBase* viewCam = GetObj<CameraBase>("Camera");
+	const Frustum frustum = viewCam ? MakeFrustum(viewCam) : Frustum{};	// 反射の写真の時は各面のカメラ=面ごとに写る物だけ
+	// 家(壁・床)は最後に描く: 先に描いた道具が深度を書いているので、道具の後ろに隠れる壁の画素は
+	// 画素シェーダーを走らせる前に捨てられる(アーリー Z / early-Z rejection)。逆順だと壁を塗ってから道具で塗り直していた
+	// 描く順 = 屋内の道具 → 家 → 屋外。屋外の木・草は屋内からは壁の向こう=家の深度で丸ごと捨てられる
+	//   (家より先に描くと、見えない木・草まで全部塗っていた。2026-10-17 F3: 屋外 0.03ms → 2.7ms になった)
+	Prop* housePropToDraw = nullptr;
+	std::vector<Prop*> outdoorToDraw;
 	for (auto& p : m_props)
 	{
 		if(p.key=="StGround" || p.hidden) continue;	// hidden=手に取った火钳など
 		Model* m = GetObj<Model>(p.key.c_str());
 		if (!m) continue;
-		// 整屋は専用のPBRシェーダー(triplanar)で描く。他プロップは共通シェーダー。
-		if (p.key == CottageDoor::HOUSE_KEY)
+		if (viewCam)
 		{
-			DrawWall(m, PropWorld(p));
-			// 裏口の扉(家から切り出した部品)。家と同じ行列 × 蝶番の回転=閉じていれば戸口にぴったり収まる。
-			if (Model* door = GetObj<Model>(CottageDoor::DOOR_KEY)) DrawWall(door, DoorWorld());
-			continue;
+			XMFLOAT3 c; float r;
+			PropSphere(p, PropWorld(p), c, r);
+			if (!SphereVisible(frustum, c, r)) continue;	// カメラに写らない=描かない(影の地図には上で別に描いている)
 		}
-        if(OutdoorStage::IsOutdoor(p.key)) {
-            // 草だけ VS_Grass(玩家を避けて倒れる)。出力は VS_Wall と同じなので PS/材質はそのまま。
-            const bool grass = IsGrass(p.key) && m_grassMap.IsReady();
-            VertexShader* vs = GetObj<VertexShader>(grass ? "VS_Grass" : "VS_Wall");
-            if (grass && vs) BindGrassParams(vs, p);
-            CottageRender::Draw(m,PropWorld(p),GetObj<CameraBase>("Camera"),vs,GetObj<PixelShader>("PS_Wall"),m_coalPos,false,true);
-            if (grass && vs) vs->SetTexture(0, nullptr);	// 次のフレームで貼图を描画先にする前に、読み取り側から外す
-            continue;
-        }
+		// F3 の内訳(反射の写真の撮影中は測らない=本描画の数字に混ざらない様に)
+		const bool timed = !m_capturingProbe;
+		// 整屋は専用のPBRシェーダー(triplanar)で描く。他プロップは共通シェーダー。
+		if (p.key == CottageDoor::HOUSE_KEY) { housePropToDraw = &p; continue; }	// 下で最後に描く
+        if(OutdoorStage::IsOutdoor(p.key)) { outdoorToDraw.push_back(&p); continue; }	// 家の後で描く(下)
+		GpuProfiler::Scope t(timed ? (const char*)u8"　・道具（金床・炉など）" : nullptr);
 		DrawModelWorld(m, PropWorld(p), p.key.c_str());	// 炉の暗い暖色・三平面投影も材質表の値(旧: ここに炉だけの特例)
 		// 動く部品(砥石の輪)は本体と同じ行列の手前で、自分の軸まわりに回してから描く。
 		// 角度は砥石の物理(GrindWheel)が積分した値=踏んだ分だけ回り、摩擦で止まる。
@@ -218,11 +292,33 @@ void SceneForge::DrawScenery()
 			if (Model* pm = GetObj<Model>(part->partKey))
 				DrawModelWorld(pm, PartSpin(pm, m_wheel.Angle()) * PropWorld(p), p.key.c_str());	// 部品は本体と同じ材質
 	}
-	DrawCoalBed();	// 光る炭ベッド(自作)
+	{ GpuProfiler::Scope t(!m_capturingProbe ? (const char*)u8"　・炭" : nullptr); DrawCoalBed(); }	// 光る炭ベッド(自作)
+	if (housePropToDraw)
+	{
+		GpuProfiler::Scope t(!m_capturingProbe ? (const char*)u8"　・家（壁・床・屋根）" : nullptr);
+		DrawWall(GetObj<Model>(housePropToDraw->key.c_str()), PropWorld(*housePropToDraw));
+		// 裏口の扉(家から切り出した部品)。家と同じ行列 × 蝶番の回転=閉じていれば戸口にぴったり収まる。
+		if (Model* door = GetObj<Model>(CottageDoor::DOOR_KEY)) DrawWall(door, DoorWorld());
+	}
+	for (Prop* op : outdoorToDraw)
+	{
+		GpuProfiler::Scope t(!m_capturingProbe ? (const char*)u8"　・屋外（木・草・石）" : nullptr);
+		Model* om = GetObj<Model>(op->key.c_str());
+		// 草だけ VS_Grass(玩家を避けて倒れる)。出力は VS_Wall と同じなので PS/材質はそのまま。
+		const bool grass = IsGrass(op->key) && m_grassMap.IsReady();
+		VertexShader* vs = GetObj<VertexShader>(grass ? "VS_Grass" : "VS_Wall");
+		if (grass && vs) BindGrassParams(vs, *op);
+		CottageRender::Draw(om,PropWorld(*op),GetObj<CameraBase>("Camera"),vs,GetObj<PixelShader>("PS_Wall"),m_coalPos,false,true);
+		if (grass && vs) vs->SetTexture(0, nullptr);	// 次のフレームで貼图を描画先にする前に、読み取り側から外す
+	}
+	drawSky();	// 不透明な物を全部描いた後(空の見える画素だけ)。窓ガラスより前(ガラスは空の上に重ねる)
     if (Prop* house = GetProp("StCottage"))
+    {
+        GpuProfiler::Scope t(!m_capturingProbe ? (const char*)u8"　・窓ガラス" : nullptr);
         CottageRender::Draw(GetObj<Model>("StCottage"), PropWorld(*house),
             GetObj<CameraBase>("Camera"), GetObj<VertexShader>("VS_Wall"),
             GetObj<PixelShader>("PS_Wall"), m_coalPos, true);
+    }
 
 }
 
@@ -236,12 +332,35 @@ void SceneForge::CaptureReflectionProbe()
 	const XMFLOAT3 pos(m_barAnchor.x, m_barAnchor.y + m_probeLift, m_barAnchor.z);
 	float firePos[3]; FireLightPos(firePos);
 	LitRender::SetFire(firePos, 1.0f);
+	m_capturingProbe = true;	// 撮影中: 影の地図は作り直さない(DrawScenery)
 	ReflectionProbe::Capture(cam, pos, [this]()
 	{
 		CottageRender::ClearExterior();	// 本描画と同じく空の色で塗ってから
 		DrawScenery();
 	});
+	m_capturingProbe = false;
 	LitRender::SetFire(firePos, FireLightScale());	// このフレームの本描画の火に戻す
+}
+
+//--- 太陽の時刻を進め、描画に渡す太陽を決める(毎フレーム)。
+//    向きは毎フレーム渡す=太陽の影(シャドウマップ)も毎フレーム描き直す。光の筋・床の光斑が滑らかに流れる。
+//    (旧: 0.25° 動くごとに更新=影が「カクッ」と段ごとに跳んだ。2026-10-17 F5「一下一下的」)
+//    反射の写真(6面の描画)はずっと重いので、PROBE_RECAPTURE_DEG 動くごとに撮り直す。
+void SceneForge::UpdateSun(float dt)
+{
+	m_sun.Update(dt);
+	const XMFLOAT3 dir = m_sun.Direction();
+	const float d = dir.x * m_sunApplied.x + dir.y * m_sunApplied.y + dir.z * m_sunApplied.z;
+	const float moved = m_sunAppliedSet ? XMConvertToDegrees(acosf(fminf(fmaxf(d, -1.0f), 1.0f))) : 0.0f;
+	m_sunApplied = dir;
+	m_sunAppliedSet = true;
+	m_sunSinceCaptureDeg += moved;
+	if (m_sunSinceCaptureDeg >= PROBE_RECAPTURE_DEG)
+	{
+		m_sunSinceCaptureDeg = 0.0f;
+		ReflectionProbe::RequestRecapture();
+	}
+	LitRender::SetSun(m_sunApplied, m_sun.Daylight());
 }
 
 //--- ボックスプロジェクションの部屋の箱: 家のモデルの境界箱(8隅)を今の配置でワールドへ運び、m_probeBoxInset だけ内側へ縮める。
@@ -343,7 +462,7 @@ void SceneForge::DrawWater()
 	XMFLOAT3 eye = cam->GetPos();
 	cb[2] = XMFLOAT4(eye.x, eye.y, eye.z, m_waterSize[0] / std::max(m_waterSize[1], MIN_WATER_WIDTH));
 	const auto& lighting = CottageRender::Data();
-	cb[3] = XMFLOAT4(lighting.ambient.x, lighting.ambient.y, lighting.ambient.z, lighting.windowExtra.w * (LitRender::Toggles().ambient ? 1.0f : 0.0f));	// F2「環境光」に従う
+	cb[3] = XMFLOAT4(lighting.ambient.x, lighting.ambient.y, lighting.ambient.z, lighting.windowExtra.w * LitRender::FillScale());	// F2「環境光」と昼夜に従う
 	// cb[4] = 水面の全長/全幅 + yaw の cos/sin(PS が波の傾きを板のローカルからワールドへ回す)
 	// cb[5] = 高さ貼图の1テクセルの UV 幅(中心差分の幅)
 	cb[4] = XMFLOAT4(m_waterSize[0] * 2.0f, m_waterSize[1] * 2.0f, cosf(m_waterYaw), sinf(m_waterYaw));
@@ -365,8 +484,13 @@ void SceneForge::DrawWater()
 	m_waterMesh->Draw();
 
 	// SRVを外し、描画先を sceneRT + 深度に戻す(この後の余燼/火花が深度テストできるように)。
-	ID3D11ShaderResourceView* pNull[3] = { nullptr, nullptr, nullptr };
-	GetContext()->PSSetShaderResources(0, 3, pNull);
+	// 外すのは ps->SetTexture(…, nullptr) で: Shader は貼った画像を覚えていて次の Bind() で貼り直す。
+	//   GPU から外すだけ(PSSetShaderResources)だと、画質を変えて場面の画像/深度を作り直した後、
+	//   次の Bind() が「もう解放された古い画像」を貼り直して落ちた(2026-10-17 F5: 高画質へ切替で例外)
+	ps->SetTexture(0, nullptr);
+	ps->SetTexture(1, nullptr);
+	ps->SetTexture(2, nullptr);
+	ID3D11ShaderResourceView* pNull[1] = { nullptr };
 	GetContext()->VSSetShaderResources(0, 1, pNull);
 	SetRenderTargets(1, &scene, depth);
 	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);

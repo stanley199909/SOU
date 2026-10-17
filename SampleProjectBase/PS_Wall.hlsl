@@ -85,13 +85,16 @@ float4 main(PS_IN pin, bool front:SV_IsFrontFace) : SV_TARGET
     float3 col=AmbientLight(base,rough,material.z,n,v,pin.worldPos,ambient.rgb*fill,ambient.rgb);
     [branch] if (visibility>0 && sun.w>0)
         col+=BRDF(base,rough,material.z,n,v,l)*sun.w*visibility;
-    if(material.w<1.5)
+    // The forge fire is INSIDE the house and a point light has no shadow: only surfaces inside the room may
+    // receive it (before 2026-10-17 the outside of the walls glowed orange at night -- light through stone).
+    if(material.w<1.5 && indoors)
         col+=FireLight(base,rough,material.z,n,v,pin.worldPos,fire.xyz,fire.w);
     if(material.w>3.5) col+=base*sun.w*visibility*saturate(dot(-n,l))*.12;
     if(material.w>1.5) {
         const float FOG_START=35, FOG_END=160;
         float fog=saturate((length(eye.xyz-pin.worldPos)-FOG_START)/(FOG_END-FOG_START));
-        col=lerp(col,float3(.58,.66,.72),fog);
+        // fog = air lit by the sky: it darkens at night with it (lighting.y = LitRender::SkyScale)
+        col=lerp(col,float3(.58,.66,.72)*lighting.y,fog);
     }
     // PostProcess applies the project's ACES output transform once.
     return float4(col,1);

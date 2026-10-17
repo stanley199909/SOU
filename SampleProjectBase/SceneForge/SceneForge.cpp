@@ -21,6 +21,8 @@
 #include "Lerp.h"
 #include "LitRender.h"
 #include "ReflectionProbe.h"
+#include "VolumetricLight.h"
+#include "GpuProfiler.h"
 #include "SceneForge/SceneForge_Internal.h"
 #include <cstdlib>
 #include <cmath>
@@ -375,6 +377,7 @@ void SceneForge::Uninit()
 	SaveTuning();	// F1で調整したハンマー/カメラ値を書き出す(次回起動で復元)
 	m_grassMap.Uninit();	// 草の踏み跡の貼图(ブレンドステートを解放)
 	ReflectionProbe::Uninit();	// 反射プローブの立方体画像(次に入った時に撮り直す)
+	VolumetricLight::Uninit();	// 光の筋の作業用画像とシェーダー
 	DestroyObj("VS_Forge");
 	DestroyObj("PS_Forge");
 	DestroyObj("PS_Spark");
@@ -1825,6 +1828,11 @@ void SceneForge::UpdateOptions()
 			Haptics::Pulse(RUMBLE_PREVIEW, RUMBLE_PREVIEW_SEC);	// 新しい強さで一度震わせる
 			SaveOptions();
 		}
+		if (m_optionsSel == (int)OptionItem::Quality && stepIndex(m_qualityIdx, (int)_countof(QUALITY_STEPS)))
+		{
+			RenderScale() = QUALITY_STEPS[m_qualityIdx];	// 次の描画で PostProcess::Begin が描画先を新しい大きさで作り直す
+			SaveOptions();
+		}
 	}
 	const int req = m_optionsRequest;
 	m_optionsRequest = -1;
@@ -1843,9 +1851,11 @@ void SceneForge::LoadOptions()
 		int v = 0;
 		if (sscanf_s(line, "lessonspeed %d", &v) == 1 && v >= 0 && v < (int)_countof(LESSON_SPEED_STEPS)) m_lessonSpeedIdx = v;
 		if (sscanf_s(line, "rumble %d", &v) == 1 && v >= 0 && v < (int)_countof(RUMBLE_STEPS)) m_rumbleIdx = v;
+		if (sscanf_s(line, "quality %d", &v) == 1 && v >= 0 && v < (int)_countof(QUALITY_STEPS)) m_qualityIdx = v;
 	}
 	fclose(fp);
 	Haptics::SetStrength(RUMBLE_STEPS[m_rumbleIdx]);
+	RenderScale() = QUALITY_STEPS[m_qualityIdx];
 }
 
 void SceneForge::SaveOptions() const
@@ -1854,6 +1864,7 @@ void SceneForge::SaveOptions() const
 	if (fopen_s(&fp, OPTIONS_PATH, "w") != 0 || !fp) return;
 	fprintf(fp, "lessonspeed %d\n", m_lessonSpeedIdx);	// LESSON_SPEED_STEPS の番号
 	fprintf(fp, "rumble %d\n", m_rumbleIdx);				// RUMBLE_STEPS の番号
+	fprintf(fp, "quality %d\n", m_qualityIdx);			// QUALITY_STEPS の番号(0 = 標準 / 1 = 高画質)
 	fclose(fp);
 }
 
@@ -1866,12 +1877,14 @@ void SceneForge::Update(float tick)
 	m_grassMapDt += tick;	// 草の踏み跡が薄れる時間(GPU の Fade は Draw の最初でまとめて)
 
 	if (IsKeyTrigger(VK_F2)) m_lightPanelOpen = !m_lightPanelOpen;	// 設計者用: ライティング確認パネル(HUD.cpp DrawLightPanel)
+	if (IsKeyTrigger(VK_F3)) m_profilerPanelOpen = !m_profilerPanelOpen;	// 設計者用: 処理の重さ(GPU 計時)。遊びながら見られる様に入力は止めない
 	UpdateCursorVisibility();	// 一時停止中も決める(下で return する前に)
 
 	// --- 一時停止メニュー(ESC)。開いている間は世界を止める(以下の更新を全部飛ばす=時間・温度・粒子も止まる) ---
 	//   開いたフレームは UpdatePause を呼ばない: 同じフレームの ESC の押下を「続ける」と読んで即座に閉じていた(2026-10-08 F5)。
 	if (!m_paused && CanPause() && InputActions::Pressed(Action::Pause)) { OpenPause(); return; }
 	if (m_paused) { UpdatePause(); return; }
+	UpdateSun(tick);	// 太陽の時刻(F1/F2 を開いていても進む=光の筋が動くのを見ながら調整できる。一時停止では止まる)
 
 	// チュートリアルの課程を終えた: 「レッスン完了」を見せてから課程の一覧へ
 	if (m_state == GAME_PLAY && m_courseComplete && !m_fade.IsBusy() && m_time - m_courseCompleteAt >= COURSE_DONE_SHOW_SEC)
@@ -1990,32 +2003,44 @@ void SceneForge::Update(float tick)
 
 void SceneForge::Draw()
 {
-	UpdateGrassMap();	// 草の踏み跡の貼图を更新(一時的に描画先を差し替え→戻す)。シーンを描き始める前に
+	// F3 の処理の重さ: 各ブロックを GpuProfiler::Scope で囲む(名前 = F3 に出る名前)
+	{ GpuProfiler::Scope t((const char*)u8"草の踏み跡"); UpdateGrassMap(); }	// 草の踏み跡の貼图を更新(一時的に描画先を差し替え→戻す)。シーンを描き始める前に
 	float firePos[3]; FireLightPos(firePos);
 	LitRender::SetFire(firePos, FireLightScale());	// 炉の火(揺れた位置 + 明るさ)= このフレームの描画で使う全員がここから読む
 	// 反射プローブ: まだ撮っていなければ(=開始の最初のフレーム)、または F1「Recapture」で撮る。本描画の前に(描画先を一時的に差し替える)
-	if (!ReflectionProbe::HasCapture() || ReflectionProbe::ConsumeRecaptureRequest()) CaptureReflectionProbe();
+	if (!ReflectionProbe::HasCapture() || ReflectionProbe::ConsumeRecaptureRequest())
+	{
+		GpuProfiler::Scope t((const char*)u8"反射の写真（撮り直し）");
+		CaptureReflectionProbe();
+	}
 	UpdateProbeRoomBox();	// ボックスプロジェクションの部屋の箱(家を動かしても追従。変わった時だけ GPU へ)
     CottageRender::ClearExterior();
 	ApplyViewCamera();	// Update と同じ規約でDrawでも適用(GetViewの前に)
-	DrawModelsTest();	// 先に不透明な3Dモデル(金床)を描く
+	{ GpuProfiler::Scope t((const char*)u8"場面（太陽の影を含む）"); DrawModelsTest(); }	// 先に不透明な3Dモデル(金床)を描く
 	ReflectionProbe::DrawDebugBall(GetObj<CameraBase>("Camera"));	// F1「Show probe ball」: 撮れた画像を映す鏡の球
 	ReflectionProbe::DrawRoomBox(GetObj<CameraBase>("Camera"));		// F1「Show room box」: ボックスプロジェクションの部屋の箱(橙の線)
 	// 鉄は置かれた工位に描く。運んでいる間は手のビューモデルとして最後に描く(DrawViewmodel。めり込み防止)。
 	// 拍子表の再生中は普通に描く(置く時、炉の中などへ入って行く鉄が道具に正しく隠れる様に)。
 	if (!m_carrying || SequencePlaying())
 	{
+		GpuProfiler::Scope t((const char*)u8"刀身");
 		if (m_wpOk) DrawWeapon();	// Blender武器モデルを進捗でモーフ(あれば優先)
 		else        Draw3DBillet();	// 無ければ従来の高さ場メッシュ
 		if (m_wpOk && !m_carrying) DrawGhostTarget();	// 実体の後に完成形の半透明ゴーストを重ねる
 	}
-	DrawWater();		// 水槽の水面(屈折。背後のシーンを撮ってから描く=不透明の後)
+	{ GpuProfiler::Scope t((const char*)u8"水"); DrawWater(); }		// 水槽の水面(屈折。背後のシーンを撮ってから描く=不透明の後)
+	if (LitRender::Toggles().volumetric)	// 窓から差す光の筋(体積光)。不透明と水の後・粒子の前(深度を読む)。F2 で ON/OFF
+	{
+		GpuProfiler::Scope t((const char*)u8"光の筋（体積光）");
+		XMFLOAT3 roomMin, roomMax;
+		if (ReflectionProbe::RoomBox(roomMin, roomMax))	// 空気は部屋の中だけ(反射プローブと同じ箱)
+			VolumetricLight::Render(GetObj<CameraBase>("Camera"), g_pPost ? g_pPost->GetSceneRT() : nullptr, GetObj<DepthStencil>("DSV"), roomMin, roomMax);
+	}
 	if (DebugUI::IsVisible()) { DrawDebugBoxes(); DrawInteractBoxes(); }	// F1中はAABB/箱・互動範囲を線で表示
 	if (m_showCollision) DrawCollision();	// 衝突形状(F1 最上段「Show collision」で ON。壁越しに透視。F1を閉じて歩きながらも見られる)
 
-	DrawEmbers();		// 炭火から立ち上る余燼(火花描画より前に。火花が無くても出す)
-	DrawSteam();		// 淬火の蒸気(柔らかい白い煙)
-	DrawViewmodel();	// 手に持った鉄+火钳(深度範囲を詰めて手前に。運んでいない時は何もしない。Carry.cpp)
+	{ GpuProfiler::Scope t((const char*)u8"火の粉・蒸気"); DrawEmbers(); DrawSteam(); }	// 炭火から立ち上る余燼(火花描画より前に) / 淬火の蒸気
+	{ GpuProfiler::Scope t((const char*)u8"手に持った物"); DrawViewmodel(); }	// 手に持った鉄+火钳(深度範囲を詰めて手前に。運んでいない時は何もしない。Carry.cpp)
 
 	CameraBase* pCamera = GetObj<CameraBase>("Camera");
 	VertexShader* vs = GetObj<VertexShader>("VS_Forge");

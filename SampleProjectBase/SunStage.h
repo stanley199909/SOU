@@ -47,16 +47,27 @@ inline void Hash(uint64_t& h,const void* bytes,size_t count) {
  constexpr uint64_t FnvPrime=1099511628211ull;
  const auto* p=static_cast<const unsigned char*>(bytes);for(size_t i=0;i<count;++i){h^=p[i];h*=FnvPrime;}
 }
-inline void Prepare(const std::vector<Item>& items,const XMFLOAT4& sun,const XMFLOAT3& center) {
+// width = metres covered by the shadow map (square). Smaller = sharper shadows (each texel covers less ground).
+// The centre is snapped to whole shadow-map texels in the light's own plane ("stable shadow map" / texel
+// snapping): when the centre follows a moving camera, the texel grid then stays fixed on the ground
+// instead of sliding by fractions of a texel every frame (which makes shadow edges crawl back and forth).
+inline void Prepare(const std::vector<Item>& items,const XMFLOAT4& sun,const XMFLOAT3& center,float width=ShadowWidth) {
  if(!Init())return;auto& r=Data();
- uint64_t h=14695981039346656037ull;Hash(h,&sun,sizeof(sun));Hash(h,&center,sizeof(center));
- for(const auto& i:items){Hash(h,&i.model,sizeof(i.model));Hash(h,&i.world,sizeof(i.world));}
- if(r.hasShadow && h==r.signature)return;
  XMVECTOR dir=XMVectorSet(sun.x,sun.y,sun.z,0);
  if(XMVectorGetX(XMVector3LengthSq(dir))<SunDirectionMinLengthSq)dir=XMVectorSet(0,1,0,0);
  dir=XMVector3Normalize(dir);XMVECTOR at=XMLoadFloat3(&center);
  XMVECTOR up=fabsf(XMVectorGetY(dir))>VerticalSunThreshold?XMVectorSet(0,0,1,0):XMVectorSet(0,1,0,0);
- XMMATRIX view=XMMatrixLookAtLH(at+dir*LightDistance,at,up),proj=XMMatrixOrthographicLH(ShadowWidth,ShadowWidth,ShadowNear,ShadowFar);
+ {  // texel snapping: same axes as XMMatrixLookAtLH (forward = toward the scene, right = up x forward)
+  const XMVECTOR fwd=-dir, right=XMVector3Normalize(XMVector3Cross(up,fwd)), upL=XMVector3Cross(fwd,right);
+  const float texel=width/float(ShadowSize);
+  const float x=XMVectorGetX(XMVector3Dot(at,right)), y=XMVectorGetX(XMVector3Dot(at,upL));
+  at=at+right*(floorf(x/texel)*texel-x)+upL*(floorf(y/texel)*texel-y);
+ }
+ XMFLOAT3 snapped;XMStoreFloat3(&snapped,at);
+ uint64_t h=14695981039346656037ull;Hash(h,&sun,sizeof(sun));Hash(h,&snapped,sizeof(snapped));Hash(h,&width,sizeof(width));
+ for(const auto& i:items){Hash(h,&i.model,sizeof(i.model));Hash(h,&i.world,sizeof(i.world));}
+ if(r.hasShadow && h==r.signature)return;
+ XMMATRIX view=XMMatrixLookAtLH(at+dir*LightDistance,at,up),proj=XMMatrixOrthographicLH(width,width,ShadowNear,ShadowFar);
  XMStoreFloat4x4(&r.lightVP,XMMatrixTranspose(view*proj));
  auto* ctx=GetContext();ComPtr<ID3D11RenderTargetView> rt;ComPtr<ID3D11DepthStencilView> oldDepth;ComPtr<ID3D11RasterizerState> oldRaster;
  ctx->OMGetRenderTargets(1,&rt,&oldDepth);ctx->RSGetState(&oldRaster);
@@ -75,13 +86,16 @@ inline void Prepare(const std::vector<Item>& items,const XMFLOAT4& sun,const XMF
  SetBlendMode(BLEND_ALPHA);r.signature=h;r.hasShadow=true;
 }
 inline void BindShadow() {auto* srv=Data().srv.Get();GetContext()->PSSetShaderResources(3,1,&srv);}
-inline void Sky(CameraBase* camera,const XMFLOAT4& sun,const XMFLOAT4& color) {
+// depthTested = true: drawn AFTER the opaque scene and only where nothing else was drawn (depth test, no
+// write). The sky sphere (180 m) is behind everything, so only the pixels that really show sky run its
+// shader -- indoors almost none (before: the whole screen, every frame, then painted over).
+inline void Sky(CameraBase* camera,const XMFLOAT4& sun,const XMFLOAT4& color,bool depthTested=false) {
  if(!camera || !Init())return;auto& r=Data();auto eye=camera->GetPos();
  XMFLOAT4X4 mat[3];XMStoreFloat4x4(&mat[0],XMMatrixTranspose(XMMatrixScaling(SkyRadius/FbxUnits,SkyRadius/FbxUnits,SkyRadius/FbxUnits)*XMMatrixTranslation(eye.x,eye.y,eye.z)));
  mat[1]=camera->GetView();mat[2]=camera->GetProj();r.vs.WriteBuffer(0,mat);
  XMFLOAT4 params[3]={{eye.x,eye.y,eye.z,0},sun,color};r.skyPS.WriteBuffer(0,params);
  ComPtr<ID3D11RasterizerState> old;GetContext()->RSGetState(&old);GetContext()->RSSetState(r.raster.Get());
- SetDepthTest(DEPTH_DISABLE);SetBlendMode(BLEND_NONE);r.vs.Bind();r.skyPS.Bind();
+ SetDepthTest(depthTested?DEPTH_ENABLE_TEST:DEPTH_DISABLE);SetBlendMode(BLEND_NONE);r.vs.Bind();r.skyPS.Bind();
  for(unsigned i=0;i<r.sky.GetMeshNum();++i)r.sky.GetMesh(i)->mesh->Draw();
  GetContext()->RSSetState(old.Get());SetDepthTest(DEPTH_ENABLE_WRITE_TEST);SetBlendMode(BLEND_ALPHA);
 }

@@ -187,6 +187,7 @@
     <ClCompile Include="GameLogic\AimSystem.cpp" />
     <ClCompile Include="GameLogic\Lerp.cpp" />
     <ClCompile Include="GameLogic\HingedDoor.cpp" />
+    <ClCompile Include="GameLogic\SunCycle.cpp" />
     <ClCompile Include="GameLogic\ScreenFade.cpp" />
     <ClCompile Include="GameLogic\InputActions.cpp" />
     <ClCompile Include="GameLogic\Gamepad.cpp" />
@@ -240,6 +241,9 @@
     <ClCompile Include="Model.cpp" />
     <ClCompile Include="LitRender.cpp" />
     <ClCompile Include="ReflectionProbe.cpp" />
+    <ClCompile Include="VolumetricLight.cpp" />
+    <ClCompile Include="AutoExposure.cpp" />
+    <ClCompile Include="GpuProfiler.cpp" />
     <ClCompile Include="MoveLight.cpp" />
     <ClCompile Include="SceneBase.cpp" />
     <ClCompile Include="StageEditor.cpp" />
@@ -259,6 +263,7 @@
     <ClInclude Include="GameLogic\AimSystem.h" />
     <ClInclude Include="GameLogic\Lerp.h" />
     <ClInclude Include="GameLogic\HingedDoor.h" />
+    <ClInclude Include="GameLogic\SunCycle.h" />
     <ClInclude Include="GameLogic\ScreenFade.h" />
     <ClInclude Include="GameLogic\InputActions.h" />
     <ClInclude Include="GameLogic\Gamepad.h" />
@@ -303,6 +308,9 @@
     <ClInclude Include="Model.h" />
     <ClInclude Include="LitRender.h" />
     <ClInclude Include="ReflectionProbe.h" />
+    <ClInclude Include="VolumetricLight.h" />
+    <ClInclude Include="AutoExposure.h" />
+    <ClInclude Include="GpuProfiler.h" />
     <ClInclude Include="ModelImport.h" />
     <ClInclude Include="PropParts.h" />
     <ClInclude Include="CottageDoor.h" />
@@ -404,6 +412,18 @@
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
     </FxCompile>
     <FxCompile Include="PS_IblBrdfLut.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
+    </FxCompile>
+    <FxCompile Include="PS_LogLuminance.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
+    </FxCompile>
+    <FxCompile Include="PS_VolumetricMarch.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
+    </FxCompile>
+    <FxCompile Include="PS_VolumetricComposite.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
     </FxCompile>

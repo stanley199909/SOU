@@ -8,6 +8,7 @@
 #include "Gamepad.h"
 #include "InputPrompts.h"
 #include "Haptics.h"
+#include "GpuProfiler.h"
 #include "SceneRoot.h"
 #include "PostProcess.h"
 #include "DebugUI.h"
@@ -38,9 +39,9 @@ HRESULT Init(HWND hWnd, UINT width, UINT height)
 	rtv->CreateFromScreen();
 	auto dsv = g_pScene->CreateObj<DepthStencil>("DSV");
 	// 深度も超采样解像度(離屏シーンRTと寸法一致=SetRenderTargetsが同じ視口を張る)。
-	hr = dsv->Create(width * SSAA_SCALE, height * SSAA_SCALE, false);
+	hr = dsv->Create(RenderPixels(width), RenderPixels(height), false);
 
-	SetRenderTargets(1, &rtv, dsv);
+	SetRenderTargets(1, &rtv, nullptr);	// 深度は内部解像度(画面と寸法が違う)=画面の RT とは組まない。場面は PostProcess::Begin が sceneRT+DSV で張る
 
 	// ポストプロセスの初期化
 	g_pPost = std::make_shared<PostProcess>();
@@ -55,6 +56,7 @@ HRESULT Init(HWND hWnd, UINT width, UINT height)
 void Uninit()
 {
 	DebugUI::Dispose();
+	GpuProfiler::Uninit();
 	g_pPost->Uninit();
 	g_pPost.reset();
 	g_pScene->Uninit();
@@ -83,10 +85,11 @@ void Draw()
 	auto rtv = g_pScene->GetObj<RenderTarget>("RTV");
 	auto dsv = g_pScene->GetObj<DepthStencil>("DSV");
 
+	GpuProfiler::BeginFrame();	// F3: このフレームの GPU の時間を測り始める
 	// シーンをオフスクリーンRTへ描画 → ポストプロセスを掛けて画面へ合成
 	g_pPost->Begin(dsv);
 	g_pScene->_draw();
-	g_pPost->End(rtv);
+	{ GpuProfiler::Scope t((const char*)u8"後処理（ブルーム・露出・FXAA）"); g_pPost->End(rtv); }
 
 	// UIは最後に画面へ直接描画(ポストプロセスの影響を受けない)
 	DebugUI::NewFrame();
@@ -96,7 +99,8 @@ void Draw()
 		g_pPost->DrawUI();
 	}
 	g_pScene->DrawUI();		// ゲームHUDは常に表示(内部でデバッグ用パネルのみ切替)
-	DebugUI::Render();
+	{ GpuProfiler::Scope t((const char*)u8"画面の UI"); DebugUI::Render(); }
+	GpuProfiler::EndFrame();	// 画面へ出す(垂直同期で待つ)前で締める=待ち時間は GPU の仕事に含めない
 
 	SwapDirectX();
 }

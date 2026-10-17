@@ -269,7 +269,7 @@ namespace
     // with the normal. 9 numbers per color (SH order 2) reproduce it within ~1-3%: no blurred cube needed.
     // Projection = sum over every texel of the captured cube: radiance x basis function x texel solid angle.
     // Search: "spherical harmonics irradiance", "Ramamoorthi Hanrahan" / JP: kyumen chowa kansu
-    const UINT SH_SOURCE_MIP = 3;   // 128 -> 16 px per face: plenty for something this smooth, cheap to read back
+    const UINT SH_SOURCE_MIP = 2;   // 64 -> 16 px per face: plenty for something this smooth, cheap to read back
 
     // Direction through texel (u,v in -1..1) of a face, D3D layout (same table as PS_IblPrefilter).
     XMFLOAT3 FaceDirection(float a, float b, int f)
@@ -505,6 +505,12 @@ namespace ReflectionProbe
         if (s.hasBox && mn.x == s.boxMin.x && mn.y == s.boxMin.y && mn.z == s.boxMin.z &&
             mx.x == s.boxMax.x && mx.y == s.boxMax.y && mx.z == s.boxMax.z) return;   // unchanged: no upload
         s.boxMin = mn; s.boxMax = mx; s.hasBox = true; s.boxDirty = true;
+    }
+
+    bool RoomBox(XMFLOAT3& boxMin, XMFLOAT3& boxMax)
+    {
+        boxMin = s.boxMin; boxMax = s.boxMax;
+        return s.hasBox;
     }
 
     void DrawRoomBox(CameraBase* camera)

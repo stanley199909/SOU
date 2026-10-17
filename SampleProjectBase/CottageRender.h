@@ -143,17 +143,16 @@ inline void Draw(Model* model, FXMMATRIX world, CameraBase* camera,
     constexpr float kFbxUnitsPerMeter=100.0f;
     const float uvScale=XMVectorGetX(XMVector3Length(world.r[0]))*kFbxUnitsPerMeter;
     params.eye={eye.x,eye.y,eye.z,uvScale};
-    params.sun=settings.sun; params.ambient=settings.ambient;
+    params.sun=LitRender::Sun(); params.ambient=settings.ambient;   // sun = time of day (SunCycle) x F2 switch
     params.fire={firePos[0],firePos[1],firePos[2],settings.ambient.w*LitRender::FireIntensityScale()};	// same fire brightness as the props (flicker / bellows)
-    params.lighting={settings.outdoorFill,0,0,0};
+    params.lighting={settings.outdoorFill,LitRender::SkyScale(),0,0};   // x outdoor fill, y sky brightness (day/night) for the distance fog
     params.lightVP=SunStage::Data().lightVP;
     params.shadow={SunStage::Data().hasShadow?1.0f:0.0f,1.0f/SunStage::ShadowSize,SunStage::ShadowDepthBias,SunStage::ReceiverOffset};
     params.window=settings.window; params.windowExtra=settings.windowExtra;
     // F2 light toggles (LitRender::Toggles): same switches as the props, so no light is left on in one place only
     const LightToggles& on=LitRender::Toggles();
-    if(!on.sun) params.sun.w=0.0f;
     if(!on.fire) params.fire.w=0.0f;
-    if(!on.ambient) { params.windowExtra.w=0.0f; params.lighting.x=0.0f; }
+    params.windowExtra.w*=LitRender::FillScale(); params.lighting.x*=LitRender::FillScale();   // fill: F2 switch x day/night
     XMStoreFloat4x4(&params.worldToLocal,XMMatrixTranspose(XMMatrixInverse(nullptr,world)));
     for (unsigned int i=0; i<model->GetMeshNum(); ++i)
     {
@@ -199,7 +198,9 @@ inline void ClearExterior()
     GetContext()->OMGetRenderTargets(1,&target,nullptr);
     if (target)
     {
-        GetContext()->ClearRenderTargetView(target,&Data().exteriorSky.x);
+        const float k=LitRender::SkyScale();   // the sky outside darkens at night
+        const float sky[4]={Data().exteriorSky.x*k,Data().exteriorSky.y*k,Data().exteriorSky.z*k,Data().exteriorSky.w};
+        GetContext()->ClearRenderTargetView(target,sky);
         target->Release();
     }
 }

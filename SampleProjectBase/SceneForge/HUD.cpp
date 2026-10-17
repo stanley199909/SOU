@@ -6,6 +6,9 @@
 #include "CottageRender.h"
 #include "LitRender.h"
 #include "ReflectionProbe.h"
+#include "VolumetricLight.h"
+#include "AutoExposure.h"
+#include "GpuProfiler.h"
 #include "SceneForge/SceneForge.h"
 #include "SceneForge/SceneForge_Internal.h"
 #include "DirectX.h"
@@ -1335,27 +1338,29 @@ void SceneForge::DrawLightPanel()
 		{ (const char*)u8"環境光（部屋の拡散光）", &on.ambient,      true  },
 		{ (const char*)u8"環境光の向きと色（IBL）", &on.iblDirection, false },
 		{ (const char*)u8"映り込み（IBL 反射）",   &on.reflections,  false },
+		{ (const char*)u8"光の筋（体積光）",       &on.volumetric,   false },
+		{ (const char*)u8"目の慣れ（自動露出）",   &AutoExposure::Get().enabled, false },	// 明るい窓を見ると暗く、暗い所では明るく(瞳孔)
 	};
 	const int NROW = (int)_countof(ROWS);
 	// まとめて切り替える型(プリセット)。値の並びは ROWS と同じ
 	struct Preset { const char* label; bool values[_countof(ROWS)]; };
 	const Preset PRESETS[] = {
-		{ (const char*)u8"すべて点ける",   { true,  true,  true,  true,  true  } },
-		{ (const char*)u8"太陽の光だけ",   { false, true,  false, true,  false } },
-		{ (const char*)u8"炉の火の光だけ", { true,  false, false, true,  false } },
+		{ (const char*)u8"すべて点ける",   { true,  true,  true,  true,  true,  true,  true  } },
+		{ (const char*)u8"太陽の光だけ",   { false, true,  false, true,  false, true,  true  } },
+		{ (const char*)u8"炉の火の光だけ", { true,  false, false, true,  false, false, true  } },
 	};
 	const int NPRESET = (int)_countof(PRESETS);
 
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
 	ImDrawList* dl = ImGui::GetForegroundDrawList();
-	const float PANEL_W_RATIO = 0.26f;		// パネルの幅(画面幅比)
+	const float PANEL_W_RATIO = 0.30f;		// パネルの幅(画面幅比)。つまみの名前・棒・値が重ならない幅
 	const float RIGHT_MARGIN  = 0.02f;		// 画面右端からの余白(画面幅比)
-	const float TOP_RATIO     = 0.16f;		// パネル上端(画面高さ比)。上の案内の紙片と重ならない高さ
+	const float TOP_RATIO     = 0.10f;		// パネル上端(画面高さ比)
 	const float CORNER_RATIO  = 0.06f;		// 羊皮紙の隅の大きさ(画面高さ比)
 	const float HEAD_RATIO    = 0.034f;		// 見出しの文字の高さ
 	const float HINT_RATIO    = 0.020f;		// 操作の案内の文字の高さ
-	const float ITEM_RATIO    = 0.026f;		// 項目の文字の高さ
-	const float ROW_RATIO     = 0.046f;		// 1行の高さ
+	const float ITEM_RATIO    = 0.022f;		// 項目の文字の高さ
+	const float ROW_RATIO     = 0.038f;		// 1行の高さ
 	const float SECTION_GAP   = 0.6f;		// 光源とプリセットの間(行の高さ比)
 	const float INSET_X       = 0.9f;		// 文字の左右の余白(隅の大きさ比)
 	const float INSET_TOP     = 0.8f, INSET_BOTTOM = 0.7f;	// 上下の余白(隅の大きさ比)
@@ -1373,15 +1378,23 @@ void SceneForge::DrawLightPanel()
 	const float headH  = disp.y * (HEAD_RATIO + HINT_RATIO) + row * 0.5f;
 	// 光の強さのつまみ(調整値そのものを変える = 保存できる)。値は CottageRender::Data() = F1 と同じ所
 	CottageRender::Settings& light = CottageRender::Data();
-	struct Slider { const char* label; float* value; float maxValue; };
+	// 値の見せ方: 数値 / 時計(time01 → 6:00 起点の時刻) / 分(秒で持つ値を分で見せる)
+	enum class Show { Number, Clock, Minutes };
+	struct Slider { const char* label; float* value; float minValue, maxValue; Show show; };
 	const float SUN_MAX = 64.0f, FIRE_MAX = 64.0f;	// つまみの右端(F1 の上限 128 の半分 = 細かく合わせやすい)
+	const float BEAM_DENSITY_MAX = 0.3f;			// 光の筋の濃さの右端(1m の空気が散らす割合。0.3 = 煙たい鍛冶場)
+	const float DAY_SEC_MIN = 30.0f, DAY_SEC_MAX = 1200.0f;	// 一日の長さ(秒): 30秒(早送り)〜20分
+	const float SEC_PER_MIN = 60.0f;
 	const Slider SLIDERS[] = {
-		{ (const char*)u8"太陽の強さ",   &light.sun.w,     SUN_MAX  },
-		{ (const char*)u8"炉の火の強さ", &light.ambient.w, FIRE_MAX },	// ambient.w = 炉の火の強さ(CottageRender の並び)
+		{ (const char*)u8"時刻",         &m_sun.time01,     0.0f, 1.0f, Show::Clock },		// 動かすと太陽がそこへ跳ぶ
+		{ (const char*)u8"一日の長さ",   &m_sun.dayLengthSec, DAY_SEC_MIN, DAY_SEC_MAX, Show::Minutes },
+		{ (const char*)u8"太陽の強さ",   &light.sun.w,     0.0f, SUN_MAX,  Show::Number },	// 昼(真上)の強さ。朝夕・夜は時刻が弱める
+		{ (const char*)u8"炉の火の強さ", &light.ambient.w, 0.0f, FIRE_MAX, Show::Number },	// ambient.w = 炉の火の強さ(CottageRender の並び)
+		{ (const char*)u8"光の筋の濃さ", &VolumetricLight::Get().density, 0.0f, BEAM_DENSITY_MAX, Show::Number },	// 空気中の塵・煙の量(保存はまだしない)
 	};
 	const int NSLIDER = (int)_countof(SLIDERS);
-	const int NSAVE   = 1;	// 「この明るさを保存」の行
-	const float panelH = corner * INSET_TOP + headH + row * NROW + row * SECTION_GAP + row * NSLIDER + row * NSAVE
+	const int NEXTRA  = 2;	// 「時間を進める」+「この明るさを保存」の行
+	const float panelH = corner * INSET_TOP + headH + row * NROW + row * SECTION_GAP + row * NSLIDER + row * NEXTRA
 	                   + row * SECTION_GAP + row * NPRESET + corner * INSET_BOTTOM;
 	const ImVec2 pa(disp.x * (1.0f - RIGHT_MARGIN) - panelW, disp.y * TOP_RATIO);
 	const ImVec2 pb(pa.x + panelW, pa.y + panelH);
@@ -1430,10 +1443,16 @@ void SceneForge::DrawLightPanel()
 	y += row * SECTION_GAP * 0.5f;
 	dl->AddLine(ImVec2(lx, y), ImVec2(rx, y), INK_LINE, 1.0f);
 	y += row * SECTION_GAP * 0.5f;
-	const float BAR_START = 0.50f;		// つまみの棒が始まる位置(パネル内の幅比。左は名前)
+	//   1行 = [名前 | 棒 | 値] の3列。名前の列幅は一番長い名前に合わせる(=名前・棒・値が重ならない。2026-10-17 F5)
 	const float BAR_H     = 0.18f;		// 棒の太さ(行の高さ比)
 	const float KNOB_R    = 0.22f;		// つまみの丸の半径(行の高さ比)
-	const float barL = lx + (rx - lx) * BAR_START, barR = rx - row * KNOB_R;
+	const float COL_GAP   = 0.6f;		// 列の間(行の高さ比)
+	const char* VALUE_WIDEST = "00:00";	// 値の列の幅はこの文字列で測る(一番長い表示)
+	float nameW = 0.0f;
+	for (const Slider& sl : SLIDERS) nameW = fmaxf(nameW, f->CalcTextSizeA(ipx, FLT_MAX, 0.0f, sl.label).x);
+	const float valueW = f->CalcTextSizeA(ipx, FLT_MAX, 0.0f, VALUE_WIDEST).x;
+	const float barL = lx + nameW + row * COL_GAP + row * KNOB_R;
+	const float barR = rx - valueW - row * COL_GAP - row * KNOB_R;
 	if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) && m_lightPanelDrag >= 0)
 	{
 		m_lightPanelDrag = -1;
@@ -1441,23 +1460,44 @@ void SceneForge::DrawLightPanel()
 	}
 	for (int s = 0; s < NSLIDER; ++s, y += row)
 	{
+		const Slider& sl = SLIDERS[s];
 		const bool hover = rowHit(y);
 		if (hover && click && mouse.x >= barL - row * KNOB_R) { m_lightPanelDrag = s; m_lightPanelSaved = false; }	// 棒の上だけ(名前を押して 0 にならない様に)
 		if (m_lightPanelDrag == s)
 		{
 			const float t = fminf(fmaxf((mouse.x - barL) / (barR - barL), 0.0f), 1.0f);
-			*SLIDERS[s].value = t * SLIDERS[s].maxValue;
+			*sl.value = sl.minValue + t * (sl.maxValue - sl.minValue);
 		}
 		const bool active = hover || m_lightPanelDrag == s;
-		char label[64];
-		snprintf(label, sizeof(label), "%s  %.1f", SLIDERS[s].label, *SLIDERS[s].value);
-		dl->AddText(f, ipx, ImVec2(lx, y + (row - ipx) * 0.5f), active ? INK_SEL : INK_ITEM, label);
+		const ImU32 ink = active ? INK_SEL : INK_ITEM;
+		const float ty = y + (row - ipx) * 0.5f;
+		dl->AddText(f, ipx, ImVec2(lx, ty), ink, sl.label);
+		char value[32];
+		if (sl.show == Show::Clock)
+		{
+			const float h = m_sun.Hour();
+			snprintf(value, sizeof(value), "%02d:%02d", (int)h, (int)((h - floorf(h)) * SEC_PER_MIN));
+		}
+		else if (sl.show == Show::Minutes) snprintf(value, sizeof(value), (const char*)u8"%.1f分", *sl.value / SEC_PER_MIN);
+		else snprintf(value, sizeof(value), *sl.value < 1.0f ? "%.2f" : "%.1f", *sl.value);
+		const float vw = f->CalcTextSizeA(ipx, FLT_MAX, 0.0f, value).x;
+		dl->AddText(f, ipx, ImVec2(rx - vw, ty), ink, value);	// 値は右揃え
 		const float cy = y + row * 0.5f, bh = row * BAR_H;
-		const float t  = fminf(*SLIDERS[s].value / SLIDERS[s].maxValue, 1.0f);
+		const float t  = fminf(fmaxf((*sl.value - sl.minValue) / (sl.maxValue - sl.minValue), 0.0f), 1.0f);
 		const float kx = barL + (barR - barL) * t;
 		dl->AddRectFilled(ImVec2(barL, cy - bh * 0.5f), ImVec2(barR, cy + bh * 0.5f), INK_LINE, bh * 0.5f);
-		dl->AddRectFilled(ImVec2(barL, cy - bh * 0.5f), ImVec2(kx, cy + bh * 0.5f), active ? INK_SEL : INK_ITEM, bh * 0.5f);
-		dl->AddCircleFilled(ImVec2(kx, cy), row * KNOB_R, active ? INK_SEL : INK_ITEM);
+		dl->AddRectFilled(ImVec2(barL, cy - bh * 0.5f), ImVec2(kx, cy + bh * 0.5f), ink, bh * 0.5f);
+		dl->AddCircleFilled(ImVec2(kx, cy), row * KNOB_R, ink);
+	}
+	{	// 時間を進める / 止める(止めると今の光で見比べられる)
+		const bool hover = rowHit(y);
+		if (hover && click) m_sun.running = !m_sun.running;
+		dl->AddText(f, ipx, ImVec2(lx, y + (row - ipx) * 0.5f), hover ? INK_SEL : INK_ITEM, (const char*)u8"時間を進める");
+		const float r = disp.y * DOT_R_RATIO;
+		const ImVec2 c(rx - r, y + row * 0.5f);
+		if (m_sun.running) dl->AddCircleFilled(c, r, hover ? INK_SEL : INK_ITEM);
+		else               dl->AddCircle(c, r, hover ? INK_SEL : INK_OFF, 0, DOT_LINE_W);
+		y += row;
 	}
 	{
 		const bool hover = rowHit(y);
@@ -1489,6 +1529,90 @@ void SceneForge::DrawLightPanel()
 	}
 
 	if (needRecapture) ReflectionProbe::RequestRecapture();	// 反射の写真も今の光で撮り直す(次のフレーム)
+}
+
+//====================================================================
+//  設計者用パネル F3 = 処理の重さ(GPU 計時)
+//  フレームの各段階が GPU で何ミリ秒かかったか(GpuProfiler のタイムスタンプ)。最適化は「推測でなく測定」から:
+//  一番重い所(朱)から手を付け、直したらここで数字が下がったかを確かめる。見るだけなのでゲームは止めない。
+//====================================================================
+void SceneForge::DrawProfilerPanel()
+{
+	ImVec2 disp = ImGui::GetIO().DisplaySize;
+	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	const float PANEL_W_RATIO = 0.34f;		// パネルの幅(画面幅比)
+	const float LEFT_MARGIN   = 0.02f;		// 画面左端からの余白
+	const float TOP_RATIO     = 0.10f;		// パネル上端
+	const float CORNER_RATIO  = 0.06f;
+	const float HEAD_RATIO    = 0.032f, HINT_RATIO = 0.019f, ITEM_RATIO = 0.021f, ROW_RATIO = 0.034f;
+	const float INSET_X = 0.9f, INSET_TOP = 0.8f, INSET_BOTTOM = 0.7f;
+	const float BAR_H   = 0.35f;			// 棒の太さ(行の高さ比)
+	const float COL_GAP = 0.5f;				// 列の間(行の高さ比)
+	const float FRAME_BUDGET_MS = 1000.0f / 60.0f;	// 60fps で 1 フレームに使える時間(棒の右端の目安)
+	const ImU32 INK_HEAD = IM_COL32( 60,  38,  22, 255);
+	const ImU32 INK_ITEM = IM_COL32( 60,  42,  28, 230);
+	const ImU32 INK_HINT = IM_COL32( 60,  42,  28, 130);
+	const ImU32 INK_HOT  = IM_COL32(150,  32,  18, 255);	// 一番重い段階 = 朱
+	const ImU32 INK_LINE = IM_COL32( 60,  42,  28,  60);
+
+	const std::vector<GpuProfiler::Entry>& rows = GpuProfiler::Results();
+	const float corner = disp.y * CORNER_RATIO, row = disp.y * ROW_RATIO;
+	const float panelW = disp.x * PANEL_W_RATIO;
+	const int   nInfo  = 3;	// 「1フレーム全体」「CPU」「FPS」の行
+	const float headH  = disp.y * (HEAD_RATIO + HINT_RATIO) + row * 0.5f;
+	const float panelH = corner * INSET_TOP + headH + row * (nInfo + (float)rows.size()) + row * 0.5f + corner * INSET_BOTTOM;
+	const ImVec2 pa(disp.x * LEFT_MARGIN, disp.y * TOP_RATIO), pb(pa.x + panelW, pa.y + panelH);
+	DrawParchment(dl, m_uiFrame.get(), pa, pb, corner);
+
+	const float lx = pa.x + corner * INSET_X, rx = pb.x - corner * INSET_X;
+	float y = pa.y + corner * INSET_TOP;
+	{
+		const float px = disp.y * HEAD_RATIO, hp = disp.y * HINT_RATIO;
+		dl->AddText(DebugUI::FontJPFor(px), px, ImVec2(lx, y), INK_HEAD, (const char*)u8"処理の重さ（GPU）");
+		y += px;
+		dl->AddText(DebugUI::FontJPFor(hp), hp, ImVec2(lx, y), INK_HINT, (const char*)u8"F3 で閉じる・ゲームは止まらない・数フレームの平均");
+		y += hp + row * 0.5f;
+	}
+	const float ipx = disp.y * ITEM_RATIO;
+	ImFont* f = DebugUI::FontJPFor(ipx);
+	char text[96];
+	// 全体
+	const float frameMs = GpuProfiler::FrameMs();
+	snprintf(text, sizeof(text), (const char*)u8"1フレーム全体（GPU）  %.2f ms  / 60fps の予算 %.1f ms", frameMs, FRAME_BUDGET_MS);
+	dl->AddText(f, ipx, ImVec2(lx, y + (row - ipx) * 0.5f), frameMs > FRAME_BUDGET_MS ? INK_HOT : INK_ITEM, text);
+	y += row;
+	// CPU が描画命令を出すのに掛かった時間。GPU の合計とほぼ同じなら、GPU は CPU を「待って」いる(=CPU 側が遅い)
+	snprintf(text, sizeof(text), (const char*)u8"CPU（描画命令を出す時間）  %.2f ms", GpuProfiler::CpuMs());
+	dl->AddText(f, ipx, ImVec2(lx, y + (row - ipx) * 0.5f), INK_ITEM, text);
+	y += row;
+	snprintf(text, sizeof(text), "FPS  %.0f", ImGui::GetIO().Framerate);
+	dl->AddText(f, ipx, ImVec2(lx, y + (row - ipx) * 0.5f), INK_ITEM, text);
+	y += row + row * 0.25f;
+	dl->AddLine(ImVec2(lx, y), ImVec2(rx, y), INK_LINE, 1.0f);
+	y += row * 0.25f;
+
+	// 段階ごと: [名前 | 棒(1フレームの予算に対する割合) | ms]。一番重い段階を朱で
+	float nameW = 0.0f, maxMs = 0.0f;
+	for (const GpuProfiler::Entry& e : rows) { nameW = fmaxf(nameW, f->CalcTextSizeA(ipx, FLT_MAX, 0.0f, e.name).x); maxMs = fmaxf(maxMs, e.ms); }
+	const float valueW = f->CalcTextSizeA(ipx, FLT_MAX, 0.0f, "00.00 ms").x;
+	const float barL = lx + nameW + row * COL_GAP, barR = rx - valueW - row * COL_GAP;
+	for (const GpuProfiler::Entry& e : rows)
+	{
+		const bool hot = (e.ms == maxMs && maxMs > 0.0f);
+		const ImU32 ink = hot ? INK_HOT : INK_ITEM;
+		const float ty = y + (row - ipx) * 0.5f;
+		dl->AddText(f, ipx, ImVec2(lx, ty), ink, e.name);
+		snprintf(text, sizeof(text), "%.2f ms", e.ms);
+		dl->AddText(f, ipx, ImVec2(rx - f->CalcTextSizeA(ipx, FLT_MAX, 0.0f, text).x, ty), ink, text);
+		const float cy = y + row * 0.5f, bh = row * BAR_H;
+		const float t = fminf(e.ms / FRAME_BUDGET_MS, 1.0f);
+		if (barR > barL)
+		{
+			dl->AddRectFilled(ImVec2(barL, cy - bh * 0.5f), ImVec2(barR, cy + bh * 0.5f), INK_LINE, bh * 0.5f);
+			dl->AddRectFilled(ImVec2(barL, cy - bh * 0.5f), ImVec2(barL + (barR - barL) * t, cy + bh * 0.5f), ink, bh * 0.5f);
+		}
+		y += row;
+	}
 }
 
 //--- 「レッスン完了」: 画面中央の羊皮紙に課程の名前と完了。課程の一覧と同じ見た目(羊皮紙+インク)。
@@ -1594,6 +1718,11 @@ void SceneForge::DrawOptionsMenu()
 			if (m_rumbleIdx == 0) strcpy_s(val, sizeof(val), (const char*)u8"オフ");
 			else                  sprintf_s(val, sizeof(val), "%d%%", (int)(RUMBLE_STEPS[m_rumbleIdx] * PERCENT + 0.5f));	// 25% / 50% …
 			steppedRow((const char*)u8"震動(コントローラー)", val, m_rumbleIdx, (int)_countof(RUMBLE_STEPS));
+		}
+		else if (i == (int)OptionItem::Quality)
+		{
+			strcpy_s(val, sizeof(val), m_qualityIdx == 0 ? (const char*)u8"標準" : (const char*)u8"高画質");
+			steppedRow((const char*)u8"画質", val, m_qualityIdx, (int)_countof(QUALITY_STEPS));
 		}
 		else
 		{
@@ -1789,6 +1918,7 @@ void SceneForge::DrawUI()
 	}
 	if (m_state == GAME_PLAY && m_courseComplete) DrawCourseComplete();	// チュートリアルの課程を終えた
 	if (m_lightPanelOpen) DrawLightPanel();	// F2: 設計者用のライティング確認(ゲームと同じ羊皮紙の見た目)
+	if (m_profilerPanelOpen) DrawProfilerPanel();	// F3: 処理の重さ(GPU の各段階の時間)
 	// プレイテスト計時: 遊んでいる間(導入カメラ・終幕の映像中は出さない)と結果画面(=最終の内訳を見る)
 	if (m_showPlaytestTimer
 	 && ((m_state == GAME_PLAY && m_introPhase == IntroPhase::None && !m_clearDecided) || m_state == GAME_RESULT))

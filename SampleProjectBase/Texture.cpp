@@ -112,6 +112,8 @@ D3D11_TEXTURE2D_DESC Texture::MakeTexDesc(DXGI_FORMAT format, UINT width, UINT h
 HRESULT Texture::CreateResource(D3D11_TEXTURE2D_DESC& desc, const void* pData)
 {
 	HRESULT hr = E_FAIL;
+	SAFE_RELEASE(m_pSRV);	// re-Create (e.g. the render resolution changed): free the old texture first
+	SAFE_RELEASE(m_pTex);
 
 
 	D3D11_SUBRESOURCE_DATA data = {};
@@ -191,6 +193,7 @@ ID3D11RenderTargetView* RenderTarget::GetView() const
 }
 HRESULT RenderTarget::CreateResource(D3D11_TEXTURE2D_DESC& desc, const void* pData)
 {
+	SAFE_RELEASE(m_pRTV);	// re-Create: free the old view first
 	
 	HRESULT hr = Texture::CreateResource(desc, nullptr);
 	if (FAILED(hr)) { return hr; }
@@ -230,6 +233,7 @@ ID3D11DepthStencilView* DepthStencil::GetView() const
 }
 HRESULT DepthStencil::CreateResource(D3D11_TEXTURE2D_DESC& desc, const void* pData)
 {
+	SAFE_RELEASE(m_pDSV);	// re-Create: free the old view first
 
 	bool useStencil = (desc.Format == DXGI_FORMAT_R24G8_TYPELESS);
 
