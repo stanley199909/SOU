@@ -379,6 +379,17 @@ void SceneForge::DrawCarry()
 		DrawModelWorld(tongs, TongsWorld(t.approach, t.barDir, t.grip), "StPliers");
 		return;
 	}
+	if (m_temperPoseW > 0.0f && m_workAt == Station::Hearth)
+	{
+		// 焼き戻し: 火ばさみで刃の手元の端を挟み、炭の上に構える(現実の鍛冶も刃を火ばさみで持って火の上を動かす)。
+		//   柄は口から炉口の外(カメラ側)・上へ出す=炭床や炉の縁を突き抜けない(水槽と同じ考え方)。
+		TongsPose t = TongsOnIron(WeaponWorld());
+		const XMFLOAT3 into = StationInto();
+		const XMFLOAT3 handle(t.grip.x - into.x * TEMPER_TONGS_OUT, t.grip.y + TEMPER_TONGS_RISE, t.grip.z - into.z * TEMPER_TONGS_OUT);
+		XMStoreFloat3(&t.approach, XMVector3Normalize(XMLoadFloat3(&t.grip) - XMLoadFloat3(&handle)));	// 柄 → 口
+		DrawModelWorld(tongs, TongsWorld(t.approach, t.barDir, t.grip), "StPliers");
+		return;
+	}
 	const bool atAnvil = !m_walkMode && !Transitioning() && m_station == Station::Anvil;
 	if ((m_walkMode || atAnvil) && !m_tongsInHand)
 	{

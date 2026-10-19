@@ -32,10 +32,10 @@ const SceneForge::LessonDef SceneForge::LESSONS[] =
 	{ LessonId::Aim,       LessonAnim::MouseVertical, NO_KEY,           (const char*)u8"{Hand}を上下に動かして、叩く場所を狙う",       0.5f,  0.0f,  3 },
 	{ LessonId::Strike,    LessonAnim::StrikeHold,    NO_KEY,           (const char*)u8"{Use}を長押しして力を溜め、離して叩く",   1.0f, 10.0f,  0 },
 	{ LessonId::ReadGauge, LessonAnim::PointGauge,    NO_KEY,           (const char*)u8"温度ゲージの緑の間だけ、叩くと形が変わる",     3.0f,  0.0f,  0 },
-	{ LessonId::HitScale,  LessonAnim::PointUp,       NO_KEY,           (const char*)u8"表面の黒い皮が残っている所を叩く",            0.3f,  0.0f,  0 },	// 術語(黒皮/酸化スケール/金肌)でなく見た目で言う=時代設定に依らない(2026-10-14)
+	{ LessonId::HitScale,  LessonAnim::StrikeHold,    NO_KEY,           (const char*)u8"{Use}で、表面の黒い皮が残っている所を叩く",   1.0f,  0.0f,  0 },	// 術語(黒皮/酸化スケール/金肌)でなく見た目で言う=時代設定に依らない(2026-10-14)
 	// --- 炉 ---
 	{ LessonId::TakeOut,   LessonAnim::PressKey,      Action::Grab,     (const char*)u8"十分に熱くなった。{Grab}で鉄を掴んで炉から出す", 1.0f,  0.0f,  0 },
-	{ LessonId::Bellows,   LessonAnim::HoldKey,       Action::Bellows,  (const char*)u8"{Bellows}を長押しして、ふいごで風を送る",           0.3f,  3.0f,  0 },
+	{ LessonId::Bellows,   LessonAnim::PressKey,      Action::Bellows,  (const char*)u8"{Bellows}を何度も押して、ふいごで風を送る",         3.0f,  3.0f,  0 },
 	{ LessonId::WaitHot,   LessonAnim::PointGauge,    NO_KEY,           (const char*)u8"温度ゲージの印が、囲んだ所に入るまで待つ",     1.0f,  0.0f,  0 },
 	// --- 走動・搬運(通常モードの救急は無し: 行き先の ▼ が点滅する) ---
 	{ LessonId::GripIron,  LessonAnim::PressKey,      Action::Grab,     (const char*)u8"鉄を見て、{Grab}で火ばさみで掴む",           1.0f,  0.0f,  0 },
@@ -48,7 +48,7 @@ const SceneForge::LessonDef SceneForge::LESSONS[] =
 	//   覚えた後は「思い出させる」課(remind): 研ぐのが止まった時だけ出る。通常モードは 3 秒止まったら。
 	{ LessonId::GrindRun,  LessonAnim::GrindRun,      NO_KEY,           (const char*)u8"{GrindPress}を長押ししたまま、{Pedal}を連打して砥石を回す", 1.5f, 3.0f, 0, true },
 	{ LessonId::GrindAngle,LessonAnim::GrindAngle,    NO_KEY,           (const char*)u8"{Tilt}を上下に動かし、火花が一番多い角度で研ぎ続ける", 1.0f, 0.0f, 10 },	// GRIND_ANGLE_HOLD_SEC 途切れずに 1回
-	{ LessonId::GrindSlide,LessonAnim::MouseHorizontal,NO_KEY,          (const char*)u8"{Hand}を左右に動かして、刃全体を研ぐ",         0.5f,  0.0f, 10 },
+	{ LessonId::GrindSlide,LessonAnim::GrindSlide,    NO_KEY,           (const char*)u8"{GrindPress}長押し・{Pedal}連打のまま、{Hand}を左右に動かして刃全体を研ぐ", 0.5f, 0.0f, 10 },	// 2026-10-19: 旧は左右の絵だけ=押すのを止めてよいと誤解された
 	// --- 水槽(救急: 3 秒、2026-10-12 ユーザー決定) ---
 	{ LessonId::Plunge,    LessonAnim::PressKey,      Action::Use,      (const char*)u8"{Use}で、刃を水に入れる",                 1.0f,  3.0f,  0 },
 	{ LessonId::Stir,      LessonAnim::MouseVertical, NO_KEY,           (const char*)u8"{Hand}を上下に動かして、水の中で刃を揺する",   0.15f, 3.0f,  0 },
@@ -69,7 +69,7 @@ bool SceneForge::LessonActive(LessonId id) const
 {
 	if (m_state != GAME_PLAY || m_clearDecided || SequencePlaying()) return false;
 	const bool atAnvil    = AtStation(Station::Anvil)  && m_workAt == Station::Anvil  && !m_carrying;
-	const bool inFireHere = AtStation(Station::Hearth) && m_workAt == Station::Hearth && !m_carrying;	// 炉の工位で鉄が火の中
+	const bool inFireHere = AtStation(Station::Hearth) && m_workAt == Station::Hearth && !m_carrying && !Tempering();	// 炉の工位で鉄が火の中(焼き戻しは温度でなく色を見る工程=加熱の課は出さない)
 	const bool walking    = m_walkMode && !Transitioning();
 	const bool atGrind    = AtStation(Station::Grindstone) && m_workAt == Station::Grindstone && !m_carrying
 	                     && StepReached(StepName::Grind) && !m_forging.AllSharp();	// 砥石で研ぐ事が残っている
@@ -154,10 +154,10 @@ float SceneForge::LessonMetric(LessonId id) const
 	{
 	case LessonId::Aim:     return m_aimTravel;
 	case LessonId::Strike:  return (float)m_validStrikes;
-	case LessonId::Bellows: return m_bellowsTime;
+	case LessonId::Bellows: return (float)m_bellowsPumps;	// 踏んだ回数
 	case LessonId::Flip:    return (float)m_flipCount;
 	case LessonId::ReadGauge: return (float)m_validStrikes;
-	case LessonId::HitScale:  return m_forging.SideProgress(0) + m_forging.SideProgress(1);	// 両面の進みの和(裏返しても減らない)
+	case LessonId::HitScale:  return (float)m_validStrikes;	// 黒皮の残る所(未完成の区域)を適温で叩いた回数=有効打。1回で「できた」(2026-10-19 ユーザー: 旧「両面の進み 30%」は何回叩いても済まない様に見えた)
 	case LessonId::LeaveCold:
 	case LessonId::TakeOut:   return (float)m_leaveCount;
 	case LessonId::WaitHot:   return (float)m_heatReadyCount;
@@ -332,6 +332,20 @@ static void DrawLessonRing(ImDrawList* dl, ImVec2 c, float size, float fill01, f
 	dl->PathStroke(withAlpha(LESSON_RING_COL), 0, w);
 }
 
+//--- キーの絵の上の小さな一言(「長押し」「連打」「左右」= どの押し方/動かし方か)。
+static void DrawLessonLabel(ImDrawList* dl, const char* text, ImVec2 iconCenter, float size, float alpha01)
+{
+	const float LABEL_RATIO = 0.020f;	// 文字の高さ(画面高さ比)
+	const float LABEL_ABOVE = 0.95f;	// 絵の中心から文字までの上への距離(キーの絵の大きさに対する比)。輪の上
+	const float lpx = ImGui::GetIO().DisplaySize.y * LABEL_RATIO;
+	ImFont* f = DebugUI::FontJPFor(lpx);
+	const ImVec2 sz = f->CalcTextSizeA(lpx, FLT_MAX, 0.0f, text);
+	const ImVec2 pos(iconCenter.x - sz.x * 0.5f, iconCenter.y - size * LABEL_ABOVE - sz.y);
+	const int a = (int)(255 * alpha01);
+	dl->AddText(f, lpx, ImVec2(pos.x + LESSON_SHADOW_PX, pos.y + LESSON_SHADOW_PX), IM_COL32(0, 0, 0, (int)(a * 0.7f)), text);
+	dl->AddText(f, lpx, pos, (LESSON_TEXT_COL & ~IM_COL32_A_MASK) | ((ImU32)a << IM_COL32_A_SHIFT), text);
+}
+
 //--- 弾ける輪: 0..1 の進みで外へ広がりながら消える(叩いた瞬間 / できた瞬間)。
 static void DrawLessonBurst(ImDrawList* dl, ImVec2 c, float size, float p01, float alpha01, ImU32 col, float growTo)
 {
@@ -357,7 +371,7 @@ static void DrawLessonText(ImDrawList* dl, const char* text, ImVec2 c, float siz
 
 //--- マウスを上下/左右に動かす。towards = 0: 往復(動いている向きの矢印が明るい)
 //    −1 / +1: 上(左) / 下(右)へだけ動かして見せ、その向きの矢印だけを明るくする(直す向きを教える)。
-void SceneForge::DrawAxisLesson(AxisPrompt axisPrompt, int towards, float alpha, float scale, unsigned int tint)
+void SceneForge::DrawAxisLesson(AxisPrompt axisPrompt, int towards, float alpha, float scale, unsigned int tint, float xShift, const char* label)
 {
 	const bool vertical = (axisPrompt != AxisPrompt::HandHorizontal);	// 左右に動かすのは「刃を滑らせる」だけ
 	const float SWING_SEC  = 1.4f;		// 1往復の秒
@@ -366,7 +380,8 @@ void SceneForge::DrawAxisLesson(AxisPrompt axisPrompt, int towards, float alpha,
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
 	ImDrawList* dl = ImGui::GetForegroundDrawList();
 	const float size = disp.y * LESSON_ICON_RATIO * scale;
-	const ImVec2 c(disp.x * LESSON_CENTER_X, disp.y * LESSON_CENTER_Y);
+	const ImVec2 c(disp.x * LESSON_CENTER_X + xShift, disp.y * LESSON_CENTER_Y);
+	if (label) DrawLessonLabel(dl, label, c, size, alpha);	// 絵の上の一言(「長押し」「連打」と同じ見た目)
 	const ImVec2 axis = vertical ? ImVec2(0.0f, 1.0f) : ImVec2(1.0f, 0.0f);	// + = 下 / 右
 	const float t01 = fmodf(m_lessonClock, SWING_SEC) / SWING_SEC;
 	float off, movePlus;	// 中心からのずれ / 動いている向き(+ = 下・右)
@@ -528,20 +543,6 @@ void SceneForge::DrawGaugePointLesson(float lo, float hi, float alpha, float sca
 	dl->AddRect(ImVec2(x0 - pad, ty0 - pad), ImVec2(x1 + pad, ty0 + th + pad), (LESSON_RING_COL & ~IM_COL32_A_MASK) | ((ImU32)a << IM_COL32_A_SHIFT), 0.0f, 0, FRAME_W);
 	const float bob = sinf(m_lessonClock * BOB_HZ * XM_2PI) * disp.y * BOB_AMP;
 	DrawLessonArrow(dl, ImVec2((x0 + x1) * 0.5f, ty0 - pad - disp.y * ARROW_GAP + bob), +1.0f, disp.y * ARROW_SIZE * scale, alpha, LESSON_RING_COL);
-}
-
-//--- 上(刃)を指す: 上下に揺れる上向きの矢印。
-void SceneForge::DrawPointUpLesson(float alpha, float scale, unsigned int tint)
-{
-	const float BOB_AMP = 0.15f;	// 揺れ(アイコンの大きさに対する比)
-	const float BOB_HZ  = 1.5f;		// 揺れの速さ(回/秒)
-	const ImU32 WHITE   = IM_COL32(255, 255, 255, 255);
-	ImVec2 disp = ImGui::GetIO().DisplaySize;
-	ImDrawList* dl = ImGui::GetForegroundDrawList();
-	const float size = disp.y * LESSON_ICON_RATIO * scale;
-	const ImVec2 c(disp.x * LESSON_CENTER_X, disp.y * LESSON_CENTER_Y);
-	const float bob = sinf(m_lessonClock * BOB_HZ * XM_2PI) * size * BOB_AMP;
-	DrawLessonArrow(dl, ImVec2(c.x, c.y - size * 0.5f + bob), -1.0f, size, alpha, (tint == WHITE) ? LESSON_RING_COL : tint);	// 普段は橙、できた瞬間は金
 }
 
 //====================================================================
@@ -789,18 +790,16 @@ bool SceneForge::GrindRunning() const
 //--- 研ぐ基本: 左の長押しと右の連打を左右に並べる(2026-10-12 ユーザーの絵)。
 //    今できている方を薄くする(LESSON_DONE_ALPHA)= 目立っている方が「まだ足りない操作」。両方薄い = 研げている。
 //    左 = 押していれば済 / 右 = 砥石が研げる速さで回っていれば済(踏む事の結果で判定=連打が遅ければ済にならない)。
-void SceneForge::DrawGrindRunLesson(float alpha, float scale, unsigned int tint)
+void SceneForge::DrawGrindRunLesson(float alpha, float scale, unsigned int tint, float xShift)
 {
 	const float GAP          = 0.95f;	// 中心から各キーの絵の中心まで(キーの絵の大きさに対する比)
 	const float DONE_ALPHA   = 0.3f;	// できている方の濃さ(ユーザー指定)
-	const float LABEL_RATIO  = 0.020f;	// 「長押し」「連打」の文字の高さ(画面高さ比)
-	const float LABEL_ABOVE  = 0.95f;	// 絵の中心から文字までの上への距離(キーの絵の大きさに対する比)。輪の上
 	const float HOLD_SEC = 1.4f, REST_SEC = 0.5f;	// 長押しの見本(押して輪が溜まる → 一呼吸)
 	const float TAP_PERIOD = 0.35f, TAP_PRESS_FRAC = 0.4f;	// 連打の見本(ペダルの絵と同じ間隔)
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
 	ImDrawList* dl = ImGui::GetForegroundDrawList();
 	const float size = disp.y * LESSON_ICON_RATIO * scale;
-	const ImVec2 c(disp.x * LESSON_CENTER_X, disp.y * LESSON_CENTER_Y);
+	const ImVec2 c(disp.x * LESSON_CENTER_X + xShift, disp.y * LESSON_CENTER_Y);
 	const bool  holdOK = InputActions::Held(Action::GrindPress);
 	const bool  tapOK  = m_wheel.Speed01() >= GRIND_WORK_MIN_SPEED;
 	std::string holdOutline, tapOutline;
@@ -828,18 +827,8 @@ void SceneForge::DrawGrindRunLesson(float alpha, float scale, unsigned int tint)
 	else                    DrawLessonIcon(dl, tapOutline.c_str(), rc, size, ra, tint);
 
 	// 上に「長押し」「連打」(どちらがどの押し方かを文字でも)
-	const float lpx = disp.y * LABEL_RATIO;
-	ImFont* f = DebugUI::FontJPFor(lpx);
-	auto label = [&](const char* t, ImVec2 at, float a01)
-	{
-		const ImVec2 sz = f->CalcTextSizeA(lpx, FLT_MAX, 0.0f, t);
-		const ImVec2 pos(at.x - sz.x * 0.5f, at.y - size * LABEL_ABOVE - sz.y);
-		const int a = (int)(255 * a01);
-		dl->AddText(f, lpx, ImVec2(pos.x + LESSON_SHADOW_PX, pos.y + LESSON_SHADOW_PX), IM_COL32(0, 0, 0, (int)(a * 0.7f)), t);
-		dl->AddText(f, lpx, pos, (LESSON_TEXT_COL & ~IM_COL32_A_MASK) | ((ImU32)a << IM_COL32_A_SHIFT), t);
-	};
-	label((const char*)u8"長押し", lc, la);
-	label((const char*)u8"連打",   rc, ra);
+	DrawLessonLabel(dl, (const char*)u8"長押し", lc, size, la);
+	DrawLessonLabel(dl, (const char*)u8"連打",   rc, size, ra);
 }
 
 //--- 課の絵を種類で描き分ける(表の LessonAnim)。
@@ -848,7 +837,6 @@ void SceneForge::DrawLessonAnim(const LessonDef& d, float alpha, float scale, un
 	switch (d.anim)
 	{
 	case LessonAnim::MouseVertical:   DrawAxisLesson(AxisPrompt::HandVertical,   0, alpha, scale, tint); break;	// 狙う / 揺する = 手
-	case LessonAnim::MouseHorizontal: DrawAxisLesson(AxisPrompt::HandHorizontal, 0, alpha, scale, tint); break;	// 刃を滑らせる = 手
 	case LessonAnim::GrindAngle:
 	{
 		// 救急(誤りを重ねた)なら直す向きだけ: 寝かせすぎ → 上へ(立てる) / 立てすぎ → 下へ(寝かせる)。教える時は往復
@@ -857,15 +845,23 @@ void SceneForge::DrawLessonAnim(const LessonDef& d, float alpha, float scale, un
 		break;
 	}
 	case LessonAnim::GrindRun:      DrawGrindRunLesson(alpha, scale, tint); break;
+	case LessonAnim::GrindSlide:
+	{
+		// 「長押し+連打を続けたまま、左右に滑らせる」= 3つを1列に。左右だけを見せると、押すのを止めてよいと誤解された(2026-10-19 ユーザー)
+		const float PAIR_SHIFT  = 1.0f;		// 長押し+連打の組を左へずらす量(キーの絵の大きさに対する比)
+		const float SLIDE_SHIFT = 1.75f;	// 左右の絵を右へずらす量(同)。組の右の絵と矢印が重ならない間隔
+		const float size = ImGui::GetIO().DisplaySize.y * LESSON_ICON_RATIO * scale;
+		DrawGrindRunLesson(alpha, scale, tint, -size * PAIR_SHIFT);
+		DrawAxisLesson(AxisPrompt::HandHorizontal, 0, alpha, scale, tint, size * SLIDE_SHIFT, (const char*)u8"左右");
+		break;
+	}
 	case LessonAnim::GrindFlipHold:
 		if (m_grindFlipping) DrawHoldProgressPrompt(Action::Flip, m_grindFlipHold / GRIND_FLIP_SEC, InputActions::Held(Action::Flip), nullptr, alpha, scale, tint);
 		else                 DrawHoldKeyLesson(Action::Flip, alpha, scale, tint);
 		break;
 	case LessonAnim::StrikeHold:    DrawStrikeHoldLesson(alpha, scale, tint);       break;
-	case LessonAnim::HoldKey:       DrawHoldKeyLesson(d.key, alpha, scale, tint);   break;
 	case LessonAnim::FlipHold:      DrawFlipHoldPrompt(alpha, scale, tint, nullptr); break;	// 一言は下で表の text を描く
 	case LessonAnim::PressKey:      DrawTapKeyLesson(d.key, alpha, scale, tint);    break;
-	case LessonAnim::PointUp:       DrawPointUpLesson(alpha, scale, tint);          break;
 	case LessonAnim::Walk:          DrawWalkLesson(alpha, scale, tint);             break;
 	case LessonAnim::PointGauge:
 	{
@@ -923,7 +919,8 @@ void SceneForge::DrawLessonPrompts()
 		//   左に入らない時(WASD は画面の左端)は右へ置く
 		const float PICT_LEFT_SINGLE = 1.6f;	// キーの絵の中心から図の中心までの距離(キーの絵の大きさに対する比)
 		const float PICT_LEFT_DUAL   = 2.5f;	// キーの絵が2つ並ぶ課(GrindRun)は、その分だけ外へ
-		const float PICT_LEFT = (d.anim == LessonAnim::GrindRun) ? PICT_LEFT_DUAL : PICT_LEFT_SINGLE;
+		const float PICT_LEFT_TRIPLE = 3.4f;	// 長押し+連打+左右の3つが並ぶ課(GrindSlide)
+		const float PICT_LEFT = (d.anim == LessonAnim::GrindSlide) ? PICT_LEFT_TRIPLE : (d.anim == LessonAnim::GrindRun) ? PICT_LEFT_DUAL : PICT_LEFT_SINGLE;
 		const float off = disp.y * LESSON_ICON_RATIO * PICT_LEFT, half = disp.y * LESSON_ICON_RATIO * PICT_SIZE_RATIO * 0.5f;	// half = 図の半分の幅
 		const float px = (c.x - off - half >= 0.0f) ? c.x - off : c.x + off;
 		DrawLessonPicture(d.id, px, c.y, alpha, scale, tint);

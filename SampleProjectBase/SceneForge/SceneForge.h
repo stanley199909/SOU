@@ -7,6 +7,7 @@
 #include "HeatStep.h"		// 各工程の状態(StateMachine/Player)
 #include "ForgeStep.h"
 #include "QuenchStep.h"
+#include "TemperStep.h"
 #include "GrindStep.h"
 #include "WeaponRecipe.h"	// GameData: StepName / Station / StepSetting / WeaponRecipe(データ)
 #include "HammerPhysics.h"	// Physics: 鎚の弾簧-阻尼運動(自作物理)
@@ -61,6 +62,11 @@ public:
 	void  BeginFinale();						// 終幕へ: 今の工程が配方の最後なら m_clearDecided を立てる(QuenchStep が揺すり始めに呼ぶ)
 	bool  m_clearDecided = false;				// クリアが確定した(最後の工程の取り消せない演出に入った)。true の間 HUD を全部消す
 	void  SetLetterbox(float t01);				// 終幕: 上下の黒帯が入る進み 0..1(同上)
+	bool  IsLastStep() const;					// 今の工程が配方の最後か(終幕=黒帯の演出は最後の工程だけ)
+	void  EndQuenchPose();						// 焼入れが最後の工程でない時: 水に沈めた姿勢を解いて水槽の上に戻す(次の工程へ持ち出せる様に)
+	bool  TemperTakenOut();						// 焼き戻しを始めた刃を火ばさみで取り出した(TemperStep の完了条件)
+	static constexpr float FINALE_LETTERBOX_SEC = 1.8f;	// 終幕: 黒帯が入るまで(秒)。最後の工程(QuenchStep / TemperStep)が共通で使う
+	static constexpr float FINALE_HOLD_SEC      = 2.5f;	// 終幕: 黒帯の後、結果画面まで絵を見せる秒
 	void  AdvanceStep();						// 次の工程へ進む(配方の順序で遷移。無ければ完成)
 	void  StartAtStep(int idx, bool placeNow);	// 配方の idx 番目の工程から始める(前の工程は済ませた状態)。placeNow=その工位に即座に立つ(F1 の Jump) / false=導入カメラで入る(チュートリアルの課程)
 	int   m_debugJumpIdx = 0;					// F1 で選んでいる工程
@@ -106,6 +112,7 @@ private:
 
 	//--- ゲーム進行
 	void StartGame();	// タイトル → 鍛造開始
+	void ResetRunState();	// 1回の鍛造の状態を全部最初へ(開始/タイトルへ戻る/結果から戻る/シーンの出入り で共通。新しい変数はここで戻す)
 	void FinishGame();	// 鍛造完了 → 結果へ
 
 	// KCD式: 「叩く場所」は指示しない。誤打(冷打/過熱/完成済みの段)は「検知して独白で知らせる」だけ。
@@ -118,7 +125,7 @@ private:
 	void  UpdateBarAnchor();	// 金床のAABBから砧面(上面中心)を求め、鉄条をその上に自動配置
 	void  DrawDebugBoxes();	// デバッグ: 金床AABBと鉄条の箱を線で可視化
 	void  DrawModelsTest();		// 鍛冶素材の3Dモデルを描画
-	void  DrawModelWorld(Model* m, const DirectX::XMMATRIX& world, const char* materialKey);	// 光を受ける物の描画(LitRender。材質は PropMaterials の表をキーで引く)
+	void  DrawModelWorld(Model* m, const DirectX::XMMATRIX& world, const char* materialKey, float highlight = 0.0f);	// 光を受ける物の描画(LitRender。材質は PropMaterials の表をキーで引く)
 	//--- シーン装飾(炉/風箱/作業台/水桶/床)
 	void  LoadProp(const char* key, const char* fbx, const char* tex,
 	               float targetSize, float px, float py, float pz, float yaw, bool groundSnap);
@@ -204,6 +211,7 @@ private:
 	std::unique_ptr<ForgeStep>  m_forgeStep;
 	std::unique_ptr<GrindStep>  m_grindStep;
 	std::unique_ptr<QuenchStep> m_quenchStep;
+	std::unique_ptr<TemperStep> m_temperStep;
 	void SetupSteps();								// 各状態を生成し m_stepMachine へ登録(Init で一度)
 
 	//--- 工位(Station): 金床/炉/砥石/水槽。走動中に物件を見て E で入る。工程ごとに使う工位は
@@ -248,6 +256,13 @@ private:
 	static constexpr float BELLOWS_FIRE_TEMP = 1.00f;	// 風箱で煽った火の温度(白熱)
 	static constexpr float COAL_HEAT_K       = 0.12f;	// 炭火だけの熱の入り方(1/秒)。0→燃える(0.80)まで約14秒、→過熱(0.92)まで約23秒
 	static constexpr float BELLOWS_HEAT_K    = 0.60f;	// 風箱を踏んでいる時(1/秒)。0→燃えるまで約3秒
+	//--- ふいご(1回押す=1回踏む)。送った風が炉に溜まり、踏まなければ抜ける
+	float m_bellowsAir = 0.0f;								// 炉に溜まった風 0..1(1 = 踏み続けて一番熾った)
+	static constexpr float BELLOWS_PUMP            = 0.25f;	// 1回踏むと増える風(4回続けて踏めば満タン)
+	static constexpr float BELLOWS_AIR_DECAY       = 0.8f;	// 風が抜ける速さ(Damp率, 1/秒)。踏むのを止めると約1〜2秒で落ち着く
+	static constexpr float BELLOWS_PUMP_RUMBLE_SEC = 0.12f;	// 1回踏んだ時の手柄の震動の長さ(秒)
+	static constexpr float BELLOWS_SOUND_MIN       = 0.02f;	// これ以下の風なら炉火の唸りを止める
+	static constexpr float BELLOWS_SOUND_VOLUME    = 0.5f;	// 風が満タンの時の唸りの大きさ(旧: 押している間 0.5)
 	bool  m_overheatWarned = false;					// 過熱の独白を一度だけ出す(冷めたら再武装)
 
 	//--- 鋼が燃える(火花を噴く)演出。温度 >= ForgingSim::BURN_TEMP の間、刃の表面から火花を出す。
@@ -303,6 +318,37 @@ private:
 	static constexpr float GRIND_HOVER        = 0.03f;	// 押し当てていない時、刃の一番低い点を砥石から浮かせる高さ(m)
 	static constexpr float GRIND_PRESS_LAMBDA = 14.0f;	// 押し当て/持ち上げの速さ(Damp率, 1/秒)
 	static constexpr float GRIND_SPARK_RATE   = 90.0f;	// 全速時の研ぎ火花(個/秒)
+	//--- 研ぎの分段進捗(2026-10-19 試遊「研ぎが単調」→ ユーザー決定): 区域(NSEG)が研ぎ上がった瞬間に、その刃先に光芒(スターグリント)+小さな音。
+	//    その後も、研ぎ上がった区域の刃先は時々きらっと光る(磨いた斜面が光を拾う)=見落としても「どこが済んだか」が刃を見れば分かる。
+	//    工程リストの棒も区域の数の格子に分ける。面全体の完成は従来どおり SE_FACE_DONE(意味を分ける: 小=区域 / 大=面)。
+	bool  m_grindSegWasDone[ForgingSim::NSIDES][ForgingSim::NSEG] = {};	// 前のフレームに研ぎ上がっていたか(立ち上がりの検出)
+	struct Glint
+	{
+		int   seg;		// どの区域の刃先か
+		float lenT;		// 区域の中の長手の位置 0..1
+		float bornAt;	// 出た時刻(m_time)
+		float life;		// 出ている秒
+		float scale;	// 大きさ・明るさの倍率(仕上がった瞬間 = 1 / 時々のきらめき = 小)
+		bool  atWheel;	// true = 砥石に当たっている側の刃先 / false = カメラに近い側の刃先
+	};
+	std::vector<Glint> m_glints;					// 今出ている光芒
+	float m_twinkleTimer = 0.0f;					// 次の「時々のきらめき」までの秒
+	void  ResetGrindSegments();						// 上を初期化(ResetRunState)
+	void  SpawnGlint(int seg, float lenT, float life, float scale, bool atWheel);
+	void  UpdateGlints(float dt);					// 寿命切れを消し、研ぎ上がった区域に時々きらめきを出す(砥石の工位にいる間)
+	static constexpr float GRIND_SEG_FLASH_SEC   = 0.5f;	// 区域が仕上がった瞬間の光芒が出ている秒(膨らんで消える)
+	static constexpr float GLINT_TWINKLE_SEC     = 0.35f;	// 時々のきらめきが出ている秒(仕上がりの光より短い)
+	static constexpr float GLINT_TWINKLE_SCALE   = 0.45f;	// 時々のきらめきの大きさ・明るさ(仕上がりの光=1 に対する比)
+	static constexpr float GLINT_TWINKLE_GAP_MIN = 0.8f;	// きらめきの間隔(秒)の下限。毎回ランダム=規則的に点滅しない
+	static constexpr float GLINT_TWINKLE_GAP_MAX = 2.0f;	// 〃 上限
+	static constexpr int   GLINT_MAX             = 16;		// 同時に出る光芒の上限(念のため)
+	void  DrawGrindGlints();							// 光芒(スターグリント, PS_Glint)を刃先に、カメラ向きの板で加算
+	bool  GrindSegGlintPos(int seg, float lenT, bool atWheel, DirectX::XMFLOAT3& out);	// 光芒を出す点 = 区域の長手の lenT の位置 × 刃先
+	static constexpr float GLINT_SIZE        = 0.10f;	// 光芒の大きさ(半径, m)。一番大きくなった時
+	static constexpr float GLINT_SPIN        = 0.6f;	// 出ている間に回る角度(rad)=きらっと光る動き
+	static constexpr float GLINT_BRIGHT      = 6.0f;	// 光芒の明るさ(HDR。加算でブルームに乗る)
+	static constexpr float GLINT_TOWARD_CAM  = 0.03f;	// 刃の表面からカメラ側へ浮かせる距離(m)=刃にめり込んで半分隠れない様に
+	static constexpr float GRIND_SEG_SE_VOLUME = 1.0f;	// 区域が仕上がった時の音の大きさ。研ぎのループ音(シャー)に埋もれない様に最大(音そのものの大きさは合成音の LEVEL)
 	static constexpr float GRIND_DONE_SPARK_FACTOR = 0.15f;	// 研ぎ上がった所を研ぐと火花はこの割合まで細る(削る金属がもう無い)
 	static constexpr float GRIND_DONE_VOL_MUL      = 0.5f;	// 〃 研ぐ音の大きさの倍率(手応えが無い)
 	static constexpr float GRIND_DONE_PITCH_MUL    = 1.3f;	// 〃 研ぐ音の高さの倍率(上滑りする軽い音)
@@ -337,6 +383,53 @@ private:
 	static constexpr float STIR_FULL_SPEED     = 0.25f;	// この速さ(m/秒)で揺すると m_stir01 = 1
 	static constexpr float STIR_SPEED_LAMBDA   = 8.0f;	// m_stir01 の追従(Damp率, 1/秒)
 	float QuenchScore() const;						// 淬火の出来 0..1(膜を早く破るほど高い。出来栄えに小さく効く)
+
+	//--- 焼き戻し(2026-10-19 ユーザー決定 / 現実の工程): 焼入れで硬く脆くなった刃を、炉の炭の「上」で軽く温める。
+	//    表面の酸化膜の色が 銀 → 麦わら → 茶 → 紫 → 青 と進み、刃の中央(背)から両側の刃先へ流れる(差別焼き戻し)。
+	//    玩家は「刃先の色」を見て、火ばさみで取り出して(Q)止める。温度は上げない(赤くなるまで熱すると焼入れが消える)。
+	//    2026-10-19 玩法(ユーザー決定): 刃を炭の上で左右(長手方向)に滑らせる。色が進むのは「炭の一番熱い所の真上」の所だけ
+	//    =止めていると一か所だけ青くなる。刃先全体を同じ色に揃え、全部が麦わら〜茶の間で取り出す(現実の鍛冶も刃を動かし続ける)。
+	//    m_temperCell[c] = 長手のセル c の刃先の色の位置 0..1(0 = 銀 … 1 = 灰)。色の表は TEMPER_COLOR_TABLE(PS_Wp も同じ表を読む)
+	float m_temperCell[ForgingSim::NL] = {};
+	float m_temperU      = 0.5f;					// 刃の滑り位置 0..1(どこが炭の中心の上に来るか。マウス左右/左スティック)
+	float m_temperPoseW  = 0.0f;					// 焼き戻しの構え(火ばさみで持ち上げて起こす)の重み 0..1。工位で持っている間 1 へ、離れると 0 へなめらかに=置いた/取った瞬間に跳ばない
+	bool  m_temperStarted = false;					// 焼き戻しで刃を炉の上に置いた(取り出し=完了の判定はこの後だけ。水槽から運ぶ時は関係ない)
+	bool  Tempering() const;						// 今の工程が焼き戻しか(炉の工位の振る舞いを工程で分ける=加熱と衝突しない)
+	float TemperAvg() const;						// 刃先の色の平均(取り出してよいかの判定)
+	float TemperCellScore(float t) const;			// 1セルの出来 0..1(麦わら〜茶 = 1 / 銀に近い = 脆い / 紫・青 = 柔らかい)
+	float TemperScore() const;						// 焼き戻しの出来 0..1 = 全セルの平均(揃っていないと下がる=ムラも評価)
+	float TemperLenCoord();							// 炭の中心の真上に来ている刃のローカル長手位置(セル単位 0..NL)。研ぎの GrindLenCoord と同じ考え方
+	void  UpdateTemper(float tick, bool inputOn);	// 滑らせる入力 + 炭の上での色の進み(炉の工位・焼き戻しの工程だけ)
+	void  DrawTemperChart();						// 色見本(焼き戻しの色の並び + 良い範囲。指針は無い=色は刃を見て判断する)
+	// 焼き戻しの色の表 { 位置 t, R, G, B }(線形の色。鋼の地色に掛ける)。並びは現実の順: 銀→淡い麦わら→濃い麦わら→茶→紫→濃い青→淡い青→灰
+	static constexpr int   TEMPER_KEYS = 8;
+	static constexpr float TEMPER_COLOR_TABLE[TEMPER_KEYS][4] = {
+		{ 0.00f, 1.00f, 1.00f, 1.00f },	// 銀(まだ膜が無い)
+		{ 0.20f, 0.95f, 0.85f, 0.55f },	// 淡い麦わら(約220℃)
+		{ 0.35f, 0.85f, 0.65f, 0.30f },	// 濃い麦わら(約240℃)
+		{ 0.45f, 0.65f, 0.40f, 0.20f },	// 茶(約260℃)
+		{ 0.60f, 0.45f, 0.22f, 0.40f },	// 紫(約280℃)
+		{ 0.75f, 0.18f, 0.22f, 0.55f },	// 濃い青(約300℃)
+		{ 0.90f, 0.35f, 0.55f, 0.75f },	// 淡い青(約320℃)
+		{ 1.00f, 0.55f, 0.58f, 0.62f },	// 灰(色を過ぎた)
+	};
+	static constexpr float TEMPER_RATE        = 0.032f;	// 炭の中心の真上での色の進み(1/秒)。動かし続けると各セルは約3割の時間だけ真上に来る→全体が茶まで約40秒
+	static constexpr float TEMPER_HEAT_SPREAD = 3.0f;	// 熱い所の広がり(セル数, ガウスのσ)。小=一点だけが進む(揃えるのが難しい)
+	static constexpr float TEMPER_U_MIN       = 0.0f;	// 滑らせ位置の範囲(0 = 一番奥へ押し込んだ所)
+	static constexpr float TEMPER_U_MAX       = 1.0f;	// 1 = 一番手前へ引き出した所
+	static constexpr float TEMPER_PUSH_FRAC   = 0.6f;	// u = 0 で加熱の置き場所より奥へ押し込む量(全長比)=手前の端も炭の中心の上へ来る(2026-10-19: 手前が焼けなかった)
+	static constexpr float TEMPER_PULL_FRAC   = 0.6f;	// u = 1 で加熱の置き場所より手前へ引き出す量(全長比)
+	static constexpr float TEMPER_POSE_LAMBDA = 4.0f;	// 構えに入る/戻る速さ(Damp率, 1/秒)
+	static constexpr float TEMPER_TONGS_OUT   = 0.35f;	// 火ばさみの柄を炉口の外(カメラ側)へ出す長さ(m)
+	static constexpr float TEMPER_TONGS_RISE  = 0.25f;	// 〃 上へ上げる高さ(m)=柄が炭床・炉の縁を突き抜けない
+	static constexpr float TEMPER_TILT        = 0.6f;	// 刃を長軸まわりに傾けてカメラへ面を向ける角度(rad)=色が見える。鍛冶も刃を起こして色を見る
+	static constexpr float TEMPER_FILM_FULL   = 0.2f;	// 色の膜がこの位置で「はっきり付いた」とみなす(PS_Wp: 膜の部分は光を拡散=周りが暗くても色が見える)
+	static constexpr float TEMPER_BELLOWS_MUL = 2.5f;	// ふいごを踏むと速く進む倍率(速い分、行き過ぎやすい)
+	static constexpr float TEMPER_SPINE_LEAD  = 0.6f;	// 刃の中央(背)は刃先よりこの割合だけ先に進む(差別焼き戻し: 背は青=粘り / 刃先は麦わら=硬さ)
+	static constexpr float TEMPER_IDEAL_MIN   = 0.25f;	// 刃先の色の良い範囲の下限 = 麦わら色(淡い麦わら 0.20 と濃い麦わら 0.35 の間)
+	static constexpr float TEMPER_IDEAL_MAX   = 0.50f;	// 〃 上限 = 茶。これを越えると紫・青(柔らかすぎ)
+	static constexpr float TEMPER_COUNT_MIN   = 0.15f;	// これ未満で取り出しても「まだ色が変わっていない」=工程は終わらない。淡い麦わらが見え始める所(0.10 では銀のままで終われて「何も起きない」と見えた)
+	static constexpr float TEMPER_LIFT        = 0.08f;	// 焼き戻しの間、刃を炭床の上へ浮かせる高さ(m)=火の中に入れない
 	static constexpr float QUENCH_FILM_TIME_BEST  = 1.0f;	// 膜沸騰がこれ以下で破れたら満点(秒)
 	static constexpr float QUENCH_FILM_TIME_WORST = 6.0f;	// これ以上(=放置で自然に破れた位)なら 0 点(秒)
 	float IronLowestY();							// 今の鉄の一番低い点の高さ(箱の8隅をワールドへ。水面に触れたかの判定)
@@ -830,9 +923,7 @@ private:
 	void  TickPlaytestTimer(float dt);			// 今の工程に時間を足す(毎フレーム, Update)
 	void  DrawPlaytestTimer();					// 右下の羊皮紙: 工程ごとの時間 / 合計と目標
 	void  WritePlaytestLog() const;				// 完成時に1行追記(Assets/playtest_log.txt)=何回分も後で見比べられる
-	bool  TutorialAtAnvil() const;				// チュートリアルで金床の工位にいて鍛造できる状態か(高亮を出す)
-	static constexpr float TUTORIAL_HI_STRENGTH = 0.55f;	// 未完成の所を青く光らせる強さ(0..1)
-	static constexpr float TUTORIAL_HI_PULSE_HZ = 1.2f;	// その明滅の速さ(回/秒)
+	bool  TutorialAtAnvil() const;				// チュートリアルで金床の工位にいて鍛造できる状態か(温度ゲージの「ここで叩く」を出す)
 
 	//--- 調整用パラメータ(F1デバッグでスライダ変更可)
 	float m_strikeCDMax = 1.25f;	// 打撃後クールダウン(秒)
@@ -844,7 +935,7 @@ private:
 	// sharp = 研いだ刃先の度合い 0..1(=その区域の鋭さ × 刃先への近さ)。PS が研ぎ面の見た目に使う。
 	// work = この頂点が属する面(表/裏)の鍛造進捗 0..1。PS が氧化皮(黒皮)を「叩いた分だけ」剥がすのに使う。
 	//   ※並びは VS の入力(POSITION/NORMAL/TEXCOORD0..3)と一致させる(入力レイアウトは D3DReflect で順に詰めて作る)。
-	struct WpVtx { DirectX::XMFLOAT3 pos; DirectX::XMFLOAT3 nrm; DirectX::XMFLOAT2 uv; DirectX::XMFLOAT4 col; float sharp; float work; };
+	struct WpVtx { DirectX::XMFLOAT3 pos; DirectX::XMFLOAT3 nrm; DirectX::XMFLOAT2 uv; DirectX::XMFLOAT4 col; float sharp; float work; float temper; };	// temper = 焼き戻しの色の位置 0..1(並びは VS_Wp の VIN と同じ)
 	struct WpStage { std::vector<DirectX::XMFLOAT3> pos, nrm; std::vector<DirectX::XMFLOAT2> uv; };	// 1段分の生頂点(ローカル)
 	std::vector<WpStage>        m_wpStage;		// stage_0 .. stage_final
 	std::vector<unsigned int>   m_wpIdx;		// インデックス(全段共通)
@@ -856,7 +947,7 @@ private:
 	float m_scaleTiling  = 10.0f;				// マスクを UV に何回繰り返すか(大=細かい皮)
 	float m_scaleSoft    = 0.08f;				// 剥がれ際のぼかし幅(マスクの灰度単位)
 	float m_scaleOpacity = 0.9f;				// 黒皮の不透明度(1=地金を完全に隠す)
-	float m_scaleGlow    = 0.20f;				// 熱い時、黒皮がどれだけ光るか(地金の発光に対する比)。同じ温度でも皮は断熱層で表面が冷たい=暗い赤の斑に見える。地金と見分けがつく暗さ(2026-10-17)
+	float m_scaleGlow    = 0.25f;				// 熱い時、黒皮がどれだけ光るか(地金の発光に対する比)。同じ温度でも皮は断熱層で表面が冷たい=暗い赤の斑に見える。地金と見分けがつく暗さ(2026-10-17)
 	float m_scaleStart   = 0.35f;				// 叩く前から剥がれている薄い皮(マスク灰度)。大=開局から地金が多く見える=斑な黒皮
 	float m_scaleHoldMax = 0.70f;				// 長手セルが完成するまでの剥がれ具合の上限(0..1)。小=未完成の所に皮が多く残る=見分けやすい
 	//--- 打撃の跡の光(2026-10-08): 叩いた所だけが一瞬明るくなる=「今どこを打ったか」を鉄の上で見せる(UI でない)。
@@ -870,7 +961,9 @@ private:
 	static constexpr float FACE_DONE_VOLUME      = 0.8f;	// 面(表/裏)が仕上がった瞬間の「完成」の合図(SE_FACE_DONE)の音量
 	static constexpr float FACE_DONE_FINAL_PITCH = 1.12f;	// 両面とも済んだ(工程の完了)時は一段高く鳴らす(連続撃破音の様に上がっていく)
 	static constexpr float GROOVE_RING_PITCH = 1.12f;		// リズムに乗った打撃の金床音の音程倍率(少し高い=澄んだ「キン」)
-	float m_wpHotGain    = 1.0f;				// 熱い鋼の発光全体の明るさ。2026-10-17: 2.5 は「地金が光らない」別の原因(発射率0)を補おうとした誤った値=直した後は白飛びした
+	float m_wpHotGain    = 2.0f;				// 熱い鋼の発光全体の明るさ(高=通体が光る)。白飛びして平らに見えたら下げる
+	float m_wpHotTint    = 0.15f;				// 発光に混ぜる地の明るさ。低=鋼のテクスチャの濃淡が発光に出る(光っていても金属に見える)
+	float m_wpHotEmisMin = 0.35f;				// 発射率の下限。低=法線マップと角度で発光に凹凸が出る / 高=どの角度でも同じ明るさ(平ら)
 	int   m_wpN = 0;							// 1段の頂点数
 	bool  m_wpOk = false;						// 読み込み成功&段間で頂点数一致
 	float m_forgeProg = 0.0f;					// 全体進捗 0..1(=各区域の平均。F1のプレビュー用)
@@ -1164,16 +1257,14 @@ private:
 	{
 		MouseVertical,			// マウスを上下に動かす
 		StrikeHold,				// 左ボタンを押し続けて溜める → 離す
-		HoldKey,				// キーを押し続ける(輪が溜まる)。キーは LessonDef::key
 		FlipHold,				// 裏返し: F を押し続ける(押している間は実際の進み)
 		PressKey,				// キーを1回押す(押下を繰り返す)。キーは LessonDef::key
 		PointGauge,				// 温度ゲージの目指す範囲を囲み、上から矢印で指す(範囲は LessonGaugeRange)
-		PointUp,				// 上(刃)を矢印で指す
 		Walk,					// WASD で歩く
-		MouseHorizontal,		// マウスを左右に動かす
 		GrindAngle,				// 研ぎの角度: マウス上下(救急の時は直す向きの矢印だけ明るい)
 		GrindFlipHold,			// 砥石の裏返し: F を押し続ける(押している間は実際の進み)
 		GrindRun,				// 砥石: 左の長押し + 右の連打 を並べ、今できている方を薄くする(できていない方が目立つ)
+		GrindSlide,				// 砥石: 長押し + 連打 を続けたまま 左右に滑らせる(3つを並べる=「左右だけ」と誤解させない)
 	};
 	struct LessonDef
 	{
@@ -1244,14 +1335,14 @@ private:
 	float m_aimTravel = 0.0f;					// 狙いを動かした量の累計(LessonMetric: Aim)
 	float m_lastAimRail = -1.0f;				// 前フレームの狙い(累計を出す為)
 	int   m_validStrikes = 0;					// 有効打の数(LessonMetric: Strike)
-	float m_bellowsTime  = 0.0f;				// ふいごを踏んだ秒の累計(LessonMetric: Bellows)
+	int   m_bellowsPumps = 0;					// ふいごを踏んだ回数の累計(LessonMetric: Bellows)
 	int   m_flipCount    = 0;					// 金床で裏返した回数(LessonMetric: Flip)
 	float m_grindRunTime   = 0.0f;				// 左の長押し + 研げる速さで回っている砥石 で研いでいた秒(GrindRun)
 	float m_grindGoodStreak= 0.0f;				// 使える角度で途切れずに研げている秒(今の続き)
 	int   m_grindAngleHolds = 0;				// 使える角度を GRIND_ANGLE_HOLD_SEC 途切れずに保てた回数(GrindAngle の「できた」量。通り過ぎるだけでは増えない)
 	static constexpr float GRIND_ANGLE_HOLD_SEC = 1.5f;	// 角度の課: これだけ途切れずに使える角度で研げたら「できた」
 	bool  GrindRunning() const;					// 今、研げている(左を押していて、砥石が研げる速さで回っている)
-	void  DrawGrindRunLesson(float alpha, float scale, unsigned int tint);	// 左の長押し + 右の連打(できている方を薄く)
+	void  DrawGrindRunLesson(float alpha, float scale, unsigned int tint, float xShift = 0.0f);	// 左の長押し + 右の連打(できている方を薄く)。xShift = 案内の中心から横へずらす(px)
 	float m_grindSlideTravel = 0.0f;			// 当てたまま刃を滑らせた量(GrindSlide)
 	int   m_grindFlipCount = 0;					// 砥石で裏返した回数(GrindFlip)
 	bool  m_grindTooFlat   = false;				// 最後の角度の誤りは「寝かせすぎ」か(救急の矢印の向き)
@@ -1267,7 +1358,6 @@ private:
 	void  DrawStrikeHoldLesson(float alpha, float scale, unsigned int tint);	// 左ボタンを押し続けて溜める → 離す
 	void  DrawTapKeyLesson(Action key, float alpha, float scale, unsigned int tint);	// キーを押す(押下→離すを繰り返す)
 	void  DrawGaugePointLesson(float lo, float hi, float alpha, float scale);	// 温度ゲージの範囲を囲んで指す
-	void  DrawPointUpLesson(float alpha, float scale, unsigned int tint);		// 上(刃)を指す
 	void  DrawWalkLesson(float alpha, float scale, unsigned int tint);		// WASD
 	DirectX::XMFLOAT2 LessonCenter(LessonAnim anim) const;	// 課の絵の中心(画面上 px)。WASD だけ左下、他は中央の刃の下
 	bool  DrawLessonPicture(LessonId id, float centerX, float centerY, float alpha, float scale, unsigned int tint);	// 指示図(何をするか)。表に無い課は false
@@ -1293,13 +1383,45 @@ private:
 		LessonPictFrame frames[MAX_FRAMES];
 	};
 	static const LessonPicture LESSON_PICTURES[];
-	void  DrawAxisLesson(AxisPrompt axis, int towards, float alpha, float scale, unsigned int tint);	// マウス/スティックを上下・左右に(towards: 0 往復 / −1 上・左 / +1 下・右)
+	void  DrawAxisLesson(AxisPrompt axis, int towards, float alpha, float scale, unsigned int tint, float xShift = 0.0f, const char* label = nullptr);	// マウス/スティックを上下・左右に(towards: 0 往復 / −1 上・左 / +1 下・右)。xShift = 横へずらす(px) / label = 絵の上の一言
 	void  DrawFlipHoldPrompt(float alpha, float scale, unsigned int tint, const char* label);	// 裏返し: F + 押した長さの輪(離すと減る)
 	void  DrawHoldProgressPrompt(Action key, float fill01, bool pressed, const char* label, float alpha, float scale, unsigned int tint);	// 長押しの進み(共通の見た目)。label=nullptr で一言なし
 	bool  LessonDrawsFlip() const { return m_lessonShown == (int)LessonId::Flip; }	// 裏返しの輪を課が描いている(DrawPlayUI が重ねない)
 	bool  LessonDrawsGrindFlip() const { return m_lessonShown == (int)LessonId::GrindFlip; }	// 砥石の裏返しも同じ
 	bool  GuideTarget(DirectX::XMFLOAT3& pos, const char*& label);	// 走動中に次に向かう点(鉄 or 工位)。無ければ false
 	void  DrawObjectiveMarker();					// 向かう点の上に目印。画面外なら画面端に矢印(オフスクリーンインジケーター)
+	static const char* StationName(Station s);		// 工位の呼び名(目印・工程の札で共通)
+	const char* StationPropKey(Station s) const;	// 工位を表す道具のキー(互動の表 INTERACTABLES から引く=表が正)
+
+	//--- 次の行き先を気付かせる(2026-10-15 試遊: 目印の▼に気付かなかった → 2026-10-17 ユーザー決定「両方やる」)
+	//  ① 工程の札: 工程が進んだ瞬間、画面中央に「〜 完了 → 次：〜(工位へ)」を出し、工程リストへ縮みながら飛ばす(=目を工程リストへ連れて行く)
+	//  ② 工位の光: 次に向かう工位を、縁の光(PS_StageProp)+輪郭線(OutlineRender, 背面法)でゆっくり明滅させる。近づくと消える
+	void  ShowStepBanner(int prevIdx);				// AdvanceStep から: 札の文を作り、時刻を記録し、合図の音を鳴らす
+	void  DrawStepBanner();							// 札の描画(出る → 留まる → 工程リストへ飛ぶ)
+	void  UpdateStationHighlight(float dt);			// 光らせる工位と濃さ(淡入/淡出)を決める
+	float StationHighlight(const std::string& propKey) const;	// その道具の今の光の強さ(明滅込み 0..1)。描画が読む
+	std::string m_bannerText;						// 札の文(工程が進んだ時に作る)
+	float m_bannerAt = -1000.0f;					// 札を出した時刻(m_time)
+	DirectX::XMFLOAT2 m_trackerNowPos = { 0.0f, 0.0f };	// 工程リストの「今」の行の位置(画面 px)。札の飛び先(DrawStepTracker が毎フレーム書く)
+	Station m_hiStation = Station::Anvil;			// 光らせている工位
+	float m_hiAlpha = 0.0f;							// その光の濃さ(淡入/淡出)
+	static constexpr float BANNER_IN_SEC     = 0.30f;	// 札が出るまで(淡入+少し大きくなる)
+	static constexpr float BANNER_HOLD_SEC   = 1.60f;	// 中央に留まる秒(文を読む時間)
+	static constexpr float BANNER_FLY_SEC    = 0.70f;	// 工程リストへ飛ぶ秒
+	static constexpr float BANNER_Y_RATIO    = 0.30f;	// 中央に出る縦位置(画面高さ比)。上の案内の紙片と金床の間
+	static constexpr float BANNER_TEXT_SCALE = 1.15f;	// 文字の大きさ(游明朝の焼き寸に対する倍率)
+	static constexpr float BANNER_IN_SCALE   = 0.9f;	// 出始めの大きさ(→1へ)
+	static constexpr float BANNER_END_SCALE  = 0.25f;	// 工程リストに着いた時の大きさ
+	static constexpr float BANNER_SE_VOLUME  = 0.9f;	// 合図の音の大きさ
+	static constexpr float STATION_HI_NEAR    = 2.2f;	// 工位の中心からこれより近いと光を消す(m)=着いたら邪魔しない
+	static constexpr float STATION_HI_IN      = 2.0f;	// 光が付く速さ(Damp率, 1/秒)
+	static constexpr float STATION_HI_OUT     = 4.0f;	// 光が消える速さ(同)
+	static constexpr float STATION_HI_PULSE_HZ = 0.6f;	// 明滅の速さ(回/秒)=呼吸の様にゆっくり
+	static constexpr float STATION_HI_PULSE_MIN = 0.45f;	// 明滅の一番暗い時(最大に対する比)
+	static constexpr float STATION_HI_GLOW    = 0.12f;	// 縁の光の最大の強さ(PS_StageProp の maps.w)。HDR に足すので自動露出で何倍にもなる(0.6 で金床が真っ白に飛んだ 2026-10-19)
+	static constexpr float STATION_OUTLINE_M  = 0.012f;	// 輪郭線の太さ(m)=押し出す距離
+	static constexpr float STATION_OUTLINE_ALPHA = 0.85f;	// 輪郭線の最大の濃さ
+	static constexpr float STATION_OUTLINE_BRIGHT = 0.35f;	// 輪郭線の明るさ(HDR。暗い部屋では自動露出で持ち上がるので 1 未満)
 
 	//====================================================================
 	//  震動(手柄)の手応え表。2026-10-13 阶段 D-2 = 試作の値(ユーザーが手で確かめて調整する)
@@ -1442,9 +1564,10 @@ private:
 	//    「注定成形」ゲームなので形は必ず完成に近づく→評価は「どれだけ綺麗に打てたか」を主にする。
 	float GradeScore() const;		// 出来栄え 0..1(=形の一致・打撃品質の合成)
 	char  GradeLetter() const;		// GradeScore を S/A/B/C に量子化
-	static constexpr float GRADE_W_MATCH   = 0.40f;	// 出来栄えに占める「形の一致度」の重み
-	static constexpr float GRADE_W_QUALITY = 0.50f;	// 同「打撃品質の平均」の重み(綺麗な打鉄を主に評価)
-	static constexpr float GRADE_W_QUENCH  = 0.10f;	// 同「淬火の出来」の重み(小さく。ユーザー決定 2026-10-07。3つの和 = 1)
+	static constexpr float GRADE_W_MATCH   = 0.35f;	// 出来栄えに占める「形の一致度」の重み
+	static constexpr float GRADE_W_QUALITY = 0.45f;	// 同「打撃品質の平均」の重み(綺麗な打鉄を主に評価)
+	static constexpr float GRADE_W_QUENCH  = 0.10f;	// 同「淬火の出来」の重み(小さく。ユーザー決定 2026-10-07)
+	static constexpr float GRADE_W_TEMPER  = 0.10f;	// 同「焼き戻しの色」の重み(2026-10-19 追加: 形と打撃から 0.05 ずつ移した。4つの和 = 1)
 	static constexpr float GRADE_S = 0.90f;	// この出来栄え以上で S
 	static constexpr float GRADE_A = 0.75f;	// 〃 A
 	static constexpr float GRADE_B = 0.55f;	// 〃 B (未満は C)

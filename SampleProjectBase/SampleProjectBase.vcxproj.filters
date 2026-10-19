@@ -132,6 +132,9 @@
     <ClCompile Include="Model.cpp">
       <Filter>ソース ファイル\System</Filter>
     </ClCompile>
+    <ClCompile Include="OutlineRender.cpp">
+      <Filter>ソース ファイル\System</Filter>
+    </ClCompile>
     <ClCompile Include="ReflectionProbe.cpp">
       <Filter>ソース ファイル\System</Filter>
     </ClCompile>
@@ -273,6 +276,9 @@
     <ClCompile Include="StateMachine\Player\HeatStep.cpp">
       <Filter>ソース ファイル\App\StateMachine\Player</Filter>
     </ClCompile>
+    <ClCompile Include="StateMachine\Player\TemperStep.cpp">
+      <Filter>ソース ファイル\App\StateMachine\Player</Filter>
+    </ClCompile>
     <ClCompile Include="StateMachine\Player\ForgeStep.cpp">
       <Filter>ソース ファイル\App\StateMachine\Player</Filter>
     </ClCompile>
@@ -345,6 +351,9 @@
       <Filter>ヘッダー ファイル\System</Filter>
     </ClInclude>
     <ClInclude Include="Model.h">
+      <Filter>ヘッダー ファイル\System</Filter>
+    </ClInclude>
+    <ClInclude Include="OutlineRender.h">
       <Filter>ヘッダー ファイル\System</Filter>
     </ClInclude>
     <ClInclude Include="ReflectionProbe.h">
@@ -471,6 +480,9 @@
       <Filter>ヘッダー ファイル\App\StateMachine</Filter>
     </ClInclude>
     <ClInclude Include="StateMachine\Player\HeatStep.h">
+      <Filter>ヘッダー ファイル\App\StateMachine\Player</Filter>
+    </ClInclude>
+    <ClInclude Include="StateMachine\Player\TemperStep.h">
       <Filter>ヘッダー ファイル\App\StateMachine\Player</Filter>
     </ClInclude>
     <ClInclude Include="StateMachine\Player\ForgeStep.h">

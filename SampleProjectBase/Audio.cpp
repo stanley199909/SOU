@@ -411,6 +411,54 @@ namespace
 			}
 			break;
 		}
+		case Audio::SE_SEG_DONE:
+		{
+			// 仮の合図(ユーザーが素材を選ぶまで): 研ぎの区域が仕上がった「チン」。短く高い金属の1音。
+			//   面の完成(SE_FACE_DONE)より小さく短い=「小さな区切り」。素材は Assets/Sound/SE/seg_done.wav で差し替え
+			const float NOTE      = 2093.0f;	// C7(高い=小さな金属片が鳴る感じ)
+			const float INHARMONIC= 2.76f;		// 金属の打音の非整数倍音(棒の振動の第2モード比に近い)=鈴でなく金属に聞こえる
+			const float PARTIAL   = 0.35f;		// その倍音の混ぜ具合
+			const float LENGTH    = 0.35f;		// 長さ(秒)
+			const float ATTACK    = 400.0f;		// 立ち上がり(大=速い。打った瞬間)
+			const float DECAY     = 14.0f;		// 減衰(大=短い)
+			const float LEVEL     = 0.35f;	// 研ぎのループ音(広い帯域の雑音)の上でも聞こえる大きさ(0.16 では埋もれた)
+			const int n = (int)(sr * LENGTH);
+			w.resize(n);
+			for (int i = 0; i < n; ++i)
+			{
+				float t   = (float)i / sr;
+				float env = (1.0f - expf(-t * ATTACK)) * expf(-t * DECAY);
+				float ph  = 6.2832f * NOTE * t;
+				w[i] = (sinf(ph) + PARTIAL * sinf(ph * INHARMONIC)) * env * LEVEL;
+			}
+			break;
+		}
+		case Audio::SE_NEXT_STEP:
+		{
+			// 仮の合図(ユーザーが素材を選ぶまで): 低めの鐘を2つ、重ねて鳴らす(2つ目は少し遅れて入る)。
+			//   SE_LEARNED(高く短い2音)と聞き分けられる様に、低く・長く余韻を残す=「次の段階へ」。
+			const float NOTE[2]    = { 523.25f, 783.99f };	// C5 → G5(完全5度)
+			const float NOTE_DELAY = 0.14f;	// 2つ目が入るまでの秒
+			const float LENGTH     = 1.1f;	// 全体の長さ(余韻を含む)
+			const float OCTAVE_MIX = 0.30f;	// 1オクターブ上の倍音(鐘らしさ)
+			const float ATTACK     = 60.0f;	// 立ち上がり(大=速い)
+			const float DECAY      = 3.5f;	// 減衰(小=長く響く)
+			const float LEVEL      = 0.18f;
+			const int n = (int)(sr * LENGTH);
+			w.assign(n, 0.0f);
+			for (int k = 0; k < 2; ++k)
+			{
+				const int start = (int)(sr * NOTE_DELAY * k);
+				for (int i = start; i < n; ++i)
+				{
+					float t   = (float)(i - start) / sr;
+					float env = (1.0f - expf(-t * ATTACK)) * expf(-t * DECAY);
+					float ph  = 6.2832f * NOTE[k] * t;
+					w[i] += (sinf(ph) + OCTAVE_MIX * sinf(2.0f * ph)) * env * LEVEL;
+				}
+			}
+			break;
+		}
 		default: break;
 		}
 		ToPCM16(w, s.data);
@@ -462,6 +510,8 @@ namespace Audio
 			"Assets/Sound/SE/pencil.wav",		// SE_PENCIL(取り消し線を引く。無ければ合成音)
 			"Assets/Sound/SE/eraser.wav",		// SE_ERASER(取り消し線を消す。無ければ合成音)
 			"Assets/Sound/SE/learned.wav",		// SE_LEARNED(操作を覚えた確認音。無ければ合成音)
+			"Assets/Sound/SE/next_step.wav",	// SE_NEXT_STEP(工程が進んだ合図。無ければ合成音)
+			"Assets/Sound/SE/seg_done.wav",	// SE_SEG_DONE(研ぎの区域が仕上がった。無ければ合成音)
 			"Assets/Sound/BGM/title_bgm.wav",	// BGM_TITLE(工場環境音。無ければ無音)
 			"Assets/Sound/BGM/play_bgm.wav",	// BGM_PLAY(medieval。無ければ無音)
 			"Assets/Sound/BGM/result_bgm.wav",	// BGM_RESULT(無ければ無音)

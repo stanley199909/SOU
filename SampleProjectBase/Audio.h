@@ -25,6 +25,8 @@ namespace Audio
 		SE_PENCIL,	// 工程リスト: 取り消し線を引く「シャッ」(鉛筆が紙を走る)。無ければ合成音
 		SE_ERASER,	// 工程リスト: 取り消し線を消す「ゴシゴシ」(消しゴム)。無ければ合成音
 		SE_LEARNED,	// チュートリアル: 操作を覚えた瞬間の確認音(短く明るい1音)。Assets/Sound/SE/learned.wav があればそれ、無ければ合成音
+		SE_NEXT_STEP,	// 工程が進んだ合図(中央の札「〜完了 → 次」と同時。低い鐘2つ)。Assets/Sound/SE/next_step.wav があればそれ、無ければ合成音
+		SE_SEG_DONE,	// 研ぎの区域が仕上がった「チン」(小さな区切り。面の完成 SE_FACE_DONE とは別)。Assets/Sound/SE/seg_done.wav があればそれ、無ければ合成音
 		// ※BGM_* は必ず最後にまとめる(IsBgm が BGM_TITLE..BGM_RESULT の範囲で判定する)
 		BGM_TITLE,	// タイトル画面BGM(TITLE状態でループ)
 		BGM_PLAY,	// ゲーム中BGM(PLAY状態でループ)

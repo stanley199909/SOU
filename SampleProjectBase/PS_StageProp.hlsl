@@ -18,7 +18,7 @@ cbuffer PropParam:register(b0){
     float4 shadow;                          // enabled, texel size, depth bias, receiver offset
     float4 material;                        // x triplanar (forge stone), y prop scale, z roughness, w metallic
     float4x4 worldToLocal;
-    float4 maps;                            // x has normal map, y has ORM map, z normal map is DirectX convention (green down)
+    float4 maps;                            // x has normal map, y has ORM map, z normal map is DirectX convention (green down), w highlight strength 0..1 (next station)
 };
 #include "SunShadow.hlsli"
 #include "Lighting.hlsli"
@@ -27,6 +27,11 @@ static const float TILE_METERS=2.0;          // one texture repeat = 2m
 static const float PROJECTION_SHARPNESS=4;   // higher = harder blend between the 3 projection axes
 static const float SOOT_RADIUS=.80;          // soot darkens stone within this distance of the fire (m)
 static const float SOOT_DARKENING=.65;       // darkening right at the fire (0..1)
+// Highlight of the next station (maps.w): a warm glow ADDED on top of the lit color, stronger at the silhouette
+// (rim, Fresnel-like) so the shape lights up without washing out the texture. Pulse/fade are done on the CPU.
+static const float3 HIGHLIGHT_COL=float3(1.0,.62,.25);   // warm forge-light orange (matches the UI marker)
+static const float HIGHLIGHT_BASE=.25;       // share of the glow on faces that look at the camera (rest goes to the rim)
+static const float HIGHLIGHT_RIM_POW=2;      // how tight the rim is (higher = thinner)
 
 // Sample the texture three times (projected along X, Y, Z) and blend by how much the
 // surface faces each axis. No UVs needed, so seams in the mesh's UV layout disappear.
@@ -79,5 +84,7 @@ float4 main(PS_IN p):SV_TARGET {
     [branch] if(visible>0 && sun.w>0)
         col+=BRDF(base,rough,metal,n,v,l)*sun.w*visible;
     col+=FireLight(base,rough,metal,n,v,p.worldPos,fire.xyz,fire.w);
+    float rim=pow(1-saturate(dot(n,v)),HIGHLIGHT_RIM_POW);
+    col+=HIGHLIGHT_COL*maps.w*(HIGHLIGHT_BASE+(1-HIGHLIGHT_BASE)*rim);
     return float4(col,tex.a);
 }

@@ -40,6 +40,8 @@ void QuenchStep::OnUpdate(float dt)
         m_timer += dt;
         if (m_timer >= FULL_SHOW_TIME)
         {
+            // Not the last step (tempering follows) -> simply go on. The ending belongs to the last step.
+            if (!m_forge->IsLastStep()) { m_forge->EndQuenchPose(); m_forge->AdvanceStep(); break; }
             m_forge->BeginFinale();   // the game is now certain to end and nothing is left to do -> HUD off
             Next(Phase::Settle);
         }
@@ -47,8 +49,8 @@ void QuenchStep::OnUpdate(float dt)
 
     case Phase::Settle:
         m_timer += dt;
-        m_forge->SetLetterbox(m_timer / LETTERBOX_TIME);
-        if (m_timer >= LETTERBOX_TIME + HOLD_TIME)
+        m_forge->SetLetterbox(m_timer / SceneForge::FINALE_LETTERBOX_SEC);
+        if (m_timer >= SceneForge::FINALE_LETTERBOX_SEC + SceneForge::FINALE_HOLD_SEC)
             m_forge->AdvanceStep();   // last step -> SceneForge::FinishGame
         break;
     }

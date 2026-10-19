@@ -31,6 +31,14 @@ const SceneForge::Interactable SceneForge::INTERACTABLES[] = {
 };
 const int SceneForge::NUM_INTERACTABLES = _countof(SceneForge::INTERACTABLES);
 
+//--- 工位を表す道具のキー = 互動の表で「その工位に入る」行の物件(表が正。道具を差し替えても表だけ直せばよい)。
+const char* SceneForge::StationPropKey(Station s) const
+{
+	for (const Interactable& it : INTERACTABLES)
+		if (it.action == InteractAction::EnterStation && it.station == s) return it.propKey;
+	return nullptr;
+}
+
 //--- モデル空間AABBの8隅を world で運び、その外接箱(ワールドAABB)を取る。
 static bool TransformAABB(const XMFLOAT3& lmn, const XMFLOAT3& lmx, const XMMATRIX& world, XMFLOAT3& mn, XMFLOAT3& mx)
 {

@@ -200,18 +200,17 @@ static const float STRIP_H_PER_TEXT = 2.1f;	// 紙の高さ = 文字の高さ ×
 static const float STRIP_PAD_PER_H  = 0.85f;	// 文の左右の余白 = 紙の高さ × これ(端の焦げた縁に字が掛からない様に)
 static const ImU32 STRIP_INK        = IM_COL32(60, 38, 22, 255);	// 墨(工程リストの見出しと同じ)
 static float StripHeightPx(float textPx) { return textPx * STRIP_H_PER_TEXT; }
-static void DrawTextOnStrip(Texture* strip, const char* text, float cyRatio, float textPx, ImFont* font, float alpha01)
+//--- 紙片の中心を画面の任意の点に置く版(工程の札が工程リストへ飛ぶ時にも使う)。下の DrawTextOnStrip はこれの「画面の横中央」版。
+static void DrawTextOnStripAt(Texture* strip, const char* text, ImVec2 center, float textPx, ImFont* font, float alpha01)
 {
 	if (!text || !text[0]) return;
 	ImDrawList* dl = ImGui::GetForegroundDrawList();
-	const ImVec2 disp = ImGui::GetIO().DisplaySize;
 	ImFont* f = (font == DebugUI::FontJP()) ? DebugUI::FontJPFor(textPx) : (font ? font : ImGui::GetFont());
 	const ImVec2 ts = f->CalcTextSizeA(textPx, FLT_MAX, 0.0f, text);
 	const float h = StripHeightPx(textPx), w = ts.x + h * STRIP_PAD_PER_H * 2.0f;
-	const float cy = disp.y * cyRatio;
-	const ImVec2 a((disp.x - w) * 0.5f, cy - h * 0.5f), b(a.x + w, a.y + h);
+	const ImVec2 a(center.x - w * 0.5f, center.y - h * 0.5f), b(a.x + w, a.y + h);
 	const int alpha = (int)(255 * alpha01);
-	const ImVec2 tp((disp.x - ts.x) * 0.5f, cy - ts.y * 0.5f);
+	const ImVec2 tp(center.x - ts.x * 0.5f, center.y - ts.y * 0.5f);
 	if (strip && strip->GetResource())
 	{
 		DrawPaperStrip(dl, strip, a, b, alpha);
@@ -223,6 +222,12 @@ static void DrawTextOnStrip(Texture* strip, const char* text, float cyRatio, flo
 		dl->AddRectFilled(a, b, IM_COL32(0, 0, 0, (int)(BAND_ALPHA * alpha01)), h * 0.5f);
 		dl->AddText(f, textPx, tp, IM_COL32(255, 236, 196, alpha), text);
 	}
+}
+
+static void DrawTextOnStrip(Texture* strip, const char* text, float cyRatio, float textPx, ImFont* font, float alpha01)
+{
+	const ImVec2 disp = ImGui::GetIO().DisplaySize;
+	DrawTextOnStripAt(strip, text, ImVec2(disp.x * 0.5f, disp.y * cyRatio), textPx, font, alpha01);
 }
 
 //--- 選択パネルの寸法(画面高さ比)。パネルの高さを外から計算できる様にファイルの先頭側で持つ(下に説明の紙片を置く時の配置)
@@ -388,7 +393,7 @@ static ImU32 HeatColor(float h, float alpha = 1.0f)
 //    画像はどれも周りに大きな透明の余白があるので、中身の位置(px)を測って定数にした(元画像の寸法に対する比で使う)。
 //--- 温度ゲージが今「どの温度の幅」を見せるか。温度が意味を持つ工程の時だけ true。
 //    加熱の工程は「次の工程のための加熱」なので、次の工程(鍛造/焼入れ)の幅を見せる。
-//    研ぎは温度と関係ない → ゲージを出さない(2026-10-15 試遊: 研ぎ中に出ていて「温度を管理する工程」と誤解された)。
+//    研ぎは温度と関係ない → 緑の帯を出さず、ゲージは薄くする(2026-10-15 試遊: 研ぎ中に濃く出ていて「温度を管理する工程」と誤解された)。
 bool SceneForge::HeatGaugeZone(float& lo, float& hi, StepName* forStep) const
 {
 	if (!m_recipe || m_stepIdx < 0 || m_stepIdx >= (int)m_recipe->steps.size()) return false;
@@ -421,10 +426,55 @@ bool SceneForge::HeatGaugeInUse() const
 	}
 }
 
+//--- 色見本(焼き戻しの色の並び)。温度ゲージと同じ位置・大きさの帯に、TEMPER_COLOR_TABLE(刃の shader と同じ表)の色を左→右へ。
+//    良い範囲(麦わら〜茶)を枠で囲む。指針は出さない: 今の色は刃を見て、この見本と見比べて判断する(現実の鍛冶の色見本と同じ使い方)。
+void SceneForge::DrawTemperChart()
+{
+	const bool inUse = !m_walkMode && !Transitioning() && m_station == Station::Hearth;	// 炉で焼き戻している時は濃く
+	m_gaugeAlpha = Lerp::Damp(m_gaugeAlpha, inUse ? 1.0f : GAUGE_IDLE_ALPHA, inUse ? GAUGE_FADE_IN_LAMBDA : GAUGE_FADE_OUT_LAMBDA, ImGui::GetIO().DeltaTime);
+	const int   ga   = (int)(255 * m_gaugeAlpha);
+	const ImVec2 disp = ImGui::GetIO().DisplaySize;
+	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	const float tw = disp.x * HEAT_TRACK_W_RATIO, th = disp.y * HEAT_TRACK_H_RATIO;	// 温度ゲージの槽と同じ大きさ・位置
+	const float x0 = (disp.x - tw) * 0.5f, y0 = disp.y * HEAT_TRACK_Y_RATIO, y1 = y0 + th;
+	auto X = [&](float t) { return x0 + tw * t; };
+	auto Col = [&](int k) {
+		return IM_COL32((int)(255 * TEMPER_COLOR_TABLE[k][1]), (int)(255 * TEMPER_COLOR_TABLE[k][2]), (int)(255 * TEMPER_COLOR_TABLE[k][3]), ga);
+	};
+	// 色の帯: 隣り合う2色の間を横のグラデーションで
+	for (int k = 0; k < TEMPER_KEYS - 1; ++k)
+		dl->AddRectFilledMultiColor(ImVec2(X(TEMPER_COLOR_TABLE[k][0]), y0), ImVec2(X(TEMPER_COLOR_TABLE[k + 1][0]), y1), Col(k), Col(k + 1), Col(k + 1), Col(k));
+	const ImU32 INK = IM_COL32(240, 225, 200, ga);
+	const float LINE_W = 2.0f, FRAME_PAD_RATIO = 0.3f;	// 枠の太さ(px) / 良い範囲の枠を帯からはみ出させる量(帯の高さ比)
+	dl->AddRect(ImVec2(x0, y0), ImVec2(x0 + tw, y1), INK, 0.0f, 0, LINE_W);
+	const float pad = th * FRAME_PAD_RATIO;
+	dl->AddRect(ImVec2(X(TEMPER_IDEAL_MIN), y0 - pad), ImVec2(X(TEMPER_IDEAL_MAX), y1 + pad), IM_COL32(150, 235, 150, ga), 0.0f, 0, LINE_W * 1.5f);	// 良い範囲(温度ゲージの緑と同じ色)
+
+	// 文字: 左に「刃先の色」、帯の下に色の名前、良い範囲の下に「ここで取り出す」
+	const float LABEL_RATIO = 0.024f, NAME_RATIO = 0.018f, LABEL_GAP = 0.6f, NAME_GAP = 0.4f;	// 文字の高さ(画面高さ比) / 間隔(文字の高さ比)
+	const float lpx = disp.y * LABEL_RATIO, npx = disp.y * NAME_RATIO;
+	ImFont* lf = DebugUI::FontJPFor(lpx);
+	ImFont* nf = DebugUI::FontJPFor(npx);
+	const char* label = (const char*)u8"刃先の色";
+	const ImVec2 ls = lf->CalcTextSizeA(lpx, FLT_MAX, 0.0f, label);
+	DrawOutlinedText(dl, lf, lpx, x0 - lpx * LABEL_GAP - ls.x, (y0 + y1) * 0.5f - ls.y * 0.5f, INK, label);
+	struct Name { float t; const char* text; };
+	static const Name NAMES[] = {	// 色の名前を置く位置(表の位置と同じ。紫と青の間は少し詰まるので青は淡い青の位置)
+		{ 0.00f, (const char*)u8"銀" }, { 0.275f, (const char*)u8"麦わら" }, { 0.45f, (const char*)u8"茶" },
+		{ 0.60f, (const char*)u8"紫" }, { 0.82f, (const char*)u8"青" },
+	};
+	for (const Name& nm : NAMES)
+	{
+		const ImVec2 ns = nf->CalcTextSizeA(npx, FLT_MAX, 0.0f, nm.text);
+		const float nx = fminf(fmaxf(X(nm.t) - ns.x * 0.5f, x0), x0 + tw - ns.x);	// 帯の端からはみ出さない
+		DrawOutlinedText(dl, nf, npx, nx, y1 + pad + npx * NAME_GAP, INK, nm.text);
+	}
+}
+
 void SceneForge::DrawHeatGauge()
 {
 	float zoneLo = 0.0f, zoneHi = 0.0f;
-	if (!HeatGaugeZone(zoneLo, zoneHi)) return;	// 温度が関係ない工程(研ぎ)では出さない
+	const bool hasZone = HeatGaugeZone(zoneLo, zoneHi);	// 温度が関係ない工程(研ぎ)は緑の帯なし。ゲージは他の「使わない所」と同じく薄く出す(HeatGaugeInUse)
 	const bool gaugeInUse = HeatGaugeInUse();
 	m_gaugeAlpha = Lerp::Damp(m_gaugeAlpha, gaugeInUse ? 1.0f : GAUGE_IDLE_ALPHA, gaugeInUse ? GAUGE_FADE_IN_LAMBDA : GAUGE_FADE_OUT_LAMBDA, ImGui::GetIO().DeltaTime);
 	const int ga = (int)(255 * m_gaugeAlpha);	// ゲージ全体(画像・文字)に掛ける不透明度
@@ -494,7 +544,7 @@ void SceneForge::DrawHeatGauge()
 		};
 		const float IDEAL_V_TOP = 243.0f, IDEAL_V_BOTTOM = 481.0f;	// heat_zone_ideal.png の不透明な帯
 		const float OVER_V_TOP  = 265.0f, OVER_V_BOTTOM  = 462.0f;	// heat_zone_over.png の不透明な帯
-		DrawZone(m_gaugeIdeal.get(), zoneLo, zoneHi, IDEAL_V_TOP, IDEAL_V_BOTTOM);	// 今の工程に合う温度の幅(鍛造 / 焼入れ)
+		if (hasZone) DrawZone(m_gaugeIdeal.get(), zoneLo, zoneHi, IDEAL_V_TOP, IDEAL_V_BOTTOM);	// 今の工程に合う温度の幅(鍛造 / 焼入れ)
 		DrawZone(m_gaugeOver.get(),  OVERHEAT,  1.0f,      OVER_V_TOP,  OVER_V_BOTTOM);
 
 		DrawFrame(overlay);	// ③ 金の縁が②の端を覆う
@@ -649,7 +699,8 @@ void SceneForge::DrawPlayUI()
 	ImFont* jp = DebugUI::FontJP();	// 指引 UI の日本語(游明朝)
 
 	// 温度ゲージ
-	DrawHeatGauge();
+	if (Tempering()) DrawTemperChart();	// 焼き戻し: 温度でなく色で判断する工程=温度ゲージの代わりに色見本
+	else            DrawHeatGauge();
 
 	// 工程リスト(左)と、走動中に次に向かう点の目印(3D の上)
 	DrawStepTracker();
@@ -672,6 +723,7 @@ void SceneForge::DrawPlayUI()
 		float y = TEXT_Y + RISE_RATIO * (1.0f - t);
 		DrawTextOnStrip(m_uiStrip.get(), text, y, jp->FontSize * TEXT_SCALE, jp, t);
 	}
+	DrawStepBanner();	// 工程が進んだ瞬間の札(案内の紙片より手前。工程リストへ飛んで行く)
 
 	// 翻面の子状態ごとの操作ヒント(宏観チュートリアル)。運鏡ビート中は状況説明、
 	// 回している間は「押し続ける/離す」で何が起きるかを明示する。
@@ -758,7 +810,13 @@ void SceneForge::DrawPlayUI()
 		{ Action::Interact,       (const char*)u8"離れる" },
 	};
 	static const KeyHint HEARTH_HINTS[] = {
-		{ Action::Bellows,        (const char*)u8"長押し：ふいごで風を送る" },
+		{ Action::Bellows,        (const char*)u8"連打：ふいごで風を送る" },
+		{ Action::Grab,           (const char*)u8"掴んで出す" },
+		{ Action::Interact,       (const char*)u8"離れる" },
+	};
+	static const KeyHint TEMPER_HINTS[] = {	// 同じ炉の工位でも、焼き戻しの工程は刃を炭の上で動かす
+		{ AxisPrompt::HandHorizontal, (const char*)u8"左右：炭の上で刃を動かす" },
+		{ Action::Bellows,        (const char*)u8"連打：ふいご(速く色が進む)" },
 		{ Action::Grab,           (const char*)u8"掴んで出す" },
 		{ Action::Interact,       (const char*)u8"離れる" },
 	};
@@ -785,7 +843,10 @@ void SceneForge::DrawPlayUI()
 		switch (m_station)
 		{
 		case Station::Anvil:      hints = ANVIL_HINTS;  nHints = _countof(ANVIL_HINTS);  break;
-		case Station::Hearth:     hints = HEARTH_HINTS; nHints = _countof(HEARTH_HINTS); break;
+		case Station::Hearth:
+			if (Tempering()) { hints = TEMPER_HINTS; nHints = _countof(TEMPER_HINTS); }
+			else             { hints = HEARTH_HINTS; nHints = _countof(HEARTH_HINTS); }
+			break;
 		case Station::Grindstone: hints = GRIND_HINTS;  nHints = _countof(GRIND_HINTS);  break;
 		case Station::Trough:     hints = TROUGH_HINTS; nHints = _countof(TROUGH_HINTS); break;
 		}
@@ -854,7 +915,7 @@ void SceneForge::DrawStepTracker()
 	const ImU32 BAR_EDGE_COL   = IM_COL32(60, 42, 28, 200);	// 溝の輪郭(インクの線)
 	const ImU32 BAR_IDLE_COL   = INK_PENDING;					// 今は下を向いている面の進み(普通のインク。旧: 薄れたインクで見えにくかった)
 	const float BAR_EDGE_W     = 1.0f;							// 輪郭の太さ(px)
-	struct SubBar { const char* name; float prog; bool active; };
+	struct SubBar { const char* name; float prog; bool active; int segDone = -1; };	// segDone = 仕上がった区域の数(研ぎ: 棒を格子に分ける)。-1 = 1本の棒
 	SubBar subs[ForgingSim::NSIDES];
 	int nSub = 0;
 	const StepName nowType = CurrentStep().type;
@@ -866,8 +927,9 @@ void SceneForge::DrawStepTracker()
 	else if (nowType == StepName::Grind)
 	{
 		// 両側の刃(Fキー長押しで裏返して研ぐ面を変える)。今研いでいる面を濃く
-		subs[nSub++] = { (const char*)u8"表", m_forging.SharpProgress(0), GrindSide() == 0 };
-		subs[nSub++] = { (const char*)u8"裏", m_forging.SharpProgress(1), GrindSide() == 1 };
+		auto segsDone = [&](int side) { int n = 0; for (int s = 0; s < ForgingSim::NSEG; ++s) n += m_forging.SharpDoneOf(side, s) ? 1 : 0; return n; };
+		subs[nSub++] = { (const char*)u8"表", m_forging.SharpProgress(0), GrindSide() == 0, segsDone(0) };
+		subs[nSub++] = { (const char*)u8"裏", m_forging.SharpProgress(1), GrindSide() == 1, segsDone(1) };
 	}
 	else if (nowType == StepName::Quench)
 		subs[nSub++] = { (const char*)u8"冷", QuenchProgress(), true };	// 冷え切った(焼きが入った)割合
@@ -937,6 +999,11 @@ void SceneForge::DrawStepTracker()
 		const char* label = m_recipe->steps[i].label;
 		ImVec2 tp(x + r * 2.0f * NOW_DOT_SCALE + disp.y * TEXT_GAP_RATIO, cy);
 		dl->AddText(JP(px), px, tp, col, label);
+		if (now)	// 工程の札の飛び先 = 今の工程名の中心
+		{
+			const ImVec2 ls = JP(px)->CalcTextSizeA(px, FLT_MAX, 0.0f, label);
+			m_trackerNowPos = XMFLOAT2(tp.x + ls.x * 0.5f, tp.y + ls.y * 0.5f);
+		}
 		if (!now && strike > 0.0f)	// 取り消し線(左から strike の割合だけ)
 		{
 			ImVec2 ts = JP(px)->CalcTextSizeA(px, FLT_MAX, 0.0f, label);
@@ -955,9 +1022,28 @@ void SceneForge::DrawStepTracker()
 			dl->AddText(JP(spx), spx, sp, sc, subs[k].name);
 			float bx0 = sp.x + spx + disp.y * BAR_GAP_RATIO, bx1 = bx0 + disp.x * BAR_W_RATIO;
 			float bh  = disp.y * BAR_H_RATIO, by = sp.y + (spx - bh) * 0.5f;
-			dl->AddRectFilled(ImVec2(bx0, by), ImVec2(bx1, by + bh), BAR_BG_COL);
-			dl->AddRectFilled(ImVec2(bx0, by), ImVec2(bx0 + (bx1 - bx0) * subs[k].prog, by + bh), sc);
-			dl->AddRect(ImVec2(bx0, by), ImVec2(bx1, by + bh), BAR_EDGE_COL, 0.0f, 0, BAR_EDGE_W);
+			if (subs[k].segDone < 0)	// 1本の棒(鍛造/焼入れ)
+			{
+				dl->AddRectFilled(ImVec2(bx0, by), ImVec2(bx1, by + bh), BAR_BG_COL);
+				dl->AddRectFilled(ImVec2(bx0, by), ImVec2(bx0 + (bx1 - bx0) * subs[k].prog, by + bh), sc);
+				dl->AddRect(ImVec2(bx0, by), ImVec2(bx1, by + bh), BAR_EDGE_COL, 0.0f, 0, BAR_EDGE_W);
+				continue;
+			}
+			// 区域の数の格子(研ぎ): 仕上がった区域の数だけ左から埋まる。次の格子だけ、残りの区域の進みを途中まで見せる(止まって見えない様に)。
+			//   格子は「何個済んだか」だけで、刃のどこが残っているかは示さない(どこを研ぐかは刃の見た目で分かる=微観の指示を出さない)
+			const int   NCELL = ForgingSim::NSEG;
+			const float CELL_GAP_RATIO = 0.18f;	// 格子の間の隙間(格子1つの幅に対する比)
+			const float cw  = (bx1 - bx0) / NCELL;
+			const float gap = cw * CELL_GAP_RATIO;
+			const float partial = fminf(fmaxf(subs[k].prog * NCELL - subs[k].segDone, 0.0f), 1.0f);	// 残りの区域の進みの合計(1格子分まで)
+			for (int c = 0; c < NCELL; ++c)
+			{
+				const float x0 = bx0 + cw * c + gap * 0.5f, x1 = bx0 + cw * (c + 1) - gap * 0.5f;
+				const float fill = (c < subs[k].segDone) ? 1.0f : (c == subs[k].segDone ? partial : 0.0f);
+				dl->AddRectFilled(ImVec2(x0, by), ImVec2(x1, by + bh), BAR_BG_COL);
+				if (fill > 0.0f) dl->AddRectFilled(ImVec2(x0, by), ImVec2(x0 + (x1 - x0) * fill, by + bh), sc);
+				dl->AddRect(ImVec2(x0, by), ImVec2(x1, by + bh), BAR_EDGE_COL, 0.0f, 0, BAR_EDGE_W);
+			}
 		}
 	}
 }
@@ -1125,14 +1211,91 @@ bool SceneForge::GuideTarget(XMFLOAT3& pos, const char*& label)
 		return true;
 	}
 	pos = StationBase(goal);
-	switch (goal)
-	{
-	case Station::Anvil:      label = (const char*)u8"金床"; break;
-	case Station::Hearth:     label = (const char*)u8"炉";   break;
-	case Station::Grindstone: label = (const char*)u8"砥石"; break;
-	case Station::Trough:     label = (const char*)u8"水槽"; break;
-	}
+	label = StationName(goal);
 	return true;
+}
+
+const char* SceneForge::StationName(Station s)
+{
+	switch (s)
+	{
+	case Station::Anvil:      return (const char*)u8"金床";
+	case Station::Hearth:     return (const char*)u8"炉";
+	case Station::Grindstone: return (const char*)u8"砥石";
+	case Station::Trough:     return (const char*)u8"水槽";
+	}
+	return "";
+}
+
+//--- 工程の札の文を作る: 「<済んだ工程> 完了 → 次：<次の工程>（<工位>へ）」。工程名と工位は配方(データ)から=換武器でも合う。
+void SceneForge::ShowStepBanner(int prevIdx)
+{
+	if (!m_recipe || !PlayHudVisible()) return;	// 導入カメラ中(最初の加熱が自動で済む)は出さない
+	const int n = (int)m_recipe->steps.size();
+	if (prevIdx < 0 || prevIdx >= n || m_stepIdx < 0 || m_stepIdx >= n) return;
+	const StepSetting& next = m_recipe->steps[m_stepIdx];
+	m_bannerText  = m_recipe->steps[prevIdx].label;
+	m_bannerText += (const char*)u8" 完了　→　次：";
+	m_bannerText += next.label;
+	m_bannerText += (const char*)u8"（";
+	m_bannerText += StationName(StepStation(next.type));
+	m_bannerText += (const char*)u8"へ）";
+	m_bannerAt = m_time;
+	Audio::Play(Audio::SE_NEXT_STEP, BANNER_SE_VOLUME);
+}
+
+//--- 札: 出る(淡入+少し大きく) → 中央に留まる → 工程リストの「今」の行へ縮みながら飛んで消える。
+//    飛ぶ先は工程リストが毎フレーム書く m_trackerNowPos=工程リストの位置や大きさを変えても追従する。
+void SceneForge::DrawStepBanner()
+{
+	const float t = m_time - m_bannerAt;
+	const float total = BANNER_IN_SEC + BANNER_HOLD_SEC + BANNER_FLY_SEC;
+	if (t < 0.0f || t >= total || m_bannerText.empty()) return;
+	const ImVec2 disp = ImGui::GetIO().DisplaySize;
+	ImFont* jp = DebugUI::FontJP();
+	const ImVec2 home(disp.x * 0.5f, disp.y * BANNER_Y_RATIO);
+	ImVec2 c = home;
+	float scale = 1.0f, alpha = 1.0f;
+	if (t < BANNER_IN_SEC)
+	{
+		const float p = t / BANNER_IN_SEC;
+		alpha = p;
+		scale = Lerp::Linear(BANNER_IN_SCALE, 1.0f, 1.0f - (1.0f - p) * (1.0f - p));	// ease-out
+	}
+	else if (t >= BANNER_IN_SEC + BANNER_HOLD_SEC)
+	{
+		const float p = (t - BANNER_IN_SEC - BANNER_HOLD_SEC) / BANNER_FLY_SEC;
+		const float e = p * p;	// ease-in: ゆっくり離れて、吸い込まれる様に速く
+		c = ImVec2(Lerp::Linear(home.x, m_trackerNowPos.x, e), Lerp::Linear(home.y, m_trackerNowPos.y, e));
+		scale = Lerp::Linear(1.0f, BANNER_END_SCALE, e);
+		alpha = 1.0f - e;
+	}
+	DrawTextOnStripAt(m_uiStrip.get(), m_bannerText.c_str(), c, jp->FontSize * BANNER_TEXT_SCALE * scale, jp, alpha);
+}
+
+//--- 光らせる工位 = 目印(▼)と同じ行き先(鉄を取りに行く時は鉄の在る工位)。目印が無い時(工位の中・移動中)と、近づいた時は消す。
+void SceneForge::UpdateStationHighlight(float dt)
+{
+	XMFLOAT3 target; const char* label = nullptr;
+	bool on = GuideTarget(target, label);
+	if (on)
+	{
+		m_hiStation = (!m_carrying && m_workAt != m_guideGoal) ? m_workAt : m_guideGoal;
+		const XMFLOAT3 foot = m_player.GetPosition();
+		const float dx = target.x - foot.x, dz = target.z - foot.z;
+		if (dx * dx + dz * dz < STATION_HI_NEAR * STATION_HI_NEAR) on = false;	// 着いた=もう指さない
+	}
+	m_hiAlpha = Lerp::Damp(m_hiAlpha, on ? 1.0f : 0.0f, on ? STATION_HI_IN : STATION_HI_OUT, dt);
+}
+
+float SceneForge::StationHighlight(const std::string& propKey) const
+{
+	const float MIN_VISIBLE = 0.001f;
+	if (m_state != GAME_PLAY || m_hiAlpha < MIN_VISIBLE || m_capturingProbe) return 0.0f;	// 遊んでいる時だけ。反射の写真には写さない(光が焼き付く)
+	const char* key = StationPropKey(m_hiStation);
+	if (!key || propKey != key) return 0.0f;
+	const float pulse = Lerp::Linear(STATION_HI_PULSE_MIN, 1.0f, 0.5f + 0.5f * sinf(m_time * STATION_HI_PULSE_HZ * XM_2PI));
+	return m_hiAlpha * pulse;
 }
 
 //--- 目印(オブジェクティブマーカー)。行き先が画面内なら真上に▼、画面外(後ろ含む)なら画面端に矢印。
@@ -1227,13 +1390,13 @@ void SceneForge::DrawObjectiveMarker()
 	dl->AddText(jp, px, lp, col, label);
 }
 
-//--- 出来栄え 0..1: 形の一致度・打撃品質の平均・淬火の出来(膜を早く破ったか)を重み合成する。
+//--- 出来栄え 0..1: 形の一致度・打撃品質の平均・淬火の出来(膜を早く破ったか)・焼き戻しの色を重み合成する。
 //    誤打(冷打/過熱/完成済みを叩く)は品質0の打撃として平均を下げる=罰でなく「腕前」として自然に効く。
 float SceneForge::GradeScore() const
 {
 	// 打撃品質の平均(1打も打たずに淬火した場合は0扱い=除算回避)。
 	float qAvg = (m_strikeCount > 0) ? (m_qualitySum / (float)m_strikeCount) : 0.0f;
-	float s = GRADE_W_MATCH * m_match + GRADE_W_QUALITY * qAvg + GRADE_W_QUENCH * QuenchScore();
+	float s = GRADE_W_MATCH * m_match + GRADE_W_QUALITY * qAvg + GRADE_W_QUENCH * QuenchScore() + GRADE_W_TEMPER * TemperScore();
 	if (s < 0.0f) s = 0.0f;
 	if (s > 1.0f) s = 1.0f;
 	return s;
@@ -1937,8 +2100,8 @@ void SceneForge::DrawGrindAngleMeter()
 	// 縦の小さな角度計(2026-10-12 ユーザー: 横長で画面の真ん中にあって邪魔だった)。
 	//   縦 = マウスの上下と同じ向き(上 = 立てる / 下 = 寝かせる)。操作の案内(画面中央の下)の右に置き、刃と砥石の上には掛からない。
 	const float X_RATIO     = 0.62f;	// 棒の中心(画面幅比)= 案内のキーの絵の右
-	const float Y0_RATIO    = 0.52f;	// 棒の上端(画面高さ比)
-	const float Y1_RATIO    = 0.68f;	// 棒の下端(画面高さ比)
+	const float Y0_RATIO    = 0.24f;	// 棒の上端(画面高さ比)。操作の案内(キーの絵と一言)の上に置く=重ならない(2026-10-19)
+	const float Y1_RATIO    = 0.38f;	// 棒の下端(画面高さ比)。砥石の上の刃の線より上
 	const float W_RATIO     = 0.010f;	// 棒の太さ(画面高さ比)
 	const float LABEL_RATIO = 0.020f;	// 「角度」の文字の高さ
 	const float MARK_OVER   = 0.8f;		// 印が棒からはみ出す量(棒の太さ比)
@@ -2066,6 +2229,18 @@ void SceneForge::DrawUI()
 					ImGui::TextColored(m_forging.SharpDoneOf(side, s) ? DONE_COL : TODO_COL, "%3.0f", m_forging.SharpRatioOf(side, s) * 100.0f);
 				}
 			}
+			// 診断: 研ぎを進めずに「区域が仕上がった」演出だけを出す(光と音が見える/聞こえるかを、判定と切り離して確かめる)
+			if (ImGui::Button("Test grind segment glint (random segment, wheel side)"))
+			{
+				const int seg = (int)frand(0.0f, (float)ForgingSim::NSEG) % ForgingSim::NSEG;
+				SpawnGlint(seg, frand(0.0f, 1.0f), GRIND_SEG_FLASH_SEC, 1.0f, true);
+				Audio::Play(Audio::SE_SEG_DONE, GRIND_SEG_SE_VOLUME);
+			}
+			// 焼き戻しの色(刃先の位置 0..1)。スライダで全セルを同じ色にする=色の並びを待たずに確かめられる(0 = 色なし)
+			float preview = TemperAvg();
+			if (ImGui::SliderFloat("Temper (all cells)", &preview, 0.0f, 1.0f, "%.2f"))
+				for (float& t : m_temperCell) t = preview;
+			ImGui::SameLine(); ImGui::Text("score %.2f  slide %.2f", TemperScore(), m_temperU);
 		}
 		ImGui::Separator();
 
@@ -2085,7 +2260,9 @@ void SceneForge::DrawUI()
 			ImGui::SliderFloat("Off Z", &m_wpOff[2], -1.0f, 1.0f, "%.3f");
 			ImGui::TextDisabled("-- Hot steel (form must read while glowing) --");
 			ImGui::SliderFloat("Reflection while hot", &m_wpHotReflect, 0.0f, 1.0f, "%.2f");	// 1=物理どおり(反射+発光)。0=旧の「熱いと反射を消す」
-			ImGui::SliderFloat("Hot gain",  &m_wpHotGain,  0.3f, 6.0f, "%.2f");
+			ImGui::SliderFloat("Hot gain",  &m_wpHotGain,  0.3f, 6.0f, "%.2f");	// 高=通体が光る
+			ImGui::SliderFloat("Hot texture", &m_wpHotTint,   0.0f, 1.0f, "%.2f");	// 低=光っていても鋼の濃淡が見える
+			ImGui::SliderFloat("Hot bumps",   &m_wpHotEmisMin, 0.0f, 1.0f, "%.2f");	// 低=法線マップの凹凸が光に出る
 			ImGui::Checkbox("Blade: reflection", &m_wpShowReflect); ImGui::SameLine();	// 診断: 白く見える原因が反射か発光かを切り分ける
 			ImGui::Checkbox("Blade: glow", &m_wpShowGlow);	// 発光全体の明るさ(白飛び防止)
 			ImGui::TextDisabled("-- Forge scale (black oxide, knocked off by hammering) --");

@@ -3,7 +3,7 @@
 
 class SceneForge; // owner
 
-// Quench step (the last one = the climax). A small sequence of its own:
+// Quench step (the climax of the work). A small sequence of its own:
 //   Hold    : at the trough the burning blade is held over the water with the tongs. LMB = quench.
 //             If the blade is too cold / too hot, the owner refuses (the smith says so).
 //   Turn    : the blade is turned edge-down (rolled 90 deg about its long axis) and lifted a
@@ -19,8 +19,9 @@ class SceneForge; // owner
 //             the steel cools enough, only slower (and the grade is a little lower).
 //   Full    : the progress bar stays on screen at 100% for a moment (the player SEES it finish)
 //             before the HUD is hidden; otherwise the last frames before 100% are all they saw.
-//   Settle  : letterbox bars slide in while the steam and waves calm down, then hold the shot.
-// Then the step advances; being the last step, that finishes the game.
+//   Settle  : (only if this is the last step of the recipe) letterbox bars slide in while the steam
+//             and waves calm down, then hold the shot. Otherwise the next step (tempering) follows.
+// Then the step advances; if it was the last step, that finishes the game.
 // This class owns the ORDER and TIMING of the sequence; SceneForge owns what it
 // looks/sounds like (blade angle, depth, stroke, steam, waves, bars) and the boiling physics.
 class QuenchStep : public StateBase
@@ -41,7 +42,5 @@ public:
 
     static constexpr float TURN_TIME      = 0.5f;  // blade turns edge-down (s)
     static constexpr float PLUNGE_TIME    = 1.0f;  // blade travels into the water (s)
-    static constexpr float LETTERBOX_TIME = 1.8f;  // bars slide in (s)
-    static constexpr float HOLD_TIME      = 2.5f;  // stay on the finished shot while it calms, before the result (s)
     static constexpr float FULL_SHOW_TIME = 0.5f;  // show the full (100%) bar before hiding the HUD (s)
 };

@@ -16,7 +16,8 @@ enum class StepName
     Heat,     // heat the iron in the forge fire until it burns (sparks)
     Forge,    // hammer it into shape while hot (the player may flip the piece at will here)
     Grind,    // sharpen the edge on the grindstone (rough grind, before hardening)
-    Quench,   // plunge the burning blade into water to harden it (the climax)
+    Quench,   // plunge the burning blade into water to harden it
+    Temper,   // warm the hardened blade gently above the coals; stop when the edge shows the right oxide color
 };
 
 // Work places in the smithy. The player walks to one and presses E to work there;

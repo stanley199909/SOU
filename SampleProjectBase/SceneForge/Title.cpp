@@ -14,15 +14,9 @@ using namespace DirectX;
 
 void SceneForge::ResetTitleStage()
 {
-	m_forging.Reset();
-	m_forging.SetHeat(START_HEAT);	// 赤熱した鉄(光って見える)
-	m_forgeProg = 0.0f;				// タイトルの鉄の形/黒皮はこの値で描く(非プレイ時)。前の周回の完成形を持ち越さない
-									// (旧: 結果→タイトルで完成した剣が残り、開始時に粗坯+黒皮へ急に変わって見えた)
-	m_station = Station::Anvil; m_workAt = Station::Anvil; m_carrying = false; m_restFlip = false;
-	m_flipAngle = 0.0f;
-	m_plunge = 0.0f; m_quenchTurn = 0.0f; m_agitate = 0.0f; m_quenchContact = false; m_clearDecided = false; m_letterbox = 0.0f; m_boil = 0.0f; m_boilStage = BoilStage::None; m_waterSim.Reset(); m_prevAgitate = 0.0f; m_bubbleAcc = 0.0f;
-	m_stirTarget = 0.0f; m_filmBreak = 0.0f; m_filmTime = 0.0f; m_stir01 = 0.0f; m_quenchStartHeat = 0.0f;	// 前の周回の淬火/終幕を片付ける
-	m_hammer.Reset();
+	// 鉄・工位・工程・案内・光…1回分の状態は全部共通の1か所で戻す(ResetRunState)。
+	//   鉄は赤熱(START_HEAT)、形は粗坯(m_forgeProg 0 = タイトルの鉄の形/黒皮)=前の周回の完成形を持ち越さない。
+	ResetRunState();
 	m_autoTimer = 0.0f;
 	m_introPhase = IntroPhase::None;
 	m_introTimer = 0.0f;

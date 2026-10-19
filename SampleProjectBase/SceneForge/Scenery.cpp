@@ -11,6 +11,7 @@
 #include "SceneForge/SceneForge_Internal.h"
 #include "PropParts.h"
 #include "ReflectionProbe.h"
+#include "OutlineRender.h"	// 次の工位の輪郭線(背面法)
 #include "GpuProfiler.h"
 #include "DirectX.h"
 #include "MeshBuffer.h"
@@ -39,9 +40,9 @@ using namespace DirectX;
 
 //--- 光を受ける物の描画(道具・手に持った鎚/火ばさみ)。全部 LitRender = 壁と同じ PBR の光の式。
 //    材質(粗さ・金属度・三平面投影・色)は表(GameData/PropMaterials)をキーで引く=ここに物ごとの特例を書かない
-void SceneForge::DrawModelWorld(Model* m, const XMMATRIX& world, const char* materialKey)
+void SceneForge::DrawModelWorld(Model* m, const XMMATRIX& world, const char* materialKey, float highlight)
 {
-	LitRender::Draw(m, world, GetObj<CameraBase>("Camera"), PropMaterials::Find(materialKey));
+	LitRender::Draw(m, world, GetObj<CameraBase>("Camera"), PropMaterials::Find(materialKey), highlight);
 }
 
 // Shared PBR opaque pass; clear glass is drawn after opaque scenery.
@@ -285,12 +286,19 @@ void SceneForge::DrawScenery()
 		if (p.key == CottageDoor::HOUSE_KEY) { housePropToDraw = &p; continue; }	// 下で最後に描く
         if(OutdoorStage::IsOutdoor(p.key)) { outdoorToDraw.push_back(&p); continue; }	// 家の後で描く(下)
 		GpuProfiler::Scope t(timed ? (const char*)u8"　・道具（金床・炉など）" : nullptr);
-		DrawModelWorld(m, PropWorld(p), p.key.c_str());	// 炉の暗い暖色・三平面投影も材質表の値(旧: ここに炉だけの特例)
+		const float hi = StationHighlight(p.key);	// 次に向かう工位なら 0..1(縁の光 + 輪郭線)
+		DrawModelWorld(m, PropWorld(p), p.key.c_str(), hi * STATION_HI_GLOW);	// 炉の暗い暖色・三平面投影も材質表の値(旧: ここに炉だけの特例)
 		// 動く部品(砥石の輪)は本体と同じ行列の手前で、自分の軸まわりに回してから描く。
 		// 角度は砥石の物理(GrindWheel)が積分した値=踏んだ分だけ回り、摩擦で止まる。
-		if (const PropPart* part = FindPropPart(p.key.c_str()))
-			if (Model* pm = GetObj<Model>(part->partKey))
-				DrawModelWorld(pm, PartSpin(pm, m_wheel.Angle()) * PropWorld(p), p.key.c_str());	// 部品は本体と同じ材質
+		const PropPart* part = FindPropPart(p.key.c_str());
+		Model* pm = part ? GetObj<Model>(part->partKey) : nullptr;
+		if (pm) DrawModelWorld(pm, PartSpin(pm, m_wheel.Angle()) * PropWorld(p), p.key.c_str(), hi * STATION_HI_GLOW);	// 部品は本体と同じ材質
+		if (hi > 0.0f)	// 輪郭線(背面法)。本体の後に描く=本体が覆う所は深度で隠れ、縁の外側だけ残る
+		{
+			const XMFLOAT4 OUTLINE_COL(1.0f * STATION_OUTLINE_BRIGHT, 0.62f * STATION_OUTLINE_BRIGHT, 0.25f * STATION_OUTLINE_BRIGHT, STATION_OUTLINE_ALPHA * hi);	// 縁の光(PS_StageProp HIGHLIGHT_COL)と同じ暖色
+			OutlineRender::Draw(m, PropWorld(p), GetObj<CameraBase>("Camera"), OUTLINE_COL, STATION_OUTLINE_M);
+			if (pm) OutlineRender::Draw(pm, PartSpin(pm, m_wheel.Angle()) * PropWorld(p), GetObj<CameraBase>("Camera"), OUTLINE_COL, STATION_OUTLINE_M);
+		}
 	}
 	{ GpuProfiler::Scope t(!m_capturingProbe ? (const char*)u8"　・炭" : nullptr); DrawCoalBed(); }	// 光る炭ベッド(自作)
 	if (housePropToDraw)

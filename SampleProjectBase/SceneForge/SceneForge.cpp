@@ -22,6 +22,7 @@
 #include "LitRender.h"
 #include "ReflectionProbe.h"
 #include "VolumetricLight.h"
+#include "OutlineRender.h"
 #include "GpuProfiler.h"
 #include "SceneForge/SceneForge_Internal.h"
 #include <cstdlib>
@@ -140,6 +141,10 @@ void SceneForge::Init()
 	PixelShader* sps = CreateObj<PixelShader>("PS_Spark");
 	if (FAILED(sps->Load("Assets/Shader/PS_Spark.cso")))
 		MessageBox(nullptr, "PS_Spark.cso", "Shader Error", MB_OK);
+	// 研ぎの区域が仕上がった瞬間の光芒(スターグリント)。形は式で描く(貼图なし)
+	PixelShader* glintPS = CreateObj<PixelShader>("PS_Glint");
+	if (FAILED(glintPS->Load("Assets/Shader/PS_Glint.cso")))
+		MessageBox(nullptr, "PS_Glint.cso", "Shader Error", MB_OK);
 
 	// 光の粒テクスチャ(中心が明るい)
 	const int S = 64;
@@ -375,12 +380,15 @@ void SceneForge::Init()
 void SceneForge::Uninit()
 {
 	SaveTuning();	// F1で調整したハンマー/カメラ値を書き出す(次回起動で復元)
+	ResetRunState();	// 遊びの途中で出ても(編集シーンへ切替・ゲーム終了)1回分の状態を残さない。鳴り続ける音もここで止まる
 	m_grassMap.Uninit();	// 草の踏み跡の貼图(ブレンドステートを解放)
 	ReflectionProbe::Uninit();	// 反射プローブの立方体画像(次に入った時に撮り直す)
 	VolumetricLight::Uninit();	// 光の筋の作業用画像とシェーダー
+	OutlineRender::Uninit();	// 次の工位の輪郭線のシェーダー
 	DestroyObj("VS_Forge");
 	DestroyObj("PS_Forge");
 	DestroyObj("PS_Spark");
+	DestroyObj("PS_Glint");
 	DestroyObj("VS_Bar");
 	DestroyObj("PS_Bar");
 	DestroyObj("VS_Coal");
@@ -427,16 +435,21 @@ void SceneForge::Strike(float scale)
 //====================================================================
 //  ゲーム進行
 //====================================================================
-void SceneForge::StartGame()
+//--- 1回の鍛造(遊び1回分)の状態を、全部まとめて最初に戻す。2026-10-19 ユーザー要望で一本化:
+//    旧: StartGame と ResetTitleStage がそれぞれ別の一部だけを戻していた → 片方に足し忘れた物(工位の光など)が
+//        タイトルへ持ち越された。ここに書けば「開始・タイトルへ戻る・結果から戻る・シーンに入る/出る・終了」の全部で戻る。
+//    ★1回の遊びの間に変わる変数を新しく足したら、必ずここで戻すこと。
+//    戻さない物: 調整値(F1/forge_tuning.txt)・済んだ課程の記録・モード/課程の選択・導入の段階(呼ぶ側が決める)。
+void SceneForge::ResetRunState()
 {
-	// BGM はここでは切り替えない: カメラが金床へ移る間にタイトル BGM を淡出し、着いてから切り替える(FinishIntro)。
-	m_heatSndOn = false;						// 加熱持続音の状態をリセット
-	m_state    = GAME_PLAY;
-	// 状態は一旦「走動」にし、UpdateTitle が直後に金床への導入運鏡を始める(着くと工位=鍛打へ)。
-	m_walkMode = true;
+	// 鳴り続ける音を止める(状態だけ false にすると、鳴っている音が止まらず残る)
+	if (m_heatSndOn)  { Audio::Stop(Audio::SE_FORGE_LOOP); m_heatSndOn  = false; }
+	if (m_burnSndOn)  { Audio::Stop(Audio::SE_BURN_LOOP);  m_burnSndOn  = false; }
+	if (m_grindSndOn) { Audio::Stop(Audio::SE_GRIND_LOOP); m_grindSndOn = false; }
 	m_modeTrans = ModeTrans::None;	// 走動⇔工位の移動アニメも解除
 	m_focus = -1; m_promptAlpha = 0.0f;	// 互動の状態も初期化
 	m_grabFocus = -1; m_grabPromptAlpha = 0.0f; m_gripAfterExit = false;
+	m_bannerAt = -1000.0f; m_bannerText.clear(); m_hiAlpha = 0.0f;	// 工程の札・工位の光も初期化
 	m_walkPitch = 0.0f;
 	m_player.Init(DirectX::XMFLOAT3(0.0f, m_walkFloorY, -2.0f), 0.0f);	// 開始位置/向きを戻す
 	m_door.Reset();			// 裏口の扉は閉じた状態から
@@ -460,8 +473,6 @@ void SceneForge::StartGame()
 	m_grindU = 0.5f; m_grindFace = 0; m_grindFaceInit = false; m_grindFlipRoll = 0.0f; m_grindFlipping = false; m_grindFlipHold = 0.0f; m_grindSparkAcc = 0.0f; m_grindVol = 0.0f; m_grindAngle = m_grindAngleTarget = 0.0f;
 	m_plunge = 0.0f; m_quenchTurn = 0.0f; m_agitate = 0.0f; m_quenchContact = false; m_clearDecided = false; m_letterbox = 0.0f; m_boil = 0.0f; m_boilStage = BoilStage::None; m_waterSim.Reset(); m_prevAgitate = 0.0f; m_bubbleAcc = 0.0f;
 	m_stirTarget = 0.0f; m_filmBreak = 0.0f; m_filmTime = 0.0f; m_stir01 = 0.0f; m_quenchStartHeat = 0.0f;	// 淬火/終幕の演出も解除
-	if (m_burnSndOn)  { Audio::Stop(Audio::SE_BURN_LOOP);  m_burnSndOn  = false; }
-	if (m_grindSndOn) { Audio::Stop(Audio::SE_GRIND_LOOP); m_grindSndOn = false; }
 
 	m_charging    = false;
 	m_charge      = 0.0f;
@@ -480,21 +491,39 @@ void SceneForge::StartGame()
 	m_qualitySum   = 0.0f;
 	m_strikeCount  = 0;
 
-	// 工程(step)状態機を最初の工程から開始する。
-	//   遷移先の名前は「配方(m_recipe)の順序」から取る=データ駆動(chase は名前を状態に直書きだった)。
 	m_stepIdx = 0;
 	m_stepChangedAt = m_time;	// 指引 UI: 最初の案内文も淡入させる
+	m_guideText = nullptr; m_guideGoal = Station::Anvil;	// 案内文と行き先(UpdateGuide が毎フレーム決め直す)
 	m_trackerRows.clear();		// 工程リストの済状態を作り直す(UpdateTracker が配方の工程数で用意する)
-	m_stepTimes.assign(m_recipe->steps.size(), StepTime{});	// プレイテスト計時も 0 から
+	m_stepTimes.assign(m_recipe ? m_recipe->steps.size() : 0, StepTime{});	// プレイテスト計時も 0 から
 	for (LessonState& l : m_lessons) l = LessonState{};		// 操作の案内は毎回最初から(新しい人が遊ぶ)
 	m_lessonShown = -1; m_lessonShownRescue = false;
-	m_aimTravel = 0.0f; m_lastAimRail = -1.0f; m_validStrikes = 0; m_bellowsTime = 0.0f; m_flipCount = 0;	// 案内の「できた」量
+	m_aimTravel = 0.0f; m_lastAimRail = -1.0f; m_validStrikes = 0; m_bellowsPumps = 0; m_flipCount = 0;	// 案内の「できた」量
 	m_leaveCount = 0; m_gripCount = 0; m_putCount = 0; m_reachCount = 0; m_heatReadyCount = 0;
 	m_prevFocusGoal = false; m_prevHeatReady = false;
 	m_grindRunTime = 0.0f; m_grindGoodStreak = 0.0f; m_grindAngleHolds = 0; m_grindSlideTravel = 0.0f; m_grindFlipCount = 0;
 	m_grindTooFlat = false; m_plungeCount = 0; m_stirTravel = 0.0f;
 	m_walkGoalTime = 0.0f; m_walkGoalLabel = nullptr;
 	StopSequence();				// 前の回の拍子表が途中なら打ち切る
+	m_seqBreathW = 0.0f;		// 拍子表の呼吸の重み
+	m_bobPhase = 0.0f; m_bobWeight = 0.0f;	// 運ぶ時の揺れ
+	m_carryPull = 0.0f; m_carryRaise = 0.0f;	// 手の鉄が道具/壁を避ける量
+	m_grindFlipStart = 0.0f;
+	for (float& t : m_temperCell) t = 0.0f;	// 焼き戻しの色
+	m_temperU = 0.5f; m_temperStarted = false; m_temperPoseW = 0.0f;
+	m_bellowsAir = 0.0f;	// 炉に溜まった風
+	ResetGrindSegments();		// 研ぎの区域の「仕上がった」記録と光
+}
+
+void SceneForge::StartGame()
+{
+	// BGM はここでは切り替えない: カメラが金床へ移る間にタイトル BGM を淡出し、着いてから切り替える(FinishIntro)。
+	m_state = GAME_PLAY;
+	ResetRunState();			// 1回分の状態を全部最初へ(共通の1か所)
+	// 状態は一旦「走動」にし、UpdateTitle が直後に金床への導入運鏡を始める(着くと工位=鍛打へ)。
+	m_walkMode = true;
+	// 工程(step)状態機を最初の工程から開始する。
+	//   遷移先の名前は「配方(m_recipe)の順序」から取る=データ駆動(chase は名前を状態に直書きだった)。
 	m_stepMachine.ChangeState(StepKey(m_recipe->steps[0].type));
 }
 
@@ -506,10 +535,12 @@ void SceneForge::SetupSteps()
 	m_forgeStep  = std::make_unique<ForgeStep>(this);
 	m_grindStep  = std::make_unique<GrindStep>(this);
 	m_quenchStep = std::make_unique<QuenchStep>(this);
+	m_temperStep = std::make_unique<TemperStep>(this);
 	m_heatStep->RegisterState(m_stepMachine);
 	m_forgeStep->RegisterState(m_stepMachine);
 	m_grindStep->RegisterState(m_stepMachine);
 	m_quenchStep->RegisterState(m_stepMachine);
+	m_temperStep->RegisterState(m_stepMachine);
 }
 
 //--- 配方でその種類の工程まで進んだか(その工程が今か、もう済んだ)。工位に入れるかの判定に使う(データ駆動=順序は配方が決める)。
@@ -525,6 +556,7 @@ bool SceneForge::StepReached(StepName type) const
 void SceneForge::AdvanceStep()
 {
 	if (m_courseComplete) return;	// 課程を終えた後は進めない(最後の工程の状態は完了条件を満たしたまま毎フレーム呼んでくる)
+	const int prevIdx = m_stepIdx;
 	++m_stepIdx;
 	m_stepChangedAt = m_time;	// 指引 UI: 新しい案内文を淡入+工程リストで強調
 	// チュートリアルの課程: その課程の最後の工程が済んだら、次の工程へ進まず「レッスン完了」
@@ -535,6 +567,7 @@ void SceneForge::AdvanceStep()
 	}
 	if (!m_recipe || m_stepIdx >= (int)m_recipe->steps.size()) { WritePlaytestLog(); FinishGame(); return; }
 	m_stepMachine.ChangeState(StepKey(m_recipe->steps[m_stepIdx].type));
+	ShowStepBanner(prevIdx);	// 「〜 完了 → 次：〜(工位へ)」の札+合図の音(HUD.cpp)
 }
 
 //--- プレイテスト計時: 今の工程に dt を足す。歩いている/工位へ出入りしている間は move にも足す
@@ -591,6 +624,7 @@ void SceneForge::StartAtStep(int idx, bool placeNow)
 	{
 	case StepName::Heat:   m_forging.SetHeat(COLD_LIMIT); break;	// 冷えた鉄(すぐ「済」にならない)
 	case StepName::Quench: m_forging.SetHeat((QUENCH_MIN_TEMP + QUENCH_MAX_TEMP) * 0.5f); break;
+	case StepName::Temper: m_forging.SetHeat(0.0f); break;	// 焼入れ後=冷えた刃(焼き戻しは温度を上げない)
 	default:               m_forging.SetHeat(START_HEAT); break;
 	}
 
@@ -637,17 +671,9 @@ void SceneForge::CompleteCourse()
 void SceneForge::ReturnToTitle(bool openCourses)
 {
 	m_fade.Transition([this, openCourses] {
-		StopSequence();							// 拍子表の途中なら打ち切る(鉄の姿勢の上書きも解除)
-		m_modeTrans = ModeTrans::None;
-		m_flipPhase = FlipPhase::None;
-		m_camTongsW = 0.0f; m_camGripW = 0.0f; m_hammerStowW = 0.0f; m_tongsInHand = false;
-		// 鳴り続ける音を止める(FinishGame と同じ。旧: 一時停止からタイトルへ戻ると炉/燃焼/研ぎの音が残り得た)
-		if (m_heatSndOn)  { Audio::Stop(Audio::SE_FORGE_LOOP); m_heatSndOn  = false; }
-		if (m_burnSndOn)  { Audio::Stop(Audio::SE_BURN_LOOP);  m_burnSndOn  = false; }
-		if (m_grindSndOn) { Audio::Stop(Audio::SE_GRIND_LOOP); m_grindSndOn = false; }
 		const int nextCourse = m_courseIdx + 1;
 		m_state = GAME_TITLE;
-		ResetTitleStage();						// 金床の上を「新しい熱い鉄」に戻す(課程の一覧も閉じる)
+		ResetTitleStage();						// 1回分の状態を全部戻す(拍子表・翻面・鳴り続ける音も ResetRunState が片付ける)+金床に新しい熱い鉄
 		m_courseComplete = false;
 		m_courseIdx      = -1;
 		if (openCourses && m_recipe)
@@ -953,29 +979,48 @@ void SceneForge::UpdatePlay(float tick)
 	//   inputOn= 玩家が工位で操作できるか(走動中/移動アニメ中は false)。
 	//   自然冷却は鉄そのものの物理なので simOn で毎フレーム進める=走動中も冷める。
 	//   熱源は炉の炭火: 鉄が炉に置かれている間(m_workAt==Hearth)だけ熱が入る。
-	//   風箱(R長押し)は炉の工位で玩家が行う行為なので inputOn の時だけ=炭火に追加で熱を送る。
+	//   風箱は炉の工位で玩家が行う行為なので inputOn の時だけ=炭火に追加で風を送る。
+	//   2026-10-19(ユーザー決定 10-15「ふいごは押す毎に」): 押しっぱなしでなく、1回押す=1回踏んで風を送る(中世の足踏みふいご)。
+	//   送った風は炉の中に溜まり(m_bellowsAir 0..1)、踏まなければ少しずつ抜ける=続けて踏むほど炭が熾る。
 	const bool simOn  = !ToolUiOpen() && !m_fade.IsBusy();
 	const bool inFire = !m_carrying && m_workAt == Station::Hearth;
-	const bool bellows = inputOn && m_station == Station::Hearth && InputActions::Held(Action::Bellows);
-	if (bellows) m_bellowsTime += tick;	// 操作の案内: ふいごを踏んだ秒(LessonMetric: Bellows)
+	if (inputOn && m_station == Station::Hearth && InputActions::Pressed(Action::Bellows))
+	{
+		m_bellowsAir = fminf(m_bellowsAir + BELLOWS_PUMP, 1.0f);
+		++m_bellowsPumps;	// 操作の案内: ふいごを踏んだ回数(LessonMetric: Bellows)
+		Haptics::Pulse(RUMBLE_BELLOWS, BELLOWS_PUMP_RUMBLE_SEC);
+	}
+	if (simOn) m_bellowsAir = Lerp::Damp(m_bellowsAir, 0.0f, BELLOWS_AIR_DECAY, tick);
+	const float air = m_bellowsAir;	// 0 = 炭火だけ / 1 = 風を送り続けて一番熾った状態
 	if (simOn)
 	{
-		if (inFire)
+		const bool tempering = Tempering();
+		if (inFire && tempering)
+		{
+			// 焼き戻し: 刃は炭の上(TEMPER_LIFT)=温度は上げない(赤くなれば焼入れが消える)。表面の酸化膜の色だけが進む
+			//   (色の進みと滑らせる入力は UpdateTemper)。
+			m_forging.Cool(tick);
+		}
+		else if (inFire)
 		{
 			// 火の中: 周囲=火なので、火の温度へ指数的に近づく(ニュートンの法則。室温への自然冷却の代わり)。
-			const float fireTemp = bellows ? BELLOWS_FIRE_TEMP : COAL_FIRE_TEMP;
-			const float k        = bellows ? BELLOWS_HEAT_K    : COAL_HEAT_K;
+			const float fireTemp = Lerp::Linear(COAL_FIRE_TEMP, BELLOWS_FIRE_TEMP, air);	// 溜まった風の分だけ炭が熱く・速く熱が入る
+			const float k        = Lerp::Linear(COAL_HEAT_K,    BELLOWS_HEAT_K,    air);
 			m_forging.AddHeat((fireTemp - m_forging.Heat()) * (1.0f - expf(-k * tick)));
 		}
 		else m_forging.Cool(tick);							// 火の外: 鉄が自分で冷める
 		UpdateBoil(tick);	// 水中: 沸騰の段階ごとの速さで冷える + 沸き立ち(蒸気/水面)。水の外では何もしない
 	}
-	// 風箱を踏んでいる間は炉火の唸りをループ。離した(またはF1/遷移で入力停止)瞬間に停止。
-	if (bellows && !m_heatSndOn)      { Audio::PlayLoop(Audio::SE_FORGE_LOOP, 0.5f); m_heatSndOn = true; }
-	else if (!bellows && m_heatSndOn) { Audio::Stop(Audio::SE_FORGE_LOOP);           m_heatSndOn = false; }
-	if (bellows) Haptics::Hold(RUMBLE_BELLOWS);	// 踏んでいる間ずっと(離せば次のフレームで止まる)
-	// 炉の光: 踏めば燃え上がって部屋が明るくなり、離すとゆっくり落ち着く(上りと下りで速さが違う)
-	m_fireBoost = Lerp::Damp(m_fireBoost, bellows ? m_fireBellowsBoost : 1.0f, bellows ? FIRE_BOOST_RISE : FIRE_BOOST_FALL, tick);
+	// 炉火の唸り: 風が溜まっている間だけ、溜まり具合の大きさで鳴らす(止めて鳴らし直さない=踏むたびに膨らんで引く)
+	if (air > BELLOWS_SOUND_MIN)
+	{
+		if (!m_heatSndOn) { Audio::PlayLoop(Audio::SE_FORGE_LOOP, 0.0f); m_heatSndOn = true; }
+		Audio::SetLoop(Audio::SE_FORGE_LOOP, BELLOWS_SOUND_VOLUME * air, 1.0f);
+	}
+	else if (m_heatSndOn) { Audio::Stop(Audio::SE_FORGE_LOOP); m_heatSndOn = false; }
+	// 炉の光: 風の分だけ燃え上がって部屋が明るくなり、抜けるとゆっくり落ち着く(上りと下りで速さが違う)
+	const float boostTarget = Lerp::Linear(1.0f, m_fireBellowsBoost, air);
+	m_fireBoost = Lerp::Damp(m_fireBoost, boostTarget, boostTarget > m_fireBoost ? FIRE_BOOST_RISE : FIRE_BOOST_FALL, tick);
 
 	// --- 過熱で放置すると鋼全体が焼けていく(損傷が蓄積)＋ジュー音 ---
 	//   冷却と同じく鉄の物理なので simOn で進める(F1中は温度と一緒に止まる)。
@@ -999,6 +1044,7 @@ void SceneForge::UpdatePlay(float tick)
 	{
 		UpdateBurnFx(tick);
 		UpdateGrind(tick, inputOn);
+		UpdateTemper(tick, inputOn);	// 焼き戻し(炉の工位で、工程が焼き戻しの時だけ働く)
 	}
 	const bool atAnvil = (m_station == Station::Anvil);	// 鍛打(照準/蓄力/打撃)は金床の工位だけ
 
@@ -1334,6 +1380,41 @@ void SceneForge::UpdateBurnFx(float tick)
 
 //--- 研磨: 右クリック点按=足踏み(GrindWheel が回転を持つ)、左長押し=押し当て、マウス左右=刃を滑らす。
 //    押し当てた区域の鋭さが「砥石の回転速度」に比例して上がる(速く回すほど早く研げる)。
+void SceneForge::ResetGrindSegments()
+{
+	for (int side = 0; side < ForgingSim::NSIDES; ++side)
+		for (int s = 0; s < ForgingSim::NSEG; ++s) m_grindSegWasDone[side][s] = false;
+	m_glints.clear();
+	m_twinkleTimer = GLINT_TWINKLE_GAP_MIN;
+}
+
+void SceneForge::SpawnGlint(int seg, float lenT, float life, float scale, bool atWheel)
+{
+	if ((int)m_glints.size() >= GLINT_MAX) return;
+	m_glints.push_back({ seg, lenT, m_time, life, scale, atWheel });
+}
+
+//--- 光芒の寿命と「時々のきらめき」。研ぎ上がった区域(表/裏のどちらかが済み=刃先は両面の境なので同じ所)から1つ選び、
+//    その区域の中のランダムな位置に小さく出す。間隔もランダム=規則的な点滅に見えない。砥石の工位にいる間だけ。
+void SceneForge::UpdateGlints(float dt)
+{
+	for (size_t i = 0; i < m_glints.size(); )
+	{
+		if (m_time - m_glints[i].bornAt >= m_glints[i].life) { m_glints[i] = m_glints.back(); m_glints.pop_back(); }
+		else ++i;
+	}
+	if (!AtStation(Station::Grindstone) || m_workAt != Station::Grindstone || m_carrying) return;
+	m_twinkleTimer -= dt;
+	if (m_twinkleTimer > 0.0f) return;
+	m_twinkleTimer = frand(GLINT_TWINKLE_GAP_MIN, GLINT_TWINKLE_GAP_MAX);
+	int done[ForgingSim::NSEG]; int n = 0;
+	for (int s = 0; s < ForgingSim::NSEG; ++s)
+		if (m_forging.SharpDoneOf(0, s) || m_forging.SharpDoneOf(1, s)) done[n++] = s;
+	if (n == 0) return;
+	const int pick = (int)frand(0.0f, (float)n) % n;
+	SpawnGlint(done[pick], frand(0.0f, 1.0f), GLINT_TWINKLE_SEC, GLINT_TWINKLE_SCALE, false);
+}
+
 void SceneForge::UpdateGrind(float tick, bool inputOn)
 {
 	const int NSEG = ForgingSim::NSEG;
@@ -1440,8 +1521,25 @@ void SceneForge::UpdateGrind(float tick, bool inputOn)
 		}
 
 		// この面の刃が全部研ぎ上がった瞬間: 「完成」の合図(鍛造の面の完成と同じ音。両面とも済めば一段高く)
-		if (!faceWasDone && m_forging.SharpProgress(side) >= 1.0f)
+		const bool faceJustDone = !faceWasDone && m_forging.SharpProgress(side) >= 1.0f;
+		if (faceJustDone)
 			Audio::Play(Audio::SE_FACE_DONE, FACE_DONE_VOLUME, m_forging.AllSharp() ? FACE_DONE_FINAL_PITCH : 1.0f);
+
+		// 区域(NSEG)が研ぎ上がった瞬間(立ち上がり): その区域の刃を光らせ、小さな「チン」。
+		//   面の最後の区域なら面の完成の音だけにする(2つ重ねない=大きな区切りが小さな音に埋もれない)。
+		for (int s = 0; s < ForgingSim::NSEG; ++s)
+		{
+			const bool done = m_forging.SharpDoneOf(side, s);
+			if (done && !m_grindSegWasDone[side][s])
+			{
+				// 光芒は砥石が当たっている所(=今研ぎ上げた所。玩家が見ていて火花が出ている所)。その区域の中に収める
+				const float per  = (float)ForgingSim::NL / ForgingSim::NSEG;	// 1区域のセル数
+				const float lenT = fminf(fmaxf(lenCoord / per - s, 0.0f), 1.0f);
+				SpawnGlint(s, lenT, GRIND_SEG_FLASH_SEC, 1.0f, true);
+				if (!faceJustDone) Audio::Play(Audio::SE_SEG_DONE, GRIND_SEG_SE_VOLUME);
+			}
+			m_grindSegWasDone[side][s] = done;
+		}
 
 		// 研ぎ火花: 砥石と刃の接点から、回転が速いほど・角度が正しいほど多く。研ぎ上がった所ではまばらに
 		m_grindSparkAcc += GRIND_SPARK_RATE * speed * eff * (onDoneSpot ? GRIND_DONE_SPARK_FACTOR : 1.0f) * tick;
@@ -1460,6 +1558,8 @@ void SceneForge::UpdateGrind(float tick, bool inputOn)
 	const float prevStreak = m_grindGoodStreak;
 	m_grindGoodStreak = goodAngle ? m_grindGoodStreak + tick : 0.0f;
 	if (prevStreak < GRIND_ANGLE_HOLD_SEC && m_grindGoodStreak >= GRIND_ANGLE_HOLD_SEC) ++m_grindAngleHolds;	// 保てた瞬間(エッジ)に1回
+
+	UpdateGlints(tick);	// 研ぎ上がった区域の光芒(仕上がった瞬間 + 時々のきらめき)
 
 	// --- 研磨音: 止めずに鳴らし続け、音量と音程だけを砥石の状態に追従させる ---
 	//   押す/離すたびに Stop→PlayLoop すると、毎回素材の頭から鳴り直して機械的に聞こえる。
@@ -1695,7 +1795,100 @@ void SceneForge::UpdateBoil(float tick)
 //    =別の配方で淬火の後に工程がある武器でも誤って消さない。
 void SceneForge::BeginFinale()
 {
-	m_clearDecided = m_recipe && m_stepIdx == (int)m_recipe->steps.size() - 1;
+	m_clearDecided = IsLastStep();
+}
+
+bool SceneForge::IsLastStep() const
+{
+	return m_recipe && m_stepIdx == (int)m_recipe->steps.size() - 1;
+}
+
+//--- 焼入れの後に工程が続く時: 刃を沈めた姿勢・揺すり・沸騰を解いて、水槽の上(焼入れ前の構え)に戻す。
+//    解かないと m_quenchTurn/m_plunge が残り、工位から出られない(取り消せない演出の扱い)。焼入れの出来(m_filmTime)は残す。
+void SceneForge::EndQuenchPose()
+{
+	m_quenchTurn = 0.0f; m_plunge = 0.0f; m_agitate = 0.0f; m_prevAgitate = 0.0f;
+	m_quenchContact = false; m_boilStage = BoilStage::None; m_boil = 0.0f;
+	m_stirTarget = 0.0f; m_stir01 = 0.0f;
+}
+
+//--- 炉の工位の振る舞いは「今の工程」だけで決まる: 焼き戻しなら色だけが進み温度は上がらない / それ以外は加熱。
+bool SceneForge::Tempering() const
+{
+	return m_recipe && m_stepIdx >= 0 && m_stepIdx < (int)m_recipe->steps.size()
+	    && m_recipe->steps[m_stepIdx].type == StepName::Temper;
+}
+
+//--- 完了 = 炉の上に置いて色が変わり始めた刃を、火ばさみで取り出した。
+//    色が変わる前に取り出したら終わらない: 独白で知らせ、置き直すまで判定しない(水槽から運んで来る間は判定しない)。
+bool SceneForge::TemperTakenOut()
+{
+	if (!m_carrying || !m_temperStarted) return false;
+	if (TemperAvg() >= TEMPER_COUNT_MIN) return true;
+	Say((const char*)u8"まだ色が変わっていない…炉の上で温める", IM_COL32(255, 200, 90, 255));
+	m_temperStarted = false;	// 置き直したらまた判定する
+	return false;
+}
+
+float SceneForge::TemperAvg() const
+{
+	float sum = 0.0f;
+	for (float t : m_temperCell) sum += t;
+	return sum / ForgingSim::NL;
+}
+
+//--- 1セルの刃先の色で出来を決める: 麦わら〜茶 = 1 / それより手前(銀に近い=硬く脆い)と先(紫・青=柔らかい)は離れるほど下がる。
+float SceneForge::TemperCellScore(float t) const
+{
+	if (t < TEMPER_IDEAL_MIN) return t / TEMPER_IDEAL_MIN;
+	if (t > TEMPER_IDEAL_MAX) return fmaxf(1.0f - (t - TEMPER_IDEAL_MAX) / (1.0f - TEMPER_IDEAL_MAX), 0.0f);
+	return 1.0f;
+}
+
+//--- 全セルの平均=刃先全体が揃って良い色なら 1。一か所だけ青い・一か所だけ銀のまま、はその分下がる(ムラの評価)。
+float SceneForge::TemperScore() const
+{
+	float sum = 0.0f;
+	for (float t : m_temperCell) sum += TemperCellScore(t);
+	return sum / ForgingSim::NL;
+}
+
+//--- 炭の中心(炉の作業点)の真上に来ている刃の長手位置。描画と同じ WeaponWorld の逆変換で求める
+//    =見えている刃のどこが炭の上にあるかと必ず一致する(研ぎの GrindLenCoord と同じ考え方)。
+float SceneForge::TemperLenCoord()
+{
+	if (!m_wpOk) return m_temperU * ForgingSim::NL;
+	const XMFLOAT3 p = StationBase(Station::Hearth);
+	XMFLOAT3 lp; XMStoreFloat3(&lp, XMVector3TransformCoord(XMLoadFloat3(&p), XMMatrixInverse(nullptr, WeaponWorld())));
+	return AimSystem::SegCoordLocal(lp, m_wpMin, m_wpMax, ForgingSim::NL);
+}
+
+//--- 焼き戻し: マウス左右(左スティック)で刃を炭の上で滑らせ、炭の中心に近いセルほど色が速く進む(ガウス)。
+//    色は戻らない(酸化膜は残る)=取り出しても冷ましても減らない。ふいごで炭が熾り、速く進む=行き過ぎやすい。
+void SceneForge::UpdateTemper(float tick, bool inputOn)
+{
+	// 構え(火ばさみで持ち上げて起こす): 焼き戻しで、刃が炉にあり、玩家が炉の工位にいる間 1 へ。
+	//   置いた直後(加熱と同じ姿勢)から持ち上がり、離れる/取る時は元へ下りる=跳ばない(入る/出る時の動き)
+	const bool onCoals = Tempering() && !m_carrying && m_workAt == Station::Hearth;
+	const bool held    = onCoals && !m_walkMode && !Transitioning() && m_station == Station::Hearth;
+	m_temperPoseW = Lerp::Damp(m_temperPoseW, held ? 1.0f : 0.0f, TEMPER_POSE_LAMBDA, tick);
+	if (!held) return;	// 色が進むのは火ばさみで炭の上に構えている間だけ(炉に置いて離れたら火から外して置いた扱い)
+	m_temperStarted = true;
+	if (inputOn)
+	{
+		float dx, dy; ReadMouseDelta(dx, dy);			// 炉の工位(焼き戻し)ではマウスを刃の滑りに使う
+		float hx, hy; InputActions::HandDelta(hx, hy);	// 手柄: 左スティック左右
+		// マウス右 = 画面の右へ(2026-10-19 F5: 逆だった)。感度は研ぎの滑りと同じ
+		m_temperU = fminf(fmaxf(m_temperU - (dx + hx) * m_grindSens, TEMPER_U_MIN), TEMPER_U_MAX);
+	}
+	const float rate = TEMPER_RATE * Lerp::Linear(1.0f, TEMPER_BELLOWS_MUL, m_bellowsAir) * tick;	// ふいごの風の分だけ速く
+	const float center = TemperLenCoord();				// 炭の中心の真上のセル(連続値)
+	const float twoSigma2 = 2.0f * TEMPER_HEAT_SPREAD * TEMPER_HEAT_SPREAD;
+	for (int c = 0; c < ForgingSim::NL; ++c)
+	{
+		const float d = (c + 0.5f) - center;
+		m_temperCell[c] = fminf(m_temperCell[c] + rate * expf(-(d * d) / twoSigma2), 1.0f);
+	}
 }
 
 //--- 今の鉄の一番低い点(モデル箱の8隅をワールドへ運んだ最小の y)。どの軸が刃の幅でも正しい。
@@ -1914,6 +2107,7 @@ void SceneForge::Update(float tick)
 		// 互動の注視判定(①範囲 ②視線)。走動中以外(工位/移動アニメ中)は対象なし=提示がフェードアウト。
 		UpdateInteract(tick);
 		UpdateGuide();		// 指引 UI: 今の状況から案内文と行き先を決める(HUD.cpp)
+		UpdateStationHighlight(tick);	// 次に向かう工位を光らせる濃さ(行き先は UpdateGuide が決めた物)
 		UpdateLessons(tick);	// 操作の案内(チュートリアル / 救急)を進める(Tutorial.cpp)
 		UpdateSeqBreath(tick);	// 拍子表の再生中だけカメラに呼吸を乗せる重み(Sequence.cpp)
 		UpdateCarryAvoid(tick);	// 手の鉄が道具/壁に入らない様に起こす(Carry.cpp)。運んでいない時は 0 へ戻る
@@ -1960,7 +2154,8 @@ void SceneForge::Update(float tick)
 			// 金床以外の工位は固定カメラ。砥石だけはマウス左右を刃の滑りに使う(UpdatePlay→UpdateGrind が読む)。
 			// それ以外(炉/水槽)は読んで捨てる=光標を中心へ戻し、戻った時に視点が跳ばない。
 			// 水槽で揺すっている間はマウスの上下を刃に使う(QuenchStep→StirQuench が読む)。
-			if (m_station != Station::Grindstone && !QuenchStirring()) { float dx, dy; ReadMouseDelta(dx, dy); }
+			// 焼き戻し中の炉もマウス左右を刃の滑りに使う(UpdateTemper が読む)
+			if (m_station != Station::Grindstone && !QuenchStirring() && !(m_station == Station::Hearth && Tempering())) { float dx, dy; ReadMouseDelta(dx, dy); }
 		}
 		else
 		{
@@ -2053,6 +2248,7 @@ void SceneForge::Draw()
 	if (m_showCollision) DrawCollision();	// 衝突形状(F1 最上段「Show collision」で ON。壁越しに透視。F1を閉じて歩きながらも見られる)
 
 	{ GpuProfiler::Scope t((const char*)u8"火の粉・蒸気"); DrawEmbers(); DrawSteam(); }	// 炭火から立ち上る余燼(火花描画より前に) / 淬火の蒸気
+	DrawGrindGlints();	// 研ぎの区域が仕上がった瞬間の光芒(刃の手前に加算で重ねる)
 	{ GpuProfiler::Scope t((const char*)u8"手に持った物"); DrawViewmodel(); }	// 手に持った鉄+火钳(深度範囲を詰めて手前に。運んでいない時は何もしない。Carry.cpp)
 
 	CameraBase* pCamera = GetObj<CameraBase>("Camera");

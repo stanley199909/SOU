@@ -205,6 +205,7 @@
     <ClCompile Include="StateMachine\StateMachine.cpp" />
     <ClCompile Include="StateMachine\StateBase.cpp" />
     <ClCompile Include="StateMachine\Player\HeatStep.cpp" />
+    <ClCompile Include="StateMachine\Player\TemperStep.cpp" />
     <ClCompile Include="StateMachine\Player\ForgeStep.cpp" />
     <ClCompile Include="StateMachine\Player\QuenchStep.cpp" />
     <ClCompile Include="StateMachine\Player\GrindStep.cpp" />
@@ -241,6 +242,7 @@
     <ClCompile Include="Model.cpp" />
     <ClCompile Include="LitRender.cpp" />
     <ClCompile Include="ReflectionProbe.cpp" />
+    <ClCompile Include="OutlineRender.cpp" />
     <ClCompile Include="VolumetricLight.cpp" />
     <ClCompile Include="AutoExposure.cpp" />
     <ClCompile Include="GpuProfiler.cpp" />
@@ -282,6 +284,7 @@
     <ClInclude Include="StateMachine\StateMachine.h" />
     <ClInclude Include="StateMachine\StateBase.h" />
     <ClInclude Include="StateMachine\Player\HeatStep.h" />
+    <ClInclude Include="StateMachine\Player\TemperStep.h" />
     <ClInclude Include="StateMachine\Player\ForgeStep.h" />
     <ClInclude Include="StateMachine\Player\QuenchStep.h" />
     <ClInclude Include="StateMachine\Player\GrindStep.h" />
@@ -308,6 +311,7 @@
     <ClInclude Include="Model.h" />
     <ClInclude Include="LitRender.h" />
     <ClInclude Include="ReflectionProbe.h" />
+    <ClInclude Include="OutlineRender.h" />
     <ClInclude Include="VolumetricLight.h" />
     <ClInclude Include="AutoExposure.h" />
     <ClInclude Include="GpuProfiler.h" />
@@ -392,6 +396,18 @@
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
     </FxCompile>
     <FxCompile Include="PS_StageProp.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
+    </FxCompile>
+    <FxCompile Include="PS_Glint.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
+    </FxCompile>
+    <FxCompile Include="VS_Outline.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Vertex</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Vertex</ShaderType>
+    </FxCompile>
+    <FxCompile Include="PS_Outline.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
     </FxCompile>

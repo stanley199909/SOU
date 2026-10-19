@@ -31,7 +31,7 @@ namespace
 		SceneLightParams light;	// eye, sun, ambient, fire, lightVP, shadow
 		XMFLOAT4   material;	// x 三平面投影, y 物の大きさ(倍率), z 粗さ, w 金属度
 		XMFLOAT4X4 worldToLocal;
-		XMFLOAT4   maps;		// x 法線マップ有り, y ORM マップ有り, z 法線マップが DirectX 式
+		XMFLOAT4   maps;		// x 法線マップ有り, y ORM マップ有り, z 法線マップが DirectX 式, w 次の工位の光(0..1)
 	};
 	static_assert(sizeof(PropParams) == 256, "must match cbuffer PropParam in PS_StageProp.hlsl");
 
@@ -94,7 +94,7 @@ namespace LitRender
 	bool NormalMapsEnabled() { return s_useNormalMaps; }
 	LightToggles& Toggles() { return s_toggles; }
 
-	void Draw(Model* model, FXMMATRIX world, CameraBase* camera, const PropMaterial& mat)
+	void Draw(Model* model, FXMMATRIX world, CameraBase* camera, const PropMaterial& mat, float highlight)
 	{
 		if (!model || !camera || !SunStage::Init()) return;
 		auto& r = SunStage::Data();
@@ -115,7 +115,7 @@ namespace LitRender
 		p.light    = Lights(camera);
 		p.material = { mat.triplanar ? 1.0f : 0.0f, XMVectorGetX(XMVector3Length(world.r[0])), mat.roughness, mat.metallic };
 		XMStoreFloat4x4(&p.worldToLocal, XMMatrixTranspose(XMMatrixInverse(nullptr, world)));
-		p.maps     = { hasNormal ? 1.0f : 0.0f, hasOrm ? 1.0f : 0.0f, normalDirectX ? 1.0f : 0.0f, 0.0f };
+		p.maps     = { hasNormal ? 1.0f : 0.0f, hasOrm ? 1.0f : 0.0f, normalDirectX ? 1.0f : 0.0f, highlight };
 		r.propPS.WriteBuffer(0, &p);
 
 		r.vs.Bind();

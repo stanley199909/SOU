@@ -22,14 +22,16 @@ cbuffer WpParam : register(b0)
     float4   fire;
     float4x4 lightVP;
     float4   shadow;
-    float4   material;   // x roughness, y metallic (GameData/PropMaterials "Weapon")
-    float4   hot;        // x share of the reflection kept while hot (1 = physical), w glow gain
+    float4   material;   // x roughness, y metallic (GameData/PropMaterials "Weapon"), z polished 0..1 (before tempering the smith polishes the blade so the temper colors can be seen)
+    float4   hot;        // x share of the reflection kept while hot (1 = physical), y glow base tint (low = steel texture shows more in the glow), z emissivity floor (low = normal map / angle shapes the glow more), w glow gain
     float4   scale;      // x tiling, y soft edge, z opacity, w glow
     float4   scale2;     // x already fallen off at progress 0, y draw reflection (F1), z draw glow (F1), w has normal map
+    float4   temperKey[8];   // tempering color table from the CPU (SceneForge::TEMPER_COLOR_TABLE): xyz color, w position
+    float4   temperFilm;     // x position where the oxide film counts as fully formed
 };
 #include "SunShadow.hlsli"
 #include "Lighting.hlsli"
-struct PIN { float4 pos:SV_POSITION; float3 nrm:TEXCOORD0; float2 uv:TEXCOORD3; float4 col:TEXCOORD1; float3 wp:TEXCOORD2; float sharp:TEXCOORD4; float work:TEXCOORD5; };
+struct PIN { float4 pos:SV_POSITION; float3 nrm:TEXCOORD0; float2 uv:TEXCOORD3; float4 col:TEXCOORD1; float3 wp:TEXCOORD2; float sharp:TEXCOORD4; float work:TEXCOORD5; float temper:TEXCOORD6; };
 
 static const float3 SCALE_COLD_COL = float3(0.06, 0.055, 0.05);   // cold forge scale = sooty near-black
 static const float  SCALE_ROUGH    = 1.0;                         // forge scale is matte
@@ -38,9 +40,9 @@ static const float  SCALE_REDDEN   = 0.7;                         // how far the
 static const float3 LUMA_WEIGHTS   = float3(0.2126, 0.7152, 0.0722); // Rec.709 luminance: take only the brightness of the heat color
 static const float3 GROUND_STEEL   = float3(0.78, 0.80, 0.83);   // ground (sharpened) steel color
 static const float  GROUND_ROUGH   = 0.08;                        // ground face is nearly mirror smooth
+static const float  POLISHED_ROUGH = 0.30;                        // polished (not mirror) face: catches the fire and room light broadly, so the temper colors read
+static const float  FILM_METALLIC  = 0.35;                        // metallic where the temper film has fully formed (lower = the film color shows more under any light)
 static const float  HOT_START = 0.06, HOT_FULL = 0.45;            // temperature where the glow starts / is full
-static const float  EMISSIVITY_MIN = 0.6;                         // floor: hot forged steel is oxidized (real emissivity ~0.6-0.9), so it never goes dark at grazing angles
-static const float  HOT_BASE_TINT  = 0.35;                        // glow = heat color x (this + (1-this) x steel texture): keeps the texture visible in the glow
 
 // Reflected light of a surface, from the scene's lights (sun with shadow, forge fire, room).
 float3 Reflected(float3 base, float rough, float metal, float3 n, float3 v, float3 l, float3 wp, float sunVisible)
@@ -61,7 +63,25 @@ float Emissivity(float3 f0, float nv)
     float3 f = f0 + (1 - f0) * pow(1 - nv, 5);
     float e = 1 - dot(f, LUMA_WEIGHTS);
     float eFacing = 1 - dot(f0, LUMA_WEIGHTS);
-    return max(saturate(e / max(eFacing, EPSILON)), EMISSIVITY_MIN);
+    return saturate(e / max(eFacing, EPSILON));
+}
+
+// Tempering colors (search: "temper colors steel", JP: yakimodoshi-iro / tempa-kara-).
+// Warming hardened steel grows a thin oxide film on the surface; its thickness (= how far the
+// tempering went) shows as interference colors. The table follows the real order:
+//   silver -> light straw -> dark straw -> bronze/brown -> purple -> dark blue -> light blue -> grey.
+// t = position along that order (0..1). The color TINTS the steel's base color (multiply):
+// the film colors the light the steel reflects. t = 0 (never tempered) = no tint.
+// The table itself lives on the CPU (SceneForge::TEMPER_COLOR_TABLE -> temperKey), so the HUD color chart
+// and the blade always show the same colors.
+static const int TEMPER_KEYS = 8;
+float3 TemperTint(float t)
+{
+    t = saturate(t);
+    [unroll] for (int k = 0; k < TEMPER_KEYS - 1; ++k)
+        if (t <= temperKey[k + 1].w)
+            return lerp(temperKey[k].rgb, temperKey[k + 1].rgb, (t - temperKey[k].w) / max(temperKey[k + 1].w - temperKey[k].w, EPSILON));
+    return temperKey[TEMPER_KEYS - 1].rgb;
 }
 
 float4 main(PIN i) : SV_TARGET
@@ -82,14 +102,24 @@ float4 main(PIN i) : SV_TARGET
     float  reflectKeep = lerp(1.0, hot.x, heat);   // 1 = the reflection stays fully while hot (physical)
 
     // --- steel: PBR reflection (the ground edge becomes bright and smooth) ---
-    float3 steel = lerp(tex.Sample(samp, i.uv).rgb, GROUND_STEEL, ground);
-    float  rough = clamp(lerp(material.x, GROUND_ROUGH, ground), MIN_ROUGHNESS, 1);
-    float3 col = Reflected(steel, rough, material.y, n, v, l, i.wp, sunVisible) * scale2.y * reflectKeep;
+    float  polish = material.z;
+    float3 steel = lerp(tex.Sample(samp, i.uv).rgb, GROUND_STEEL, max(ground, polish));   // polished = bright bare steel (the dark forged surface would hide the colors)
+    steel *= TemperTint(i.temper);   // tempering oxide film (0 = none). The CPU makes the spine run ahead of the edges
+    float  rough = clamp(lerp(lerp(material.x, POLISHED_ROUGH, polish), GROUND_ROUGH, ground), MIN_ROUGHNESS, 1);
+    // The oxide film is a thin non-metal layer: where it has formed, part of the light is scattered by the film
+    // (diffuse) instead of mirrored by the metal. A pure metal only shows what it reflects -> in the dark smithy
+    // the colors were invisible (2026-10-19). Lowering the metallic where the film is gives the colors body.
+    float  film  = saturate(i.temper / max(temperFilm.x, EPSILON));
+    float  metal = lerp(material.y, FILM_METALLIC, film);
+    float3 col = Reflected(steel, rough, metal, n, v, l, i.wp, sunVisible) * scale2.y * reflectKeep;
 
     // --- glow of the hot steel (emission), ADDED to the reflection ---
     float  nv = saturate(dot(n, v));
     float  emissivity = Emissivity(SurfaceF0(steel, material.y), nv);
-    float3 glow = i.col.rgb * (HOT_BASE_TINT + (1 - HOT_BASE_TINT) * steel) * emissivity * hot.w;
+    // floor (hot.z): hot forged steel is oxidized (real emissivity ~0.6-0.9) so it never goes black at grazing angles;
+    // lower = the normal map and the angle shape the glow more (metal surface reads while glowing).
+    // base tint (hot.y): glow = heat color x (tint + (1-tint) x steel texture); lower = more texture in the glow.
+    float3 glow = i.col.rgb * (hot.y + (1 - hot.y) * steel) * max(emissivity, hot.z) * hot.w;
     col += glow * heat * scale2.z;
 
     // --- forge scale (black oxide): the more a face was hammered, the more it has flaked off ---

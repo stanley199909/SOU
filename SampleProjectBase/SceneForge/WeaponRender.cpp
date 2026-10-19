@@ -292,13 +292,34 @@ XMMATRIX SceneForge::WeaponRot() const
 	// 淬火で刃を立てる: 今の長軸(ワールド)まわりに回す=平らに寝ていた刃が、刃を下にして縦に立つ
 	// (幅の向きが上下になる。どの軸が長軸かはモデルの箱から決まる=ベタ書き無し)。
 	// 砥石の研ぎ角も同じ回し方(長軸まわり)。F の裏返しは同じ軸での半回転を足す。
-	else if ((m_workAt == Station::Trough && m_quenchTurn > 0.0f) || (m_workAt == Station::Grindstone && (m_grindAngle != 0.0f || m_grindFlipRoll != 0.0f)))
+	else if ((m_workAt == Station::Trough && m_quenchTurn > 0.0f) || (m_workAt == Station::Grindstone && (m_grindAngle != 0.0f || m_grindFlipRoll != 0.0f))
+	      || (m_workAt == Station::Hearth && m_temperPoseW > 0.0f))
 	{
 		const int la = AimSystem::LongAxis(m_wpMin, m_wpMax);
 		const XMVECTOR local = XMVectorSet(la == 0 ? 1.0f : 0.0f, la == 1 ? 1.0f : 0.0f, la == 2 ? 1.0f : 0.0f, 0.0f);
 		const XMVECTOR axisW = XMVector3TransformNormal(local, r);	// 今の長軸(ワールド)
 		float angle;
 		if (m_workAt == Station::Trough) angle = m_quenchTurn * QUENCH_TURN_ANGLE;
+		else if (m_workAt == Station::Hearth)
+		{
+			// 焼き戻し: 刃を長軸まわりに起こし、平らな面をカメラへ向ける=色が見える(鍛冶も刃を起こして色を見る)。
+			//   どちらへ回すかは「面の向き(厚み軸)がカメラへ近づく方」を選ぶ(配置や置いた向きに依らない)。
+			//   炉の工位のカメラは必ず炉口の前・上から炉の奥(StationInto)を覗く → カメラの方向 = 奥の逆 + 上。
+			angle = TEMPER_TILT;
+			const int ta = m_wpThickAxis;
+			if (ta >= 0)
+			{
+				const XMVECTOR thick = XMVector3TransformNormal(XMVectorSet(ta == 0 ? 1.0f : 0.0f, ta == 1 ? 1.0f : 0.0f, ta == 2 ? 1.0f : 0.0f, 0.0f), r);
+				const XMFLOAT3 into = StationInto();
+				const XMVECTOR toCam = XMVector3Normalize(XMVectorSet(-into.x, 1.0f, -into.z, 0.0f));
+				auto facing = [&](float a) {	// 回した後、面(厚み軸の±どちらか)がカメラをどれだけ向くか
+					const XMVECTOR t = XMVector3TransformNormal(thick, XMMatrixRotationAxis(axisW, a));
+					return fabsf(XMVectorGetX(XMVector3Dot(t, toCam)));
+				};
+				if (facing(-TEMPER_TILT) > facing(TEMPER_TILT)) angle = -TEMPER_TILT;
+			}
+			angle *= m_temperPoseW;	// 構えに入る/戻る間はなめらかに起こす
+		}
 		else
 		{
 			// 研ぎ角の向きを画面に対して一定にする: 長軸のワールドの向きは「どちらの端から置いたか(m_restFlip)」などで
@@ -379,6 +400,16 @@ XMFLOAT3 SceneForge::WorkAnchor()
 		const XMFLOAT3 r = StationRight(), into = StationInto(), d = HearthDir();
 		a.x += r.x * m_hearthTipSide + into.x * m_hearthTipDepth - d.x * half;
 		a.z += r.z * m_hearthTipSide + into.z * m_hearthTipDepth - d.z * half;
+		if (m_temperPoseW > 0.0f)
+		{
+			// 焼き戻し: 火ばさみで炭の上へ持ち上げる(熱しすぎない)。m_temperU で刃を奥へ押す/手前へ引く=炭の上を通る所が変わる
+			//   (u = 0 は加熱の置き場所より TEMPER_PUSH_FRAC 奥 / u = 1 は TEMPER_PULL_FRAC 手前)。どこが炭の上かは TemperLenCoord が形から求める。
+			//   重み m_temperPoseW で加熱の置き場所から構えへ移る=置いた/取った瞬間に跳ばない
+			const float len  = m_barLen * m_wpScale;
+			const float pull = Lerp::Linear(-TEMPER_PUSH_FRAC, TEMPER_PULL_FRAC, m_temperU) * len * m_temperPoseW;
+			a.x -= d.x * pull; a.z -= d.z * pull;
+			a.y += TEMPER_LIFT * m_temperPoseW;
+		}
 		break;
 	}
 	case Station::Grindstone:
@@ -446,10 +477,6 @@ void SceneForge::BuildWeaponMorph()
 	const float MIN_FLASH_TIME = 0.01f, MIN_FLASH_SPREAD = 0.1f;	// 0 割りの防止
 	const float flashLife = 1.0f - (m_time - m_impactTime) / fmaxf(m_impactFlashTime, MIN_FLASH_TIME);	// 1=打った瞬間 → 0
 	XMFLOAT4 flashCol = HeatRGB(fminf(m_forging.Heat() + m_impactFlashHeat, 1.0f), 0.0f);
-	// チュートリアルの「まだ叩く所」の高亮(青)。明滅の強さはフレームごとに1回だけ求める
-	const bool  tutorialHi    = TutorialAtAnvil();
-	const XMFLOAT3 TUTORIAL_HI_COL(0.35f, 0.85f, 1.0f);	// 熱い鋼の橙と取り違えない青
-	const float tutorialPulse = TUTORIAL_HI_STRENGTH * (0.6f + 0.4f * sinf(m_time * XM_2PI * TUTORIAL_HI_PULSE_HZ));
 
 	// 進捗 p(0..1) → 段チェーン(stage_0..final)上の頂点 i の補間位置/法線(ローカル)。
 	auto morphAt = [&](int i, float p, XMVECTOR& outPos, XMVECTOR& outNrm)
@@ -483,6 +510,7 @@ void SceneForge::BuildWeaponMorph()
 		float vFront, vBack;	// 同じく、氧化皮の剥がれ具合(未完成の区域は厚い皮が残る=どこが未完成か鉄を見て分かる)
 		float sFront = 0.0f, sBack = 0.0f;	// この頂点位置での表/裏の刃の研ぎ具合(見た目用。区域を隣とブレンド)
 		float flash = 0.0f;					// 打撃の跡の光(0..1)
+		float tEdge = 0.0f;					// 焼き戻しの刃先の色(このセル)
 		if (playing)
 		{
 			// 成形は長手セル(NL 個)ごとの連続値。隣のセル中心との間を線形補間=叩いた所の周りだけ滑らかに変わる。
@@ -520,6 +548,7 @@ void SceneForge::BuildWeaponMorph()
 			};
 			sFront = sharpVis(0, ca) + (sharpVis(0, cb) - sharpVis(0, ca)) * ct;
 			sBack  = sharpVis(1, ca) + (sharpVis(1, cb) - sharpVis(1, ca)) * ct;
+			tEdge  = m_temperCell[ca] + (m_temperCell[cb] - m_temperCell[ca]) * ct;	// 焼き戻しの刃先の色(長手セルを隣とブレンド)
 			thisSeg = (int)AimSystem::SegCoordLocal(a0, m_wpMin, m_wpMax, NSEG); if (thisSeg >= NSEG) thisSeg = NSEG - 1;	// P の調試高亮用
 		}
 		else { pFront = pBack = m_forgeProg; vFront = vBack = m_forgeProg; thisSeg = -1; }
@@ -568,6 +597,17 @@ void SceneForge::BuildWeaponMorph()
 			const float tc = (mn[ta] + mx[ta]) * 0.5f;		// 厚みの中心面
 			(&lp.x)[ta] = tc + ((&lp.x)[ta] - tc) * (1.0f - EDGE_THIN * edge);
 		}
+		// 焼き戻しの色: 刃の中央(背)ほど先に進み、両側の刃先が一番遅れる(差別焼き戻し)。刃先の値 = そのセルの m_temperCell。
+		//   wn = 幅の正規化座標(0 = 中央 / 1 = 刃先)。刃先の色がまだ 0 の所は色なし。
+		float temper = tEdge;
+		if (wa >= 0)
+		{
+			const float wc = (fmn[wa] + fmx[wa]) * 0.5f;
+			const float wh = (fmx[wa] - fmn[wa]) * 0.5f;
+			const float wn = (wh > 1e-6f) ? fminf(fabsf((&lp.x)[wa] - wc) / wh, 1.0f) : 1.0f;
+			temper = tEdge * (1.0f + TEMPER_SPINE_LEAD * (1.0f - wn));
+		}
+		m_wpVtx[i].temper = fminf(temper, 1.0f);
 		m_wpVtx[i].sharp = edge;	// PS へ: 研ぎ面の見た目(磨いた明るい鋼)に使う
 		m_wpVtx[i].work  = vFace;	// PS へ: この頂点の面の氧化皮の剥がれ具合(刃先/側面は両面を混ぜた値。完成まで厚い皮が残る)
 
@@ -581,19 +621,6 @@ void SceneForge::BuildWeaponMorph()
 		// 既定は熱色のみ(KCD式=「叩く場所」を示さない)。Pキーでデバッグ可視化ONの時だけ
 		// 「今照準している区域」を青緑で薄く塗る(叩く指示ではなく開発用)。
 		XMFLOAT4 col = heat;
-		// チュートリアル: 上を向いた面のまだ完成していない所を青く明滅させる(=どこを叩けば良いか)。通常モードでは出さない。
-		if (tutorialHi && playing)
-		{
-			const float cc = AimSystem::SegCoordLocal(a0, m_wpMin, m_wpMax, NL) - 0.5f;
-			int c0 = (int)floorf(cc); const float t = cc - c0;
-			const int ca = c0 < 0 ? 0 : (c0 >= NL ? NL - 1 : c0), cb = (c0 + 1) >= NL ? NL - 1 : (c0 + 1 < 0 ? 0 : c0 + 1);
-			const int up = m_forging.Side();
-			const float todo = (m_forging.CellDoneOf(up, ca) ? 0.0f : 1.0f) * (1.0f - t) + (m_forging.CellDoneOf(up, cb) ? 0.0f : 1.0f) * t;
-			const float w = todo * tutorialPulse;
-			col.x += (TUTORIAL_HI_COL.x - col.x) * w;
-			col.y += (TUTORIAL_HI_COL.y - col.y) * w;
-			col.z += (TUTORIAL_HI_COL.z - col.z) * w;
-		}
 		if (flash > 0.0f)
 		{
 			col.x += (flashCol.x - col.x) * flash;
@@ -633,15 +660,21 @@ void SceneForge::DrawWeapon()
 	{
 		SceneLightParams light;
 		XMFLOAT4 material;	// x 粗さ, y 金属度
-		XMFLOAT4 hot;		// x 熱い間も残す反射の割合, yz 未使用, w 発光の明るさ
+		XMFLOAT4 hot;		// x 熱い間も残す反射の割合, y 発光の地の明るさ, z 発射率の下限, w 発光の明るさ
 		XMFLOAT4 scale;		// x 繰り返し, y 境目の柔らかさ, z 濃さ, w 熱い時の光
 		XMFLOAT4 scale2;	// x 叩く前から剥がれている割合, y 反射を描く(F1 診断), z 発光を描く(F1 診断), w 法線マップ有り
+		XMFLOAT4 temperKey[TEMPER_KEYS];	// 焼き戻しの色の表(xyz = 色, w = 位置)。表は C++ が持つ=色見本(HUD)と刃が同じ色になる
+		XMFLOAT4 temperFilm;				// x 膜が「はっきり付いた」とみなす位置
 	} wp{};
+	for (int k = 0; k < TEMPER_KEYS; ++k)
+		wp.temperKey[k] = { TEMPER_COLOR_TABLE[k][1], TEMPER_COLOR_TABLE[k][2], TEMPER_COLOR_TABLE[k][3], TEMPER_COLOR_TABLE[k][0] };
+	wp.temperFilm = { TEMPER_FILM_FULL, 0.0f, 0.0f, 0.0f };
 	static_assert(sizeof(WpParams) % 16 == 0, "cbuffer size must be a multiple of 16 bytes");
 	const PropMaterial& mat = PropMaterials::Find("Weapon");
 	wp.light    = LitRender::Lights(cam);
-	wp.material = { mat.roughness, mat.metallic, 0.0f, 0.0f };
-	wp.hot      = { m_wpHotReflect, 0.0f, 0.0f, m_wpHotGain };
+	// z = 磨いてある(焼入れの後=焼き戻しの色を見る為に鍛冶が刃を磨く)。暗い鍛造肌のままでは色が見えなかった(2026-10-19)
+	wp.material = { mat.roughness, mat.metallic, (m_state == GAME_PLAY && StepReached(StepName::Temper)) ? 1.0f : 0.0f, 0.0f };
+	wp.hot      = { m_wpHotReflect, m_wpHotTint, m_wpHotEmisMin, m_wpHotGain };
 	const bool hasNormal = m_wpNormalTex && m_wpNormalTex->GetResource() && LitRender::NormalMapsEnabled();	// F1「Normal maps」は道具と共通
 	// マスクが読めない時は黒皮を出さない(灰色の既定テクスチャで全面が皮に覆われない様に)
 	const float scaleOpacity = (m_wpScaleMask && m_wpScaleMask->GetResource()) ? m_scaleOpacity : 0.0f;
@@ -861,4 +894,108 @@ XMMATRIX SceneForge::HammerHipWorld(Model* hammer)
 	// 頭の中心がちょうど腰の点に来る様に平行移動
 	XMFLOAT3 h; XMStoreFloat3(&h, XMVector3TransformCoord(head, hang));
 	return scaled * hang * XMMatrixTranslation(belt.x - h.x, belt.y - h.y, belt.z - h.z);
+}
+
+//====================================================================
+//  研ぎの光芒(スターグリント)。区域が仕上がった瞬間(砥石の当たる所)+ 研ぎ上がった区域の時々のきらめき。
+//    刃先の一点に、カメラを向く板(ビルボード)を1枚置き、形は PS_Glint が式で描く(芯 + 十字 + 斜めの短い光)。
+//    加算でHDRへ足す=ブルームで光が滲む。膨らみながら少し回って消える。
+//    光は刃先(両面の境)に置く: 研いでいる面は砥石側(下)を向いていてカメラから見えない。
+//====================================================================
+bool SceneForge::GrindSegGlintPos(int seg, float lenT, bool atWheel, XMFLOAT3& out)
+{
+	if (!m_wpOk) return false;
+	CameraBase* cam = GetObj<CameraBase>("Camera");
+	if (!cam) return false;
+	const int la = AimSystem::LongAxis(m_wpMin, m_wpMax);			// 長手(区域の並ぶ向き)
+	const int ta = m_wpThickAxis;									// 厚み
+	if (ta < 0 || ta == la) return false;
+	const int wa = 3 - la - ta;										// 幅(刃先はこの軸の両端)
+	const float* mn = &m_wpMin.x; const float* mx = &m_wpMax.x;
+	const float* fmn = &m_wpFinMin.x; const float* fmx = &m_wpFinMax.x;
+	XMFLOAT3 local;
+	float* l = &local.x;
+	l[la] = mn[la] + (mx[la] - mn[la]) * (seg + lenT) / ForgingSim::NSEG;	// 区域の中の長手の位置(AimSystem::SegCoordLocal と同じ規約)
+	l[ta] = (mn[ta] + mx[ta]) * 0.5f;										// 厚みの中心面=刃先の線
+	// 刃先は幅の両端にある → 砥石に当たっている方(仕上がった瞬間) / カメラに近い方(時々のきらめき=見える側)
+	const XMMATRIX world = WeaponWorld();	// 描画と同じ変換(翻面・工位の揃え込み)
+	const XMFLOAT3 camPos = cam->GetPos();
+	const XMVECTOR vcam = XMLoadFloat3(&camPos);
+	const XMFLOAT3 wheel = StationBase(Station::Grindstone);	// 砥石の上端=刃が当たる所
+	const XMVECTOR ref = atWheel ? XMLoadFloat3(&wheel) : vcam;
+	XMVECTOR best = XMVectorZero(); float bestD = FLT_MAX;
+	for (int end = 0; end < 2; ++end)
+	{
+		l[wa] = end ? fmx[wa] : fmn[wa];
+		const XMVECTOR p = XMVector3TransformCoord(XMLoadFloat3(&local), world);
+		const float d = XMVectorGetX(XMVector3LengthSq(XMVectorSubtract(ref, p)));
+		if (d < bestD) { bestD = d; best = p; }
+	}
+	best = XMVectorAdd(best, XMVectorScale(XMVector3Normalize(XMVectorSubtract(vcam, best)), GLINT_TOWARD_CAM));	// 刃にめり込まない様に手前へ
+	XMStoreFloat3(&out, best);
+	return true;
+}
+
+void SceneForge::DrawGrindGlints()
+{
+	CameraBase*   cam = GetObj<CameraBase>("Camera");
+	VertexShader* vs  = GetObj<VertexShader>("VS_Forge");	// 火花/余燼と同じ: CPU で作ったカメラ向きの板をそのまま描く
+	PixelShader*  ps  = GetObj<PixelShader>("PS_Glint");
+	if (!cam || !vs || !ps || !m_mesh || m_state != GAME_PLAY) return;
+
+	const XMFLOAT4 GLINT_COL(0.85f, 0.92f, 1.0f, 1.0f);	// 少し青い白=研いだばかりの鋼の冷たい光(熱い鉄の暖色と見分ける)
+	const XMFLOAT3 camPos = cam->GetPos();
+	const XMVECTOR vcam = XMLoadFloat3(&camPos);
+	const XMVECTOR worldUp = XMVectorSet(0, 1, 0, 0);
+	int v = 0;
+	for (const Glint& g : m_glints)
+	{
+		if (v + 6 > (int)m_vtx.size()) break;
+		const float p = (m_time - g.bornAt) / g.life;			// 0 → 1 の進み
+		if (p < 0.0f || p >= 1.0f) continue;
+		XMFLOAT3 at;
+		if (!GrindSegGlintPos(g.seg, g.lenT, g.atWheel, at)) continue;
+		const float env = sinf(p * XM_PI);						// 膨らんでしぼむ(0 → 1 → 0)
+		const float ang = p * GLINT_SPIN;						// 少し回る
+		const float sz  = GLINT_SIZE * g.scale * env;
+		const float br  = GLINT_BRIGHT * g.scale * env;
+		const XMFLOAT4 col(GLINT_COL.x * br, GLINT_COL.y * br, GLINT_COL.z * br, 1.0f);
+
+		// カメラを向く板(余燼と同じ作り方)を ang だけ回す
+		const XMVECTOR c     = XMLoadFloat3(&at);
+		const XMVECTOR toCam = XMVector3Normalize(XMVectorSubtract(vcam, c));
+		XMVECTOR right = XMVector3Cross(worldUp, toCam);
+		const float MIN_LEN = 0.001f;	// 真上/真下から見た時は right が決まらない
+		if (XMVectorGetX(XMVector3Length(right)) < MIN_LEN) right = XMVectorSet(1, 0, 0, 0);
+		right = XMVector3Normalize(right);
+		const XMVECTOR up = XMVector3Normalize(XMVector3Cross(toCam, right));
+		const float cs = cosf(ang), sn = sinf(ang);
+		const XMVECTOR R = XMVectorScale(XMVectorAdd(XMVectorScale(right, cs), XMVectorScale(up, sn)), sz);
+		const XMVECTOR U = XMVectorScale(XMVectorSubtract(XMVectorScale(up, cs), XMVectorScale(right, sn)), sz);
+		XMFLOAT3 tl, tr, bl, brc;
+		XMStoreFloat3(&tl,  XMVectorAdd(XMVectorSubtract(c, R), U));
+		XMStoreFloat3(&tr,  XMVectorAdd(XMVectorAdd(c, R), U));
+		XMStoreFloat3(&bl,  XMVectorSubtract(XMVectorSubtract(c, R), U));
+		XMStoreFloat3(&brc, XMVectorSubtract(XMVectorAdd(c, R), U));
+		Vertex* q = &m_vtx[v];
+		q[0] = { tl,  XMFLOAT2(0,0), col };
+		q[1] = { tr,  XMFLOAT2(1,0), col };
+		q[2] = { bl,  XMFLOAT2(0,1), col };
+		q[3] = { bl,  XMFLOAT2(0,1), col };
+		q[4] = { tr,  XMFLOAT2(1,0), col };
+		q[5] = { brc, XMFLOAT2(1,1), col };
+		v += 6;
+	}
+	if (v == 0) return;
+
+	XMFLOAT4X4 camMat[2] = { cam->GetView(), cam->GetProj() };
+	vs->WriteBuffer(0, camMat);
+	SetBlendMode(BLEND_ADD);
+	SetDepthTest(DEPTH_ENABLE_TEST);	// 深度は見るが書かない(光)
+	m_mesh->Write(m_vtx.data());
+	vs->Bind();
+	ps->Bind();
+	m_mesh->Draw(v);
+	SetBlendMode(BLEND_ALPHA);
+	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
 }

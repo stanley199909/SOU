@@ -50,7 +50,8 @@ namespace LitRender
 	float SkyScale();			// 窓の外の空の明るさの倍率(夜は暗い)
 	float FireIntensityScale();					// 炉の火の明るさの倍率(揺らぎ・ふいご)。壁(CottageRender)もこれを掛ける
 	void BindShadow();							// 太陽の影の深度を t3 へ
-	void Draw(Model* model, DirectX::FXMMATRIX world, CameraBase* camera, const PropMaterial& material);
+	// highlight 0..1 = 次の工位を指す暖色の光(縁ほど強い)。0 = 普段どおり
+	void Draw(Model* model, DirectX::FXMMATRIX world, CameraBase* camera, const PropMaterial& material, float highlight = 0.0f);
 	bool NormalMapsEnabled();	// F1「Normal maps」(刀身も同じ切り替えに従う)
 	void Controls();	// F1: 法線/ORM の画像の有無を切り替えて見比べる・法線の向き(DirectX/OpenGL式)を確かめる
 }

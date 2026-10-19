@@ -912,7 +912,7 @@ void SceneForge::SaveTuning()
 	fprintf(fp, "seqfeel %.5f %.5f %.5f %.5f\n", m_seqHandLag, m_seqArcLift, m_seqTimeJitter, m_seqArcJitter);
 	fprintf(fp, "carryavoid %.5f %.5f %.5f %.5f\n", m_carryAvoidMaxRaise, m_carryAvoidMargin, m_carryAvoidLambda, m_carryAvoidMaxPull);
 	fprintf(fp, "hearthlay %.5f %.5f %.5f\n", m_hearthYaw, m_hearthTipSide, m_hearthTipDepth);
-	fprintf(fp, "hotsteel2 %.5f %.5f\n", m_wpHotGain, m_wpHotReflect);
+	fprintf(fp, "hotsteel2 %.5f %.5f %.5f %.5f\n", m_wpHotGain, m_wpHotReflect, m_wpHotTint, m_wpHotEmisMin);
 	fprintf(fp, "forgescale %.5f %.5f %.5f %.5f %.5f %.5f\n", m_scaleTiling, m_scaleSoft, m_scaleOpacity, m_scaleGlow, m_scaleStart, m_scaleHoldMax);
 
 	fclose(fp);
@@ -965,7 +965,7 @@ void SceneForge::TuningRefs(std::vector<float*>& out)
 		&m_wheel.pedalImpulse, &m_wheel.maxSpeed, &m_wheel.friction, &m_wheel.bladeDrag, &m_grindSens,
 		&m_forging.strikesPerFace, &m_grindViewYaw, &m_forging.grindSecondsPerSide, &m_forging.grindSpread, &m_forging.strikeSpread,
 		&m_impactFlashTime, &m_impactFlashHeat, &m_impactFlashSpread,
-		&m_wpHotGain, &m_wpHotReflect,
+		&m_wpHotGain, &m_wpHotReflect, &m_wpHotTint, &m_wpHotEmisMin,
 		&m_scaleTiling, &m_scaleSoft, &m_scaleOpacity, &m_scaleGlow, &m_scaleStart, &m_scaleHoldMax,
 		// -- Sequence feel / hearth insert --
 		&m_seqHandLag, &m_seqArcLift, &m_seqTimeJitter, &m_seqArcJitter, &m_hearthYaw, &m_hearthTipSide, &m_hearthTipDepth,
@@ -1069,7 +1069,7 @@ void SceneForge::LoadTuning()
 		else if (strcmp(key, "playtesttimer") == 0) { int on = 0; sscanf_s(v, "%d", &on); m_showPlaytestTimer = (on != 0); }
 		else if (strcmp(key, "stationfront") == 0) { int h = 0, t = 0; sscanf_s(v, "%d %d", &h, &t); m_hearthFrontFlip = (h != 0); m_troughFrontFlip = (t != 0); }
 		else if (strcmp(key, "hotsteel")   == 0) { float unused[3]; sscanf_s(v, "%f %f %f %f", &unused[0], &unused[1], &unused[2], &m_wpHotGain); }	// 旧形式: 前3つ(背光面の明るさ/縁)は 2026-10-16 に廃止
-		else if (strcmp(key, "hotsteel2")  == 0) sscanf_s(v, "%f %f", &m_wpHotGain, &m_wpHotReflect);
+		else if (strcmp(key, "hotsteel2")  == 0) sscanf_s(v, "%f %f %f %f", &m_wpHotGain, &m_wpHotReflect, &m_wpHotTint, &m_wpHotEmisMin);	// 旧形式(2つ)は残りが既定のまま
 		else if (strcmp(key, "forgescale") == 0) sscanf_s(v, "%f %f %f %f %f %f", &m_scaleTiling, &m_scaleSoft, &m_scaleOpacity, &m_scaleGlow, &m_scaleStart, &m_scaleHoldMax);	// 足りない旧ファイルは残りが既定のまま
 	}
 	fclose(fp);
