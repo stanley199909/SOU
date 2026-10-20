@@ -326,6 +326,7 @@ void SceneForge::BeginExitStation()
 {
 	CameraBase* cam = GetObj<CameraBase>("Camera");
 	if (!cam || Transitioning()) return;
+	m_exitFromTemper = TemperHolding();	// 火钳で構えたまま出る(過渡の間も構えを保ち、出終わったら専用の拍子表)
 	BeginTransCommon(cam, m_transFromEye, m_transFromFwd);
 	++m_leaveCount;	// 操作の案内: 工位を離れた(LessonMetric: LeaveCold / TakeOut)
 
@@ -365,9 +366,13 @@ void SceneForge::UpdateModeTrans(float tick)
 	if (m_introPhase == IntroPhase::CameraMove) FinishIntro();	// タイトル→金床の導入もここで終わり(BGM 切替、HUD が出る)
 	m_modeTrans = ModeTrans::None;
 
+	// 焼き戻しで火钳で構えたまま出た: 火钳を離さない専用の拍子表(Q = そのまま持ち上げる / E = 炉に置いて火钳を腰へ)。
+	//   加熱と同じ流れ(火钳が消えて腰から抜き直す)は不自然だった(2026-10-19 F5)
+	if (m_walkMode && m_exitFromTemper) PlaySequence(m_gripAfterExit ? SEQ_TEMPER_LIFT : SEQ_TEMPER_RELEASE, m_workAt);
 	// Q/X で出た時: 走動になったその場で、火钳で掴む拍子表を始める(走動中に鉄を見て Q を押したのと同じ流れ)
-	if (m_walkMode && m_gripAfterExit && !m_carrying) PlaySequence(SEQ_GRIP_IRON, m_workAt);
+	else if (m_walkMode && m_gripAfterExit && !m_carrying) PlaySequence(SEQ_GRIP_IRON, m_workAt);
 	m_gripAfterExit = false;
+	m_exitFromTemper = false;
 }
 
 //--- 過渡中のカメラ: 開始視点 → 到着先 を SmoothStep で補間(出だしと着地がなめらか)。
@@ -914,6 +919,9 @@ void SceneForge::SaveTuning()
 	fprintf(fp, "hearthlay %.5f %.5f %.5f\n", m_hearthYaw, m_hearthTipSide, m_hearthTipDepth);
 	fprintf(fp, "hotsteel2 %.5f %.5f %.5f %.5f\n", m_wpHotGain, m_wpHotReflect, m_wpHotTint, m_wpHotEmisMin);
 	fprintf(fp, "forgescale %.5f %.5f %.5f %.5f %.5f %.5f\n", m_scaleTiling, m_scaleSoft, m_scaleOpacity, m_scaleGlow, m_scaleStart, m_scaleHoldMax);
+	// -- 試し切り(藁人形の置き場所・切った断片の物理) --
+	fprintf(fp, "cuttarget %.5f %.5f %.5f\n", m_cutPosXZ[0], m_cutPosXZ[1], m_cutYaw);	// 高さは歩く床(m_walkFloorY)
+	fprintf(fp, "cutphys %.5f %.5f %.5f %.5f\n", m_cutTarget.physics.restitution, m_cutTarget.physics.friction, m_cutTarget.pushSpeed, m_cutTarget.sepSpeed);
 
 	fclose(fp);
 }
@@ -1071,6 +1079,18 @@ void SceneForge::LoadTuning()
 		else if (strcmp(key, "hotsteel")   == 0) { float unused[3]; sscanf_s(v, "%f %f %f %f", &unused[0], &unused[1], &unused[2], &m_wpHotGain); }	// 旧形式: 前3つ(背光面の明るさ/縁)は 2026-10-16 に廃止
 		else if (strcmp(key, "hotsteel2")  == 0) sscanf_s(v, "%f %f %f %f", &m_wpHotGain, &m_wpHotReflect, &m_wpHotTint, &m_wpHotEmisMin);	// 旧形式(2つ)は残りが既定のまま
 		else if (strcmp(key, "forgescale") == 0) sscanf_s(v, "%f %f %f %f %f %f", &m_scaleTiling, &m_scaleSoft, &m_scaleOpacity, &m_scaleGlow, &m_scaleStart, &m_scaleHoldMax);	// 足りない旧ファイルは残りが既定のまま
+		else if (strcmp(key, "cuttarget")  == 0) sscanf_s(v, "%f %f %f", &m_cutPosXZ[0], &m_cutPosXZ[1], &m_cutYaw);
+		else if (strcmp(key, "cutphys")    == 0) sscanf_s(v, "%f %f %f %f", &m_cutTarget.physics.restitution, &m_cutTarget.physics.friction, &m_cutTarget.pushSpeed, &m_cutTarget.sepSpeed);
 	}
 	fclose(fp);
+}
+
+//--- 3D音の聞き手 = 今のカメラ。目の位置と視線の向きを毎フレーム Audio へ渡す
+//    (振り向くと鳴っている音の左右も回る。front と up の直交化は Audio::SetListener 側でやる)
+void SceneForge::UpdateListener()
+{
+	CameraBase* cam = GetObj<CameraBase>("Camera");
+	if (!cam) return;
+	const XMFLOAT3 eye = cam->GetPos(), look = cam->GetLook(), up = cam->GetUp();
+	Audio::SetListener(eye, XMFLOAT3(look.x - eye.x, look.y - eye.y, look.z - eye.z), up);
 }

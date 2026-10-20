@@ -24,6 +24,7 @@
 #include "Haptics.h"		// GameLogic: 手柄の震動(一発/持続を混ぜて送る)
 #include "DebugUI.h"		// F1 調整窓の表示状態(ToolUiOpen)
 #include "SunCycle.h"		// GameLogic: 太陽の時刻(小屋の周りを回る太陽)
+#include "SceneForge/CutTarget.h"	// 試し切りの藁人形(切断+落ちる断片)
 #include "Defines.h"		// 画質(内部解像度の倍率 RenderScale)
 #include <DirectXMath.h>
 #include <memory>
@@ -258,11 +259,27 @@ private:
 	static constexpr float BELLOWS_HEAT_K    = 0.60f;	// 風箱を踏んでいる時(1/秒)。0→燃えるまで約3秒
 	//--- ふいご(1回押す=1回踏む)。送った風が炉に溜まり、踏まなければ抜ける
 	float m_bellowsAir = 0.0f;								// 炉に溜まった風 0..1(1 = 踏み続けて一番熾った)
-	static constexpr float BELLOWS_PUMP            = 0.25f;	// 1回踏むと増える風(4回続けて踏めば満タン)
-	static constexpr float BELLOWS_AIR_DECAY       = 0.8f;	// 風が抜ける速さ(Damp率, 1/秒)。踏むのを止めると約1〜2秒で落ち着く
-	static constexpr float BELLOWS_PUMP_RUMBLE_SEC = 0.12f;	// 1回踏んだ時の手柄の震動の長さ(秒)
+	// 一押しの時間割は音(bellows_pump.wav)から測った値に揃える=耳で聞く節奏と、実際に風が入る/ふいごが動く節奏が同じになる。
+	//   音を差し替えたら、この3つを新しい音の「フーッ」の始まり/終わりに合わせ直す(他の値は全てここから決まる)。
+	static constexpr float BELLOWS_BLOW_START_SEC  = 0.2f;	// 踏んでから「フーッ」が始まるまで(秒)=板が下がり始めて風が出始める
+	static constexpr float BELLOWS_BLOW_END_SEC    = 1.8f;	// 「フーッ」が終わる(秒)=板が下がり切る。風はこの間だけ炉へ入る(2.1秒まで余韻)
+	static constexpr float BELLOWS_REFILL_SEC      = 0.4f;	// 下がり切ってから、板が戻って次に踏めるまで(秒)=空気を吸い込む間(音は余韻だけ)
+	static constexpr float BELLOWS_PUMP_INTERVAL   = BELLOWS_BLOW_END_SEC + BELLOWS_REFILL_SEC;	// 次の一押しができるまで(秒)。速い連打は無視=前の「フーッ」の上に次が重ならない
+	static constexpr float BELLOWS_PUMP            = 0.6f;	// 1回の踏み込み(一押し)で送る風。「フーッ」の間に少しずつ入る
+	static constexpr float BELLOWS_AIR_DECAY       = 0.5f;	// 風が抜ける速さ(Damp率, 1/秒)。最速の節奏で踏み続けると満タン近くを保つ(0.6 ÷ (1 − e^(−0.5×2.2)) ≒ 0.9)
+	static constexpr float BELLOWS_PUMP_RUMBLE_SEC = 0.35f;	// 1回踏んだ時の手柄の震動の長さ(秒)=踏み込みの重さ
 	static constexpr float BELLOWS_SOUND_MIN       = 0.02f;	// これ以下の風なら炉火の唸りを止める
 	static constexpr float BELLOWS_SOUND_VOLUME    = 0.5f;	// 風が満タンの時の唸りの大きさ(旧: 押している間 0.5)
+	//--- ふいごの動き(踏む毎に上の板が押し下がり、ゆっくり戻る=吸い込み)と「フッ」の音
+	float m_bellowsPumpAt = -1000.0f;				// 最後に踏んだ時刻(m_time)
+	float m_bellowsSquash = 0.0f;					// 今の押し下げ量 0..1(1 = 一番押し下げた)
+	// 板の動き = 「フーッ」の間ずっと押し下がり(風が出ている=潰れている)、その後 BELLOWS_REFILL_SEC で戻る。
+	//   Damp は 3/λ 秒で目標の 95% に届く(e^−3 ≒ 0.05)ので、λ を「その区間の長さ」から決める=音の長さを変えても動きが付いて来る
+	static constexpr float DAMP_SETTLE_RATE      = 3.0f;	// Damp が 95% まで進む「時間 × λ」
+	static constexpr float BELLOWS_PRESS_LAMBDA  = DAMP_SETTLE_RATE / (BELLOWS_BLOW_END_SEC - BELLOWS_BLOW_START_SEC);	// 押し下げる速さ(1/秒)
+	static constexpr float BELLOWS_REFILL_LAMBDA = DAMP_SETTLE_RATE / BELLOWS_REFILL_SEC;	// 戻る速さ(1/秒)
+	static constexpr float BELLOWS_SQUASH        = 0.22f;	// 一番押し下げた時に縦へ縮む割合(ふいごの高さに対する比)
+	static constexpr float BELLOWS_PUMP_VOLUME   = 0.8f;	// 「フッ」の大きさ
 	bool  m_overheatWarned = false;					// 過熱の独白を一度だけ出す(冷めたら再武装)
 
 	//--- 鋼が燃える(火花を噴く)演出。温度 >= ForgingSim::BURN_TEMP の間、刃の表面から火花を出す。
@@ -395,6 +412,8 @@ private:
 	float m_temperPoseW  = 0.0f;					// 焼き戻しの構え(火ばさみで持ち上げて起こす)の重み 0..1。工位で持っている間 1 へ、離れると 0 へなめらかに=置いた/取った瞬間に跳ばない
 	bool  m_temperStarted = false;					// 焼き戻しで刃を炉の上に置いた(取り出し=完了の判定はこの後だけ。水槽から運ぶ時は関係ない)
 	bool  Tempering() const;						// 今の工程が焼き戻しか(炉の工位の振る舞いを工程で分ける=加熱と衝突しない)
+	bool  TemperHolding() const;					// 焼き戻しで火钳で刃を炭の上に構えている(工位にいる間 + 出入りの過渡中)。火钳の描画と構えの重みが使う
+	bool  m_exitFromTemper = false;				// 構えたまま工位を出た → 出終わったら専用の拍子表(Q = 持ち上げ / E = 置いて火钳を腰へ)
 	float TemperAvg() const;						// 刃先の色の平均(取り出してよいかの判定)
 	float TemperCellScore(float t) const;			// 1セルの出来 0..1(麦わら〜茶 = 1 / 銀に近い = 脆い / 紫・青 = 柔らかい)
 	float TemperScore() const;						// 焼き戻しの出来 0..1 = 全セルの平均(揃っていないと下がる=ムラも評価)
@@ -581,6 +600,9 @@ private:
 	int   InteractPriority(const Interactable& it) const;	// 視線が複数に当たった時の優先度(鉄は工位の箱の中にあるので鉄を優先)
 	const char* PromptLabel(const Interactable& it) const;	// 「E」の下に出す一言(何が起きるか)
 	bool  PropWorldBox(Prop& p, DirectX::XMFLOAT3& mn, DirectX::XMFLOAT3& mx);	// プロップのワールドAABB
+	DirectX::XMFLOAT3 PropCenter(const char* key, const DirectX::XMFLOAT3& fallback);	// プロップのワールドAABBの中心(3D音の声源)。無ければ fallback
+	DirectX::XMFLOAT3 CoalPos() const { return DirectX::XMFLOAT3(m_coalPos[0], m_coalPos[1], m_coalPos[2]); }	// 炉の火床(炉火の唸りの声源)
+	void  UpdateListener();	// 3D音の聞き手=今のカメラ(ApplyViewCamera の後に毎フレーム)
 	bool  InteractBox(const Interactable& it, DirectX::XMFLOAT3& mn, DirectX::XMFLOAT3& mx);	// 互動物件のワールドAABB(扉は今の角度で)
 	void  UpdateInteract(float tick);			// 2判定→m_focus を決める(走動中のみ)
 	void  DoInteract(const Interactable& it);	// E を押された物件の行為を実行
@@ -714,7 +736,7 @@ private:
 	enum class SeqLook  { Iron, Home };				// カメラの注視先: 鉄の置き場所 / 再生開始時に見ていた方向
 	enum class SeqTongs { Hip, Iron, Held };		// 火钳の行き先: 腰に下げた所 / その拍の鉄を挟む所 / 手元(ビューモデルの位置)
 	enum class SeqIron  { Rest, Approach, Held };	// 鉄の行き先: 目標工位に置いた所 / その手前の中継点(ウェイポイント) / 手に持った所
-	enum class SeqEnd   { GripIron, PutIron };		// 再生し終えた時の行為: 手に持つ / 目標工位に置いてその工位へ入る
+	enum class SeqEnd   { GripIron, PutIron, None };	// 再生し終えた時の行為: 手に持つ / 目標工位に置いてその工位へ入る / 何もしない(火钳を腰へ戻すだけ)
 	// 拍の補間曲線(スローイン・スローアウト / slow in & slow out)。動作ごとに速さの付き方を変える。
 	enum class SeqEase  { InOut, Out };				// InOut = 出だしも止まりもゆっくり(smoothstep) / Out = 速く出て、ゆっくり着く(置く・挟む)
 	struct SeqBeat
@@ -733,13 +755,19 @@ private:
 		float          approachBack;	// 中継点(SeqIron::Approach) = 置き場所から玩家側へ水平に戻した距離(m)
 		float          approachUp;		// 〃 置き場所より上へ持ち上げた高さ(m)。金床=真上から下ろす(高い)
 		bool           approachAlongIron;	// true = 中継点を「玩家側へ水平」でなく「鉄の長軸に沿って手元側」へ戻す(炉: 斜めの鉄をそのまま差し込む)
+		bool           startsOnIron = false;	// true = 最初から火钳が鉄を挟んでいる(焼き戻しで炭の上に構えた刃をそのまま持ち上げる/放す。腰から抜かない)
 	};
 	static const SeqBeat  GRIP_IRON_BEATS[];		// その拍の表(Sequence.cpp)
 	static const Sequence SEQ_GRIP_IRON;			// 火钳を抜きつつ鉄を見る → 挟む → 持ち上げる
 	static const SeqBeat  PUT_IRON_BEATS[];			// 置く拍の表(炉/金床/砥石で共通。工位ごとの違いは中継点だけ)
 	static const SeqBeat  HOLD_IRON_BEATS[];		// 水槽: 置かずに火钳で挟んだまま水面の上に構える(淬火は手で持ったまま行う)
 	static const Sequence SEQ_PUT_HEARTH, SEQ_PUT_ANVIL, SEQ_PUT_GRIND, SEQ_PUT_TROUGH;	// 炉/金床/砥石/水槽へ置く
-	static const Sequence& PutIronSequence(Station s);	// 工位 → その工位へ置く拍子表
+	// 焼き戻し(2026-10-19 ユーザー: 加熱の出入りを流用すると、火钳が消えて腰から出直して不自然) = 火钳を離さない専用の出入り
+	static const SeqBeat  TEMPER_LIFT_BEATS[], TEMPER_RELEASE_BEATS[];
+	static const Sequence SEQ_HOLD_HEARTH;		// 炉の上へ挟んだまま運んで構える(置かない。水槽と同じ表)
+	static const Sequence SEQ_TEMPER_LIFT;		// 構えた刃を挟んだまま持ち上げて手元へ(Q)
+	static const Sequence SEQ_TEMPER_RELEASE;	// 刃を炉に置き、火钳を腰へ戻す(E で離れる)
+	const Sequence& PutIronSequence(Station s) const;	// 工位 → その工位へ置く拍子表(焼き戻しの炉は離さずに構える)
 	bool  m_heldFlip = false;						// 手に持った鉄の前後を入れ替える(掴んだ端=手元側。掴んだ時に決める)
 	bool  m_restFlip = false;						// 工位に置いた鉄を水平に半回転(掴んだ端=玩家側。置く時に決める。火钳を離さずに置ける向き)
 	struct TongsPose { DirectX::XMFLOAT3 grip, approach, barDir; };	// TongsWorld の3引数(挟む点/柄→口/輪を通る向き)
@@ -779,6 +807,13 @@ private:
 	DirectX::XMFLOAT3 SeqLookTarget(SeqLook l);		// 注視先のワールド点
 	TongsPose SeqTongsPose(SeqTongs t, SeqIron iron);	// 火钳の行き先の姿勢(Iron = 鉄の行き先 iron の所を挟む)
 	TongsPose TongsOnIron(DirectX::FXMMATRIX ironWorld);	// その姿勢の鉄を、掴んだ端から m_gripAlong の所で挟む火钳
+	TongsPose TemperTongsPose();						// 焼き戻しで炭の上に構えている火钳(柄は炉口の外・上へ)。描画と拍子表の始まりで共通
+	void  DrawTongsModel(Model* tongs, DirectX::FXMMATRIX world, const DirectX::XMFLOAT3& jaw);	// 火钳を描く(口が熱ければ口の周りだけ暗い赤に光る)
+	float m_tongsHeat = 0.0f;						// 火钳の口の熱さ 0..1。焼き戻しで口が炭の真上に来ると上がり、離れると冷める(一時的な色の変化)
+	static constexpr float TONGS_HEAT_RATE   = 0.35f;	// 口が炭の中心の真上にある時の熱くなる速さ(1/秒)。約3秒で暗い赤
+	static constexpr float TONGS_HEAT_SPREAD = 0.15f;	// 炭の中心からこの距離(m, ガウスのσ)ほど離れると熱くなりにくい
+	static constexpr float TONGS_COOL_LAMBDA = 0.5f;	// 冷める速さ(Damp率, 1/秒)。数秒かけて元の色へ
+	static constexpr float TONGS_HOT_RADIUS  = 0.12f;	// 光るのは口からこの距離(m)まで(柄は熱くならない)
 	DirectX::XMMATRIX SeqIronWorld(SeqIron i);		// 鉄の行き先のワールド行列(置いた所/中継点/手に持った)
 	void  PutIronAt(Station s);						// 手の鉄を工位に置く
 	void  SayWhereIronIs();							// 鉄の在り処を独白で知らせる(鉄の無い工位で E)
@@ -1571,6 +1606,28 @@ private:
 	static constexpr float GRADE_S = 0.90f;	// この出来栄え以上で S
 	static constexpr float GRADE_A = 0.75f;	// 〃 A
 	static constexpr float GRADE_B = 0.55f;	// 〃 B (未満は C)
+
+	//==================== 試し切り(TestCut.cpp)。2026-10-20 段階1 ====================
+	//   仮の箱の藁人形 + 平面での切断(断面を塞ぐ) + 落ちる断片(剛体)。まだ工程には入れていない:
+	//   走動中に藁人形を見て「使う」(左クリック/RT)で斬れる=切断そのものの手応えを先に確かめる段階。
+	//   「どう斬るか」(入力・斬撃の向き)はここ、「何がどう切れるか」(形・切断・物理)は CutTarget に分けた
+	//   =後で自由に動ける動作モードへ替えても CutTarget はそのまま使える(デカップリング)。
+	CutTarget m_cutTarget;
+	static const CutTarget::PartDef CUT_PARTS[];	// 藁人形の部品の表(データ。TestCut.cpp)
+	static const int NUM_CUT_PARTS;
+	float m_cutPosXZ[2] = { 0.0f, -8.0f };	// 藁人形の柱の根元(ワールド XZ。高さは歩く床)。F1「Test cut」の「目の前に置く」で決め forge_tuning.txt へ
+	float m_cutYaw      = 0.0f;				// 藁人形の向き(rad)
+	float m_cutReach    = 2.4f;				// この距離(m)より遠い藁人形には刃が届かない(空振り)
+	float m_cutSlashTilt = 0.55f;			// 斜め斬りの傾き(rad。0 = 水平に薙ぐ / π/2 = 真上から)
+	bool  m_cutFromLeft  = true;			// 連撃: 次は左上から斬り下ろす(斬る度に逆の斜めへ交互)
+	bool  m_showCutDebug = false;			// F1: 断片が乗っている切り株の断面(橙の円)
+	static constexpr float CUT_STEP_OVER = 0.15f;	// 落ちた断片の上端がこれ(m, 床から)より低ければ歩く時にぶつからない(跨いで通る)
+	bool  m_cutNeedsBuild = true;			// 次の更新で藁人形を作り直す(ResetTestCut が立てる。GPU の作成は更新の中だけで行う)
+	void ResetTestCut();					// 藁人形を切る前の姿に戻して置き直す(ResetRunState と F1 から)
+	void UpdateTestCut(float tick);			// 斬る入力(走動中)+ 落ちる断片の物理
+	void SlashTestCut();					// 1回の斬撃: 視線の当たる所を通る斜めの平面で切る
+	void DrawTestCut();
+	void TestCutControls();					// F1「Test cut」
 };
 
 #endif // __SCENE_FORGE_H__

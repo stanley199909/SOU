@@ -60,6 +60,15 @@ bool SceneForge::PropWorldBox(Prop& p, XMFLOAT3& mn, XMFLOAT3& mx)
 	return TransformAABB(p.aabbMin, p.aabbMax, PropWorld(p), mn, mx);
 }
 
+//--- プロップのワールドAABBの中心(3D音の声源など「その道具の位置」が要る時)。キーが無ければ fallback
+XMFLOAT3 SceneForge::PropCenter(const char* key, const XMFLOAT3& fallback)
+{
+	Prop* p = GetProp(key);
+	XMFLOAT3 mn, mx;
+	if (!p || !PropWorldBox(*p, mn, mx)) return fallback;
+	return XMFLOAT3((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f, (mn.z + mx.z) * 0.5f);
+}
+
 //--- 互動物件のワールドAABB。普通はプロップの箱。扉は家の部品(プロップではない)なので、
 //    扉モデルの箱を「今の角度の扉の行列」で運ぶ=開いた扉は開いた位置で狙える。
 bool SceneForge::InteractBox(const Interactable& it, XMFLOAT3& mn, XMFLOAT3& mx)

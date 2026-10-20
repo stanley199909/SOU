@@ -19,6 +19,8 @@ cbuffer PropParam:register(b0){
     float4 material;                        // x triplanar (forge stone), y prop scale, z roughness, w metallic
     float4x4 worldToLocal;
     float4 maps;                            // x has normal map, y has ORM map, z normal map is DirectX convention (green down), w highlight strength 0..1 (next station)
+    float4 hotSpot;                         // xyz a hot point on the object (world), w its radius (m). The tongs' jaws held over the coals
+    float4 hotGlow;                         // x how hot it is 0..1 (0 = off)
 };
 #include "SunShadow.hlsli"
 #include "Lighting.hlsli"
@@ -32,6 +34,9 @@ static const float SOOT_DARKENING=.65;       // darkening right at the fire (0..
 static const float3 HIGHLIGHT_COL=float3(1.0,.62,.25);   // warm forge-light orange (matches the UI marker)
 static const float HIGHLIGHT_BASE=.25;       // share of the glow on faces that look at the camera (rest goes to the rim)
 static const float HIGHLIGHT_RIM_POW=2;      // how tight the rim is (higher = thinner)
+static const float3 HOT_GLOW_COL=float3(1.0,.28,.06);   // dull red of steel just hot enough to glow faintly
+static const float HOT_GLOW_GAIN=3.0;        // brightness of the hot spot at full heat (HDR). 1.5 was lost under the fire light on the jaws
+static const float HOT_FALLOFF_POW=2;        // higher = the glow stays closer to the jaws
 
 // Sample the texture three times (projected along X, Y, Z) and blend by how much the
 // surface faces each axis. No UVs needed, so seams in the mesh's UV layout disappear.
@@ -86,5 +91,9 @@ float4 main(PS_IN p):SV_TARGET {
     col+=FireLight(base,rough,metal,n,v,p.worldPos,fire.xyz,fire.w);
     float rim=pow(1-saturate(dot(n,v)),HIGHLIGHT_RIM_POW);
     col+=HIGHLIGHT_COL*maps.w*(HIGHLIGHT_BASE+(1-HIGHLIGHT_BASE)*rim);
+    // Hot spot (tongs' jaws held over the coals while tempering): a dull red glow that fades with distance from the jaws.
+    // Temporary: the CPU cools it down again once the tongs are away from the fire.
+    float hot=hotGlow.x*pow(saturate(1-length(p.worldPos-hotSpot.xyz)/max(hotSpot.w,EPSILON)),HOT_FALLOFF_POW);
+    col+=HOT_GLOW_COL*HOT_GLOW_GAIN*hot;
     return float4(col,tex.a);
 }

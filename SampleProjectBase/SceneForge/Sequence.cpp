@@ -65,11 +65,28 @@ const SceneForge::SeqBeat SceneForge::HOLD_IRON_BEATS[] = {
 };
 const SceneForge::Sequence SceneForge::SEQ_PUT_TROUGH = { HOLD_IRON_BEATS, _countof(HOLD_IRON_BEATS), SceneForge::SeqEnd::PutIron, 0.10f, 0.30f, false };
 
-const SceneForge::Sequence& SceneForge::PutIronSequence(Station s)
+// 焼き戻し: 炉の上で火钳で持ったまま行う → 加熱の様に置いて手を離す/腰から抜き直すのは不自然(2026-10-19 F5)。
+//   入る = 水槽と同じ「挟んだまま運んで構える」表(炉の中継点で斜めに差し込む)。構えた後は TemperStep の構え(持ち上げ・起こし)へなめらかに移る。
+const SceneForge::Sequence SceneForge::SEQ_HOLD_HEARTH = { HOLD_IRON_BEATS, _countof(HOLD_IRON_BEATS), SceneForge::SeqEnd::PutIron, 0.50f, 0.00f, true };
+//   取る(Q) = 構えた刃を挟んだまま、そのまま手元へ持ち上げる(最初から挟んでいる=腰から抜かない)。
+const SceneForge::SeqBeat SceneForge::TEMPER_LIFT_BEATS[] = {
+	//  注視先       火钳            鉄            秒     手の曲線
+	{ SeqLook::Home, SeqTongs::Held, SeqIron::Held, 1.0f, SeqEase::InOut },	// ① 挟んだまま持ち上げ、元の方向へ向き直る
+};
+const SceneForge::Sequence SceneForge::SEQ_TEMPER_LIFT = { TEMPER_LIFT_BEATS, _countof(TEMPER_LIFT_BEATS), SceneForge::SeqEnd::GripIron, 0.0f, 0.0f, false, true };
+//   離れる(E) = 刃を炉に置いたまま火钳を開き、腰へ戻す(最初から挟んでいる)。
+const SceneForge::SeqBeat SceneForge::TEMPER_RELEASE_BEATS[] = {
+	//  注視先       火钳            鉄            秒     手の曲線
+	{ SeqLook::Iron, SeqTongs::Iron, SeqIron::Rest, 0.3f, SeqEase::InOut },	// ① 火钳を開く(止めの間)
+	{ SeqLook::Home, SeqTongs::Hip,  SeqIron::Rest, 0.8f, SeqEase::InOut },	// ② 火钳を腰へ戻す
+};
+const SceneForge::Sequence SceneForge::SEQ_TEMPER_RELEASE = { TEMPER_RELEASE_BEATS, _countof(TEMPER_RELEASE_BEATS), SceneForge::SeqEnd::None, 0.0f, 0.0f, false, true };
+
+const SceneForge::Sequence& SceneForge::PutIronSequence(Station s) const
 {
 	switch (s)
 	{
-	case Station::Hearth:     return SEQ_PUT_HEARTH;
+	case Station::Hearth:     return Tempering() ? SEQ_HOLD_HEARTH : SEQ_PUT_HEARTH;
 	case Station::Grindstone: return SEQ_PUT_GRIND;
 	case Station::Trough:     return SEQ_PUT_TROUGH;
 	default:                  return SEQ_PUT_ANVIL;
@@ -144,6 +161,8 @@ void SceneForge::RunSeqEnd(SeqEnd onEnd, Station target)
 		PutIronAt(target);			// 置いた所 = 最後の拍の鉄の姿勢と同じ計算=継ぎ目無し
 		BeginEnterStation(target);	// 今の視線(置き場所を見ている)から工位の視点へ過渡
 		break;
+	case SeqEnd::None:
+		break;						// 火钳を腰へ戻しただけ(焼き戻しで炉に置いて離れた)
 	}
 }
 
@@ -174,7 +193,7 @@ void SceneForge::PlaySequence(const Sequence& seq, Station target)
 	// 手に持った時の鉄の向き: 火钳が掴む端(玩家に近い端)が手元側になる様に、必要なら前後を入れ替える
 	// (入れ替えないと、持ち上げる途中で鉄が半回転してしまう)。置いてある鉄の長軸の両端のうち近い方を調べる。
 	// 既に手に持っている(置く時)は掴んだ端を変えない=置いても同じ所を挟んだまま。
-	if (!m_carrying)
+	if (!m_carrying && !seq.startsOnIron)	// 炉の上で挟んで構えていた刃は、挟んでいる端のまま(持ち替えない)
 	{
 		m_heldFlip = false;
 		XMVECTOR gripped, other; IronEnds(SeqIronWorld(SeqIron::Rest), gripped, other);
@@ -184,10 +203,15 @@ void SceneForge::PlaySequence(const Sequence& seq, Station target)
 	m_seq      = &seq;
 	m_seqBeat  = 0;
 	m_seqTimer = 0.0f;
-	m_seqPrevGrip = m_carrying;			// 手に持っていれば最初から火钳は鉄を挟んでいる
+	// 手に持っていれば最初から火钳は鉄を挟んでいる(=鉄に付いたまま動く)。
+	//   炉の上で構えていた(startsOnIron)時は、構えの火钳(柄が炉口の外・上)から補間して行き先の姿勢へ移す
+	//   (鉄に付ける計算に切り替えると、柄の向きが1フレームで変わって跳ぶ)。口の位置は始めも終わりも鉄の端なので外れない。
+	m_seqPrevGrip = m_carrying;
 	m_tongsInHand = true;				// 腰の火钳は描かない(拍子表の火钳を描く)
-	// 火钳の最初の姿勢: 手に持っている=手元で鉄を挟んでいる / そうでない=腰に下がっている
-	m_seqTongs = m_carrying ? SeqTongsPose(SeqTongs::Held, SeqIron::Held) : SeqTongsPose(SeqTongs::Hip, SeqIron::Rest);
+	// 火钳の最初の姿勢: 手に持っている=手元で鉄を挟んでいる / 構えていた=構えの火钳 / そうでない=腰に下がっている
+	if (m_carrying)             m_seqTongs = SeqTongsPose(SeqTongs::Held, SeqIron::Held);
+	else if (seq.startsOnIron)  m_seqTongs = TemperTongsPose();
+	else                        m_seqTongs = SeqTongsPose(SeqTongs::Hip, SeqIron::Rest);
 	BeginSeqBeat();
 }
 

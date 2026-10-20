@@ -1,5 +1,6 @@
 ﻿#include "Audio.h"
 #include <xaudio2.h>
+#include <x3daudio.h>
 #include <vector>
 #include <cmath>
 #include <cstdio>
@@ -16,12 +17,31 @@ namespace
 		std::vector<BYTE>          data;
 		std::vector<IXAudio2SourceVoice*> voices;
 		int                        next = 0;
+		// 3D定位: ボイスごとに「3Dで鳴っているか」と声源の位置。聞き手が動く/向きを変える度に左右の比率を計算し直す
+		std::vector<bool>              is3D;
+		std::vector<DirectX::XMFLOAT3> pos;
+		std::vector<float>             flatMatrix;	// 2D(画面中央)で鳴らす時の出力行列=作った時の既定値。3Dで使った後のボイスを2Dへ戻す
 	};
 
 	IXAudio2*               g_xa     = nullptr;
 	IXAudio2MasteringVoice* g_master = nullptr;
 	Sound                   g_sound[Audio::SE_MAX];
 	const int               VOICES_PER_SOUND = 6;
+
+	//--- 3D定位(X3DAudio)
+	X3DAUDIO_HANDLE   g_x3d       = {};
+	bool              g_x3dOk     = false;
+	UINT32            g_outCh     = 2;	// 出力(スピーカー/ヘッドホン)のチャンネル数。Init で実機から読む
+	X3DAUDIO_LISTENER g_listener  = {};
+	const UINT32      MAX_SRC_CH  = 2;	// 素材は mono/stereo のみ
+	const UINT32      MAX_OUT_CH  = 8;	// 7.1 まで
+	// 距離の減衰: X3DAudio の既定曲線は「距離 / CurveDistanceScaler」の逆数(1/d)。この距離までは等倍、2倍の距離で半分
+	const float AUDIO_3D_REF_DIST     = 1.5f;	// (m) 工房の広さ(数m)で、隣の工位の音が少し小さく聞こえる程度
+	// 声源のすぐ近くでは左右に振り切らない(頭のすぐ横の音が片耳だけになるのを防ぐ)。この半径の中は方向が中央へ寄る
+	const float AUDIO_3D_INNER_RADIUS = 0.6f;	// (m)
+	const float AUDIO_3D_INNER_ANGLE  = X3DAUDIO_PI / 4.0f;	// 内側の範囲が広がる角度(X3DAudio の InnerRadiusAngle)
+	// 左右の振り幅: 1=X3DAudio の計算そのまま(横の音はほぼ片耳)、0=2D と同じ。ヘッドホンで真横が極端すぎない様に少し戻す
+	const float AUDIO_3D_PAN_WIDTH    = 0.85f;
 
 	//--- 44100Hz/mono/16bit のPCMフォーマットを設定
 	void SetPCM(WAVEFORMATEX& f)
@@ -411,6 +431,26 @@ namespace
 			}
 			break;
 		}
+		case Audio::SE_BELLOWS_PUMP:
+		{
+			// 仮の音(ユーザーが素材を選ぶまで): ふいごを1回踏んだ「フッ」= 風が一気に押し出される息の音。
+			//   低めに濾した雑音を、速く立ち上げてすぐ抜く。炉火の唸り(SE_FORGE_LOOP)の上に1回ずつ乗る=段落のある音
+			const float LENGTH = 0.45f;	// 長さ(秒)
+			const float LP     = 0.08f;	// 1次ローパスの係数(小=こもった風の音)
+			const float ATTACK = 60.0f;	// 立ち上がり(大=速い。踏み込んだ瞬間)
+			const float DECAY  = 7.0f;	// 抜け(大=短い)
+			const float LEVEL  = 0.9f;
+			const int n = (int)(sr * LENGTH);
+			w.resize(n);
+			float lp = 0.0f;
+			for (int i = 0; i < n; ++i)
+			{
+				const float t = (float)i / sr;
+				lp += LP * (noise() - lp);
+				w[i] = lp * (1.0f - expf(-t * ATTACK)) * expf(-t * DECAY) * LEVEL;
+			}
+			break;
+		}
 		case Audio::SE_SEG_DONE:
 		{
 			// 仮の合図(ユーザーが素材を選ぶまで): 研ぎの区域が仕上がった「チン」。短く高い金属の1音。
@@ -473,6 +513,59 @@ namespace
 			if (SUCCEEDED(g_xa->CreateSourceVoice(&v, &s.fmt)))
 				s.voices.push_back(v);
 		}
+		s.is3D.assign(s.voices.size(), false);
+		s.pos.assign(s.voices.size(), DirectX::XMFLOAT3(0, 0, 0));
+		// 既定の出力行列(2D)を覚えておく。全ボイス同じフォーマットなので 1 つ目から読めば足りる
+		const UINT32 srcCh = s.fmt.nChannels;
+		if (!s.voices.empty() && srcCh <= MAX_SRC_CH)
+		{
+			s.flatMatrix.assign(srcCh * g_outCh, 0.0f);
+			s.voices[0]->GetOutputMatrix(g_master, srcCh, g_outCh, s.flatMatrix.data());
+		}
+	}
+
+	//--- 3D定位: ボイス i の左右/距離の比率を、今の聞き手と声源の位置から計算して出力行列に入れる
+	void Apply3D(Sound& s, size_t i)
+	{
+		const UINT32 srcCh = s.fmt.nChannels;
+		if (!g_x3dOk || srcCh > MAX_SRC_CH || g_outCh > MAX_OUT_CH || s.flatMatrix.empty()) return;
+
+		float azimuths[MAX_SRC_CH] = {};	// stereo 素材も声源の1点から出す(左右の広がりは持たせない)
+		X3DAUDIO_EMITTER e = {};
+		e.Position            = { s.pos[i].x, s.pos[i].y, s.pos[i].z };
+		e.OrientFront         = { 0.0f, 0.0f, 1.0f };	// 声源の向き(指向性を使わないので任意。X3DAudio は必須なので与える)
+		e.OrientTop           = { 0.0f, 1.0f, 0.0f };
+		e.ChannelCount        = srcCh;
+		e.pChannelAzimuths    = azimuths;
+		e.CurveDistanceScaler = AUDIO_3D_REF_DIST;
+		e.DopplerScaler       = 1.0f;
+		e.InnerRadius         = AUDIO_3D_INNER_RADIUS;
+		e.InnerRadiusAngle    = AUDIO_3D_INNER_ANGLE;
+
+		float matrix[MAX_SRC_CH * MAX_OUT_CH] = {};
+		X3DAUDIO_DSP_SETTINGS dsp = {};
+		dsp.SrcChannelCount     = srcCh;
+		dsp.DstChannelCount     = g_outCh;
+		dsp.pMatrixCoefficients = matrix;
+		X3DAudioCalculate(g_x3d, &g_listener, &e, X3DAUDIO_CALCULATE_MATRIX, &dsp);
+
+		// 振り幅を少し中央へ戻す。距離の減衰は残す(2D 行列にも同じ音量の比を掛ける)
+		const UINT32 n = srcCh * g_outCh;
+		float sum3D = 0.0f, sumFlat = 0.0f;
+		for (UINT32 k = 0; k < n; ++k) { sum3D += matrix[k]; sumFlat += s.flatMatrix[k]; }
+		const float gain = (sumFlat > 0.0f) ? sum3D / sumFlat : 0.0f;	// 距離で小さくなった分
+		for (UINT32 k = 0; k < n; ++k)
+			matrix[k] = matrix[k] * AUDIO_3D_PAN_WIDTH + s.flatMatrix[k] * gain * (1.0f - AUDIO_3D_PAN_WIDTH);
+		s.voices[i]->SetOutputMatrix(g_master, srcCh, g_outCh, matrix);
+	}
+
+	//--- 3Dで使ったボイスを2D(画面中央)へ戻す
+	void Make2D(Sound& s, size_t i)
+	{
+		if (!s.is3D[i]) return;
+		s.is3D[i] = false;
+		if (!s.flatMatrix.empty())
+			s.voices[i]->SetOutputMatrix(g_master, s.fmt.nChannels, g_outCh, s.flatMatrix.data());
 	}
 }
 
@@ -491,6 +584,18 @@ namespace Audio
 	{
 		if (FAILED(XAudio2Create(&g_xa, 0, XAUDIO2_DEFAULT_PROCESSOR))) { g_xa = nullptr; return; }
 		if (FAILED(g_xa->CreateMasteringVoice(&g_master))) { g_xa->Release(); g_xa = nullptr; return; }
+
+		// 3D定位の準備: 出力のスピーカー配置(stereo/5.1…)を実機から読み、X3DAudio に渡す
+		{
+			DWORD mask = 0;
+			XAUDIO2_VOICE_DETAILS md = {};
+			g_master->GetVoiceDetails(&md);
+			g_outCh = md.InputChannels;
+			g_x3dOk = SUCCEEDED(g_master->GetChannelMask(&mask))
+			       && SUCCEEDED(X3DAudioInitialize(mask, X3DAUDIO_SPEED_OF_SOUND, g_x3d));
+			g_listener.OrientFront = { 0.0f, 0.0f, 1.0f };
+			g_listener.OrientTop   = { 0.0f, 1.0f, 0.0f };
+		}
 
 		static const char* files[SE_MAX] = {
 			"Assets/Sound/SE/face_done.wav",	// SE_FACE_DONE(無ければ合成音)
@@ -512,6 +617,7 @@ namespace Audio
 			"Assets/Sound/SE/learned.wav",		// SE_LEARNED(操作を覚えた確認音。無ければ合成音)
 			"Assets/Sound/SE/next_step.wav",	// SE_NEXT_STEP(工程が進んだ合図。無ければ合成音)
 			"Assets/Sound/SE/seg_done.wav",	// SE_SEG_DONE(研ぎの区域が仕上がった。無ければ合成音)
+			"Assets/Sound/SE/bellows_pump.wav",	// SE_BELLOWS_PUMP(ふいごを1回踏んだ。無ければ合成音)
 			"Assets/Sound/BGM/title_bgm.wav",	// BGM_TITLE(工場環境音。無ければ無音)
 			"Assets/Sound/BGM/play_bgm.wav",	// BGM_PLAY(medieval。無ければ無音)
 			"Assets/Sound/BGM/result_bgm.wav",	// BGM_RESULT(無ければ無音)
@@ -539,14 +645,18 @@ namespace Audio
 		if (g_xa)     { g_xa->Release(); g_xa = nullptr; }
 	}
 
-	void Play(SoundId id, float volume, float pitch)
+	//--- 一回再生の本体。pos があればその位置から(3D)、無ければ画面中央(2D)
+	static void PlayVoice(SoundId id, float volume, float pitch, const DirectX::XMFLOAT3* pos)
 	{
 		if (!g_xa || id < 0 || id >= SE_MAX) return;
 		Sound& s = g_sound[id];
 		if (s.voices.empty()) return;
 
-		IXAudio2SourceVoice* v = s.voices[s.next];
+		const size_t i = (size_t)s.next;
+		IXAudio2SourceVoice* v = s.voices[i];
 		s.next = (s.next + 1) % (int)s.voices.size();
+		if (pos) { s.is3D[i] = true; s.pos[i] = *pos; Apply3D(s, i); }	// 鳴り始める前に左右の比率を決める(最初の一瞬が中央で鳴らない様に)
+		else     Make2D(s, i);
 
 		v->Stop(0);
 		v->FlushSourceBuffers();
@@ -561,6 +671,42 @@ namespace Audio
 		v->Start(0);
 	}
 
+	void Play(SoundId id, float volume, float pitch) { PlayVoice(id, volume, pitch, nullptr); }
+	void PlayAt(SoundId id, const DirectX::XMFLOAT3& pos, float volume, float pitch) { PlayVoice(id, volume, pitch, &pos); }
+
+	//--- 聞き手(カメラ)を更新し、3Dで鳴っている全ボイスの左右の比率を計算し直す(振り向くと音の方向も回る)
+	void SetListener(const DirectX::XMFLOAT3& pos, const DirectX::XMFLOAT3& front, const DirectX::XMFLOAT3& up)
+	{
+		if (!g_xa || !g_x3dOk) return;
+		// X3DAudio は front と top が長さ1で直交している事を求める。カメラの up は世界の上(0,1,0)のままで、
+		// 見下ろすと front と直交しないので、グラム・シュミットの直交化で top を front に直交させる
+		using namespace DirectX;
+		const XMVECTOR f = XMVector3Normalize(XMLoadFloat3(&front));
+		XMVECTOR t = XMLoadFloat3(&up);
+		t = XMVector3Normalize(XMVectorSubtract(t, XMVectorMultiply(XMVector3Dot(t, f), f)));
+		XMFLOAT3 ff, tt; XMStoreFloat3(&ff, f); XMStoreFloat3(&tt, t);
+		g_listener.Position    = { pos.x, pos.y, pos.z };
+		g_listener.OrientFront = { ff.x, ff.y, ff.z };
+		g_listener.OrientTop   = { tt.x, tt.y, tt.z };
+		for (int id = 0; id < SE_MAX; ++id)
+		{
+			Sound& s = g_sound[id];
+			for (size_t i = 0; i < s.voices.size(); ++i)
+				if (s.is3D[i]) Apply3D(s, i);
+		}
+	}
+
+	//--- 鳴っているループ(voices[0])を3Dにする。PlayLoop は2Dで始めるので、その後に呼ぶ
+	void SetLoopPos(SoundId id, const DirectX::XMFLOAT3& pos)
+	{
+		if (!g_xa || id < 0 || id >= SE_MAX) return;
+		Sound& s = g_sound[id];
+		if (s.voices.empty()) return;
+		s.is3D[0] = true;
+		s.pos[0]  = pos;
+		Apply3D(s, 0);
+	}
+
 	//--- 無限ループ再生(BGM/タイトル)。専用に voices[0] を使う(Playのラウンドロビンとは別)
 	void PlayLoop(SoundId id, float volume)
 	{
@@ -569,6 +715,7 @@ namespace Audio
 		if (s.voices.empty() || s.data.empty()) return;
 
 		IXAudio2SourceVoice* v = s.voices[0];
+		Make2D(s, 0);	// 3D にしたい時は呼び出し側がこの後 SetLoopPos を呼ぶ
 		v->Stop(0);
 		v->FlushSourceBuffers();
 

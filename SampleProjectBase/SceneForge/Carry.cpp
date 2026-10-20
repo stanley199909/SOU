@@ -15,6 +15,8 @@
 #include "imgui.h"
 #include "Lerp.h"
 #include "DirectX.h"
+#include "LitRender.h"		// 火钳の口が熱い時の描画(hotSpot)
+#include "PropMaterials.h"
 #include <cmath>
 
 using namespace DirectX;
@@ -116,7 +118,7 @@ void SceneForge::DrawViewmodel()
 		XMVECTOR base = eye + right * m_tongsBase[0] + up * m_tongsBase[1] + fwd * m_tongsBase[2] + ViewmodelBob(right, up);
 		const XMFLOAT3 grip = HeldGrip();
 		XMFLOAT3 dir; XMStoreFloat3(&dir, XMLoadFloat3(&grip) - base);
-		DrawModelWorld(tongs, TongsWorld(dir, m_heldDir, grip), "StPliers");	// 鉄(m_heldDir)が口の輪を通る
+		DrawTongsModel(tongs, TongsWorld(dir, m_heldDir, grip), grip);	// 鉄(m_heldDir)が口の輪を通る
 	}
 	ctx->RSSetViewports(1, &old);	// 深度範囲を元に戻す
 }
@@ -353,6 +355,25 @@ void SceneForge::SayWhereIronIs()
 	Say(line, IM_COL32(255, 200, 90, 255));
 }
 
+//--- 火钳を描く。口(jaw)が熱い間(m_tongsHeat)は、口の周りだけ暗い赤に光る(PS_StageProp の hotSpot)。柄は熱くならない。
+void SceneForge::DrawTongsModel(Model* tongs, FXMMATRIX world, const XMFLOAT3& jaw)
+{
+	LitRender::Draw(tongs, world, GetObj<CameraBase>("Camera"), PropMaterials::Find("StPliers"), 0.0f,
+	                XMFLOAT4(jaw.x, jaw.y, jaw.z, TONGS_HOT_RADIUS), m_tongsHeat);
+}
+
+//--- 焼き戻しで炭の上に構えている時の火钳: 刃の手元の端を挟む(現実の鍛冶も刃を火ばさみで持って火の上を動かす)。
+//    柄は口から炉口の外(カメラ側)・上へ出す=炭床や炉の縁を突き抜けない(水槽と同じ考え方)。
+//    描画(DrawCarry)と、構えから出る拍子表の最初の姿勢(PlaySequence)が同じ物を使う=出る瞬間に火钳が跳ばない。
+SceneForge::TongsPose SceneForge::TemperTongsPose()
+{
+	TongsPose t = TongsOnIron(WeaponWorld());
+	const XMFLOAT3 into = StationInto();
+	const XMFLOAT3 handle(t.grip.x - into.x * TEMPER_TONGS_OUT, t.grip.y + TEMPER_TONGS_RISE, t.grip.z - into.z * TEMPER_TONGS_OUT);
+	XMStoreFloat3(&t.approach, XMVector3Normalize(XMLoadFloat3(&t.grip) - XMLoadFloat3(&handle)));	// 柄 → 口
+	return t;
+}
+
 //--- 火钳を描く。運んでいる時=手(鉄の手前の端を咥える) / そうでない時=左腰(口を下に)。
 //    工位では金床だけ腰の火钳を出す(翻面で腰から抜く運鏡が見える)。翻面で手に取っている間は描かない。
 void SceneForge::DrawCarry()
@@ -363,7 +384,7 @@ void SceneForge::DrawCarry()
 
 	if (SequencePlaying())	// 拍子表の再生中: 補間中の火钳の姿勢で描く(Sequence.cpp)
 	{
-		DrawModelWorld(tongs, TongsWorld(m_seqTongs.approach, m_seqTongs.barDir, m_seqTongs.grip), "StPliers");
+		DrawTongsModel(tongs, TongsWorld(m_seqTongs.approach, m_seqTongs.barDir, m_seqTongs.grip), m_seqTongs.grip);
 		return;
 	}
 	if (m_carrying) return;	// 手の火钳は DrawViewmodel が最後に描く(めり込み防止)
@@ -379,15 +400,10 @@ void SceneForge::DrawCarry()
 		DrawModelWorld(tongs, TongsWorld(t.approach, t.barDir, t.grip), "StPliers");
 		return;
 	}
-	if (m_temperPoseW > 0.0f && m_workAt == Station::Hearth)
+	if (TemperHolding())
 	{
-		// 焼き戻し: 火ばさみで刃の手元の端を挟み、炭の上に構える(現実の鍛冶も刃を火ばさみで持って火の上を動かす)。
-		//   柄は口から炉口の外(カメラ側)・上へ出す=炭床や炉の縁を突き抜けない(水槽と同じ考え方)。
-		TongsPose t = TongsOnIron(WeaponWorld());
-		const XMFLOAT3 into = StationInto();
-		const XMFLOAT3 handle(t.grip.x - into.x * TEMPER_TONGS_OUT, t.grip.y + TEMPER_TONGS_RISE, t.grip.z - into.z * TEMPER_TONGS_OUT);
-		XMStoreFloat3(&t.approach, XMVector3Normalize(XMLoadFloat3(&t.grip) - XMLoadFloat3(&handle)));	// 柄 → 口
-		DrawModelWorld(tongs, TongsWorld(t.approach, t.barDir, t.grip), "StPliers");
+		const TongsPose t = TemperTongsPose();
+		DrawTongsModel(tongs, TongsWorld(t.approach, t.barDir, t.grip), t.grip);
 		return;
 	}
 	const bool atAnvil = !m_walkMode && !Transitioning() && m_station == Station::Anvil;

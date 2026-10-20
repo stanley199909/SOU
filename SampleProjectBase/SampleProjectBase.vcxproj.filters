@@ -204,6 +204,12 @@
     <ClCompile Include="SceneForge\Interaction.cpp">
       <Filter>ソース ファイル\App\Scene\SceneForge</Filter>
     </ClCompile>
+    <ClCompile Include="SceneForge\CutTarget.cpp">
+      <Filter>ソース ファイル\App\Scene\SceneForge</Filter>
+    </ClCompile>
+    <ClCompile Include="SceneForge\TestCut.cpp">
+      <Filter>ソース ファイル\App\Scene\SceneForge</Filter>
+    </ClCompile>
     <ClCompile Include="SceneForge\Collision.cpp">
       <Filter>ソース ファイル\App\Scene\SceneForge</Filter>
     </ClCompile>
@@ -292,6 +298,12 @@
       <Filter>ソース ファイル\App\Physics</Filter>
     </ClCompile>
     <ClCompile Include="Physics\Collision2D.cpp">
+      <Filter>ソース ファイル\App\Physics</Filter>
+    </ClCompile>
+    <ClCompile Include="Physics\MeshSlicer.cpp">
+      <Filter>ソース ファイル\App\Physics</Filter>
+    </ClCompile>
+    <ClCompile Include="Physics\RigidBody.cpp">
       <Filter>ソース ファイル\App\Physics</Filter>
     </ClCompile>
     <ClCompile Include="DebugUI.cpp">
@@ -422,6 +434,9 @@
     <ClInclude Include="SceneForge\SceneForge.h">
       <Filter>ヘッダー ファイル\App\Scene\SceneForge</Filter>
     </ClInclude>
+    <ClInclude Include="SceneForge\CutTarget.h">
+      <Filter>ヘッダー ファイル\App\Scene\SceneForge</Filter>
+    </ClInclude>
     <ClInclude Include="SceneForge\SceneForge_Internal.h">
       <Filter>ヘッダー ファイル\App\Scene\SceneForge</Filter>
     </ClInclude>
@@ -498,6 +513,12 @@
       <Filter>ヘッダー ファイル\App\Physics</Filter>
     </ClInclude>
     <ClInclude Include="Physics\Collision2D.h">
+      <Filter>ヘッダー ファイル\App\Physics</Filter>
+    </ClInclude>
+    <ClInclude Include="Physics\MeshSlicer.h">
+      <Filter>ヘッダー ファイル\App\Physics</Filter>
+    </ClInclude>
+    <ClInclude Include="Physics\RigidBody.h">
       <Filter>ヘッダー ファイル\App\Physics</Filter>
     </ClInclude>
     <ClInclude Include="DebugUI.h">

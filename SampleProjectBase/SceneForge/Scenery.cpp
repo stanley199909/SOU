@@ -287,7 +287,17 @@ void SceneForge::DrawScenery()
         if(OutdoorStage::IsOutdoor(p.key)) { outdoorToDraw.push_back(&p); continue; }	// 家の後で描く(下)
 		GpuProfiler::Scope t(timed ? (const char*)u8"　・道具（金床・炉など）" : nullptr);
 		const float hi = StationHighlight(p.key);	// 次に向かう工位なら 0..1(縁の光 + 輪郭線)
-		DrawModelWorld(m, PropWorld(p), p.key.c_str(), hi * STATION_HI_GLOW);	// 炉の暗い暖色・三平面投影も材質表の値(旧: ここに炉だけの特例)
+		XMMATRIX propWorld = PropWorld(p);
+		if (p.key == "StBellows" && m_bellowsSquash > 0.0f)
+		{
+			// ふいごを踏んだ: 底を支点に縦へ押し縮める(上の板が下がる=袋が潰れて風が出る)。底の高さはワールドの箱から
+			XMFLOAT3 bmn, bmx;
+			if (PropWorldBox(p, bmn, bmx))
+				propWorld = propWorld * XMMatrixTranslation(0.0f, -bmn.y, 0.0f)
+				                      * XMMatrixScaling(1.0f, 1.0f - BELLOWS_SQUASH * m_bellowsSquash, 1.0f)
+				                      * XMMatrixTranslation(0.0f, bmn.y, 0.0f);
+		}
+		DrawModelWorld(m, propWorld, p.key.c_str(), hi * STATION_HI_GLOW);	// 炉の暗い暖色・三平面投影も材質表の値(旧: ここに炉だけの特例)
 		// 動く部品(砥石の輪)は本体と同じ行列の手前で、自分の軸まわりに回してから描く。
 		// 角度は砥石の物理(GrindWheel)が積分した値=踏んだ分だけ回り、摩擦で止まる。
 		const PropPart* part = FindPropPart(p.key.c_str());

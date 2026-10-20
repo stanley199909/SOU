@@ -32,8 +32,10 @@ namespace
 		XMFLOAT4   material;	// x 三平面投影, y 物の大きさ(倍率), z 粗さ, w 金属度
 		XMFLOAT4X4 worldToLocal;
 		XMFLOAT4   maps;		// x 法線マップ有り, y ORM マップ有り, z 法線マップが DirectX 式, w 次の工位の光(0..1)
+		XMFLOAT4   hotSpot;	// xyz 熱い所(ワールド), w 半径(m)。焼き戻しで炭の上にかざした火钳の口
+		XMFLOAT4   hotGlow;	// x 熱さ 0..1(0 = 無し)
 	};
-	static_assert(sizeof(PropParams) == 256, "must match cbuffer PropParam in PS_StageProp.hlsl");
+	static_assert(sizeof(PropParams) == 288, "must match cbuffer PropParam in PS_StageProp.hlsl");
 
 	// 画像のパス → 画像(無ければ nullptr)。TextureCache は失敗を覚えないので、パスが nullptr の時は読みに行かない
 	Texture* Optional(const char* path, bool& has)
@@ -94,9 +96,10 @@ namespace LitRender
 	bool NormalMapsEnabled() { return s_useNormalMaps; }
 	LightToggles& Toggles() { return s_toggles; }
 
-	void Draw(Model* model, FXMMATRIX world, CameraBase* camera, const PropMaterial& mat, float highlight)
+	// Draw と DrawMesh の共通部分: 行列・光・材質を GPU へ送り、深度/合成を決め、法線/ORM の画像を置く。
+	//   この後は「メッシュごとに基本色を置いて描く」だけが違う
+	static void BeginDraw(FXMMATRIX world, CameraBase* camera, const PropMaterial& mat, float highlight, const XMFLOAT4& hotSpot, float hot)
 	{
-		if (!model || !camera || !SunStage::Init()) return;
 		auto& r = SunStage::Data();
 
 		XMFLOAT4X4 wvp[3];
@@ -116,6 +119,8 @@ namespace LitRender
 		p.material = { mat.triplanar ? 1.0f : 0.0f, XMVectorGetX(XMVector3Length(world.r[0])), mat.roughness, mat.metallic };
 		XMStoreFloat4x4(&p.worldToLocal, XMMatrixTranspose(XMMatrixInverse(nullptr, world)));
 		p.maps     = { hasNormal ? 1.0f : 0.0f, hasOrm ? 1.0f : 0.0f, normalDirectX ? 1.0f : 0.0f, highlight };
+		p.hotSpot  = hotSpot;
+		p.hotGlow  = { hot, 0.0f, 0.0f, 0.0f };
 		r.propPS.WriteBuffer(0, &p);
 
 		r.vs.Bind();
@@ -123,6 +128,21 @@ namespace LitRender
 		SetBlendMode(BLEND_NONE);
 		r.propPS.SetTexture(1, normalTex);
 		r.propPS.SetTexture(2, ormTex);
+	}
+
+	static void EndDraw()
+	{
+		auto& r = SunStage::Data();
+		r.propPS.SetTexture(1, nullptr);
+		r.propPS.SetTexture(2, nullptr);
+		SetBlendMode(BLEND_ALPHA);
+	}
+
+	void Draw(Model* model, FXMMATRIX world, CameraBase* camera, const PropMaterial& mat, float highlight, const XMFLOAT4& hotSpot, float hot)
+	{
+		if (!model || !camera || !SunStage::Init()) return;
+		auto& r = SunStage::Data();
+		BeginDraw(world, camera, mat, highlight, hotSpot, hot);
 		for (unsigned i = 0; i < model->GetMeshNum(); ++i)
 		{
 			auto* mesh = model->GetMesh(i);
@@ -132,9 +152,20 @@ namespace LitRender
 			ReflectionProbe::BindForLighting();	// t6/t7 = 部屋の反射(IBL)。Bind() が空にした後に置く
 			mesh->mesh->Draw();
 		}
-		r.propPS.SetTexture(1, nullptr);
-		r.propPS.SetTexture(2, nullptr);
-		SetBlendMode(BLEND_ALPHA);
+		EndDraw();
+	}
+
+	void DrawMesh(MeshBuffer* mesh, Texture* baseColor, FXMMATRIX world, CameraBase* camera, const PropMaterial& mat)
+	{
+		if (!mesh || !camera || !SunStage::Init()) return;
+		auto& r = SunStage::Data();
+		BeginDraw(world, camera, mat, 0.0f, XMFLOAT4(0, 0, 0, 0), 0.0f);
+		r.propPS.SetTexture(0, baseColor);
+		r.propPS.Bind();
+		SunStage::BindShadow();
+		ReflectionProbe::BindForLighting();
+		mesh->Draw();
+		EndDraw();
 	}
 
 	void Controls()

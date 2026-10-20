@@ -225,6 +225,19 @@ void SceneForge::BuildCollisionWorld()
 			m_collision.hulls.push_back(std::move(h));
 		}
 	}
+
+	// 試し切りの藁人形と、切れて落ちた断片(2026-10-20)。切る度・転がる度に形と位置が変わるので、
+	//   刃と同じく毎フレーム頂点から凸包を作る。小さな欠片(高さ CUT_STEP_OVER 未満)は跨いで通れる
+	{
+		const float headY = m_walkFloorY + PLAYER_BODY_HEIGHT;
+		std::vector<std::vector<XMFLOAT3>> solids;
+		m_cutTarget.CollisionPoints(m_walkFloorY, m_walkFloorY + CUT_STEP_OVER, headY, solids);
+		for (const std::vector<XMFLOAT3>& pts : solids)
+		{
+			Collision2D::Hull h = FlatHull(pts);
+			if (!h.empty()) m_collision.hulls.push_back(std::move(h));
+		}
+	}
 }
 
 //--- 可視化: 凸包を床から背丈までの「柱」、壁線を切った高さの線、玩家の足元の円で描く。

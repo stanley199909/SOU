@@ -95,7 +95,7 @@ void SceneForge::UpdateTitleHammer(float tick)
 		m_autoTimer = 0.0f;
 		m_hammer.Strike();
 		Strike();				// 火花
-		Audio::Play(m_hammerAlt ? Audio::SE_ANVIL2 : Audio::SE_ANVIL1, TITLE_STRIKE_VOLUME);
+		Audio::PlayAt(m_hammerAlt ? Audio::SE_ANVIL2 : Audio::SE_ANVIL1, m_aimWorld, TITLE_STRIKE_VOLUME);
 		m_hammerAlt = !m_hammerAlt;
 	}
 	else if (m_autoTimer >= windStart)

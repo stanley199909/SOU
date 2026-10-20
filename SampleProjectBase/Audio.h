@@ -1,6 +1,8 @@
 ﻿#ifndef __AUDIO_H__
 #define __AUDIO_H__
 
+#include <DirectXMath.h>
+
 // XAudio2 による簡易サウンド再生
 //  ・Assets/Sound/<name>.wav があれば読み込み、無ければプログラムで合成した音を使う
 //  ・Play(id, volume) で多重再生可能(ボイスプールをラウンドロビン)
@@ -27,6 +29,7 @@ namespace Audio
 		SE_LEARNED,	// チュートリアル: 操作を覚えた瞬間の確認音(短く明るい1音)。Assets/Sound/SE/learned.wav があればそれ、無ければ合成音
 		SE_NEXT_STEP,	// 工程が進んだ合図(中央の札「〜完了 → 次」と同時。低い鐘2つ)。Assets/Sound/SE/next_step.wav があればそれ、無ければ合成音
 		SE_SEG_DONE,	// 研ぎの区域が仕上がった「チン」(小さな区切り。面の完成 SE_FACE_DONE とは別)。Assets/Sound/SE/seg_done.wav があればそれ、無ければ合成音
+		SE_BELLOWS_PUMP,	// ふいごを1回踏んだ「フッ」(押す毎に1回。炉火の唸りの上に乗る)。Assets/Sound/SE/bellows_pump.wav があればそれ、無ければ合成音
 		// ※BGM_* は必ず最後にまとめる(IsBgm が BGM_TITLE..BGM_RESULT の範囲で判定する)
 		BGM_TITLE,	// タイトル画面BGM(TITLE状態でループ)
 		BGM_PLAY,	// ゲーム中BGM(PLAY状態でループ)
@@ -41,6 +44,12 @@ namespace Audio
 	void Stop(SoundId id);							// ループ停止
 	void SetLoop(SoundId id, float volume, float pitch);	// 鳴っているループの音量/音程を止めずに変える(物理に追従させる)
 	void ToggleBgmMute();							// BGMだけミュート切替(SEは鳴る)。録画用
+
+	//--- 3D定位(3D positional audio)。XAudio2 付属の X3DAudio で、声源と聞き手の位置から左右の比率と距離の減衰を計算する。
+	//    座標はゲームと同じワールド座標(左手系)。BGM/UI の合図は今まで通り Play/PlayLoop(=2D, 画面の中央で鳴る)。
+	void SetListener(const DirectX::XMFLOAT3& pos, const DirectX::XMFLOAT3& front, const DirectX::XMFLOAT3& up);	// 聞き手=カメラ。front=視線の向き(長さは任意), up=上(front と直交していなくてよい)。毎フレーム呼ぶ(鳴っている3D音も向きに追従する)
+	void PlayAt(SoundId id, const DirectX::XMFLOAT3& pos, float volume = 1.0f, float pitch = 1.0f);	// その位置から一回鳴らす
+	void SetLoopPos(SoundId id, const DirectX::XMFLOAT3& pos);	// 鳴っているループを3Dにし、声源の位置を決める(PlayLoop の後に呼ぶ。動く物なら毎フレーム)
 }
 
 #endif // __AUDIO_H__

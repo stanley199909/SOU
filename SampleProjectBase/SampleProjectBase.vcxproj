@@ -202,6 +202,10 @@
     <ClCompile Include="Physics\Particles.cpp" />
     <ClCompile Include="Physics\GrindWheel.cpp" />
     <ClCompile Include="Physics\Collision2D.cpp" />
+    <ClCompile Include="Physics\MeshSlicer.cpp" />
+    <ClCompile Include="Physics\RigidBody.cpp" />
+    <ClCompile Include="SceneForge\CutTarget.cpp" />
+    <ClCompile Include="SceneForge\TestCut.cpp" />
     <ClCompile Include="StateMachine\StateMachine.cpp" />
     <ClCompile Include="StateMachine\StateBase.cpp" />
     <ClCompile Include="StateMachine\Player\HeatStep.cpp" />
@@ -281,6 +285,9 @@
     <ClInclude Include="Physics\Particles.h" />
     <ClInclude Include="Physics\GrindWheel.h" />
     <ClInclude Include="Physics\Collision2D.h" />
+    <ClInclude Include="Physics\MeshSlicer.h" />
+    <ClInclude Include="Physics\RigidBody.h" />
+    <ClInclude Include="SceneForge\CutTarget.h" />
     <ClInclude Include="StateMachine\StateMachine.h" />
     <ClInclude Include="StateMachine\StateBase.h" />
     <ClInclude Include="StateMachine\Player\HeatStep.h" />

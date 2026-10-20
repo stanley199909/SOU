@@ -810,13 +810,13 @@ void SceneForge::DrawPlayUI()
 		{ Action::Interact,       (const char*)u8"離れる" },
 	};
 	static const KeyHint HEARTH_HINTS[] = {
-		{ Action::Bellows,        (const char*)u8"連打：ふいごで風を送る" },
+		{ Action::Bellows,        (const char*)u8"リズムよく押す：ふいごで風を送る" },
 		{ Action::Grab,           (const char*)u8"掴んで出す" },
 		{ Action::Interact,       (const char*)u8"離れる" },
 	};
 	static const KeyHint TEMPER_HINTS[] = {	// 同じ炉の工位でも、焼き戻しの工程は刃を炭の上で動かす
 		{ AxisPrompt::HandHorizontal, (const char*)u8"左右：炭の上で刃を動かす" },
-		{ Action::Bellows,        (const char*)u8"連打：ふいご(速く色が進む)" },
+		{ Action::Bellows,        (const char*)u8"リズムよく押す：ふいご(速く色が進む)" },
 		{ Action::Grab,           (const char*)u8"掴んで出す" },
 		{ Action::Interact,       (const char*)u8"離れる" },
 	};
@@ -2472,6 +2472,7 @@ void SceneForge::DrawUI()
 			ImGui::SliderFloat("Recover time",  &m_grassMap.recoverTime,   0.1f, 5.0f, "%.2f");	// 戻る速さ(秒。大=ゆっくり戻る)
 			ImGui::Text("map: %s", m_grassMap.IsReady() ? "ready" : "NOT READY (no StOutdoorGround / shader)");
 		}
+		TestCutControls();	// 試し切り(藁人形の置き場所・斬撃・断片の物理。TestCut.cpp)
 
 		ImGui::End();
 	}

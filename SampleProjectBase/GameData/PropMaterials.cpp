@@ -35,11 +35,19 @@ namespace
 		{ "StBucket",     0.80f, 0.0f, false, { 1.00f, 1.00f, 1.00f }, BUCKET_N, BUCKET_O, true  },	// 水桶(木)
 		{ "StGrind",      0.90f, 0.0f, false, { 1.00f, 1.00f, 1.00f }, SHARP_N,  SHARP_O,  true  },	// 砥石(石と木)。回る輪も同じ材質
 		{ "StPoker",      0.50f, 1.0f, false, { 1.00f, 1.00f, 1.00f }, TOOLS_N,  TOOLS_O,  true  },	// 火かき棒(鉄)
-		{ "StPliers",     0.50f, 1.0f, false, { 1.00f, 1.00f, 1.00f }, TOOLS_N,  TOOLS_O,  true  },	// 火ばさみ(鉄)。手に持った時も同じ
+		{ "StPliers",     0.50f, 1.0f, false, { 0.40f, 0.38f, 0.36f }, TOOLS_N,  TOOLS_O,  true  },	// 火ばさみ(鉄)。手に持った時も同じ。火にかざし続けて黒ずんだ鉄=暗く(明るい鋼だと炉の火を照り返して、柄まで熱そうに光って見えた 2026-10-20)
 		{ "StMetal1",     0.55f, 1.0f, false, { 1.00f, 1.00f, 1.00f }, METAL_N,  METAL_O,  true  },	// 廃鉄
 		{ "StMetal2",     0.55f, 1.0f, false, { 1.00f, 1.00f, 1.00f }, METAL_N,  METAL_O,  true  },	// 廃鉄
 		{ "MdlHammer",    0.55f, 0.0f, false, { 1.00f, 1.00f, 1.00f }, TOOLS_N,  TOOLS_O,  true  },	// 鎚(頭=鉄 / 柄=木 は ORM の金属度で分かれる)
 		{ "Weapon",       0.35f, 1.0f, false, { 1.00f, 1.00f, 1.00f }, nullptr,  nullptr,  false },	// 鍛えている刀身(鋼)。描き方は専用(変形する)、材質と光はここと同じ
+		// 試し切りの藁人形(仮の箱。2026-10-20)。切ると断面ができる = UV が無い面 → 三平面投影(物の空間)で貼る
+		{ "CutPost",      0.85f, 0.0f, true,  { 1.00f, 1.00f, 1.00f }, nullptr,  nullptr,  false },	// 柱(木)
+		{ "CutStraw",     0.95f, 0.0f, true,  { 1.25f, 1.05f, 0.55f }, nullptr,  nullptr,  false },	// 藁の胴体(仮: 木目の画像を藁色に寄せる)
+		// 胸当て/兜 = 錆びた鉄。錆(酸化鉄)は金属ではない → 金属度は低め。
+		//   金属度 1 だと拡散反射が無く、色は映り込みだけになる。反射プローブは小屋の中で撮った物なので、
+		//   屋外では「暗い部屋」を映して真っ黒になった(2026-10-20 F5。PBR の「金属が黒いプラスチックに見える」落とし穴と同じ)
+		{ "CutArmor",     0.75f, 0.2f, true,  { 1.00f, 1.00f, 1.00f }, nullptr,  nullptr,  false },	// 胸当て(錆びた鉄)
+		{ "CutHelmet",    0.70f, 0.2f, true,  { 1.00f, 1.00f, 1.00f }, nullptr,  nullptr,  false },	// 兜(錆びた鉄)
 	};
 	#undef PACK
 	#undef ANVIL_N

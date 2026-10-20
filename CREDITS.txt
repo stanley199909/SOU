@@ -13,7 +13,16 @@ FORGE - Credits / クレジット
   License: CC BY-NC 4.0 (https://creativecommons.org/licenses/by-nc/4.0/)
   使用箇所: 焼入れ (Assets/Sound/SE/quench.wav に加工)
 
-※ NC = 非営利のみ。商用化する場合はこの2つを差し替えること。
+- 効果音：On-Jin ～音人～ (https://on-jin.com/)
+  「刀鍛冶 ふいご01」(sen_ka_katanakaji_fuigo01)
+  使用箇所: ふいごを踏む音 (Assets/Sound/SE/bellows_pump.wav に加工: 0.45〜2.55秒に切り出し・末尾0.3秒フェードアウト・モノラル・WAV化)
+  ※ 音源の二次配布・無断利用禁止 (Redistribution of the sound files is prohibited)
+  規約: https://on-jin.com/kiyaku.php
+  個人・学校の作品は無料。企業による商用利用の時は利用連絡が必要 (https://on-jin.com/onrenfo.php)。
+  ゲームの音声ファイルがそのまま見える形で入っているため、この表記は必須。
+  公開リポジトリには音源ファイルを含めないこと。
+
+※ NC = 非営利のみ。商用化する場合は freesound の2つを差し替えること。
 
 ■ クレジット不要の素材 / No attribution required (参考)
 
@@ -27,3 +36,25 @@ FORGE - Credits / クレジット
 - Kenney (CC0): 操作キーのアイコン
 - SDL3 (zlib License, https://www.libsdl.org/): ゲームパッドの入力 (ThirdParty/SDL3/LICENSE.txt)
 - MM Blacksmith Pack / Fantasy Props MegaKit: 購入素材 (各ライセンスに従う)
+- Poly Haven (CC0): 小屋・屋外のテクスチャ (rock_surface / monastery_stone_floor / roof_slates_03 / wood_planks / brown_mud_02 / grass_path_2)
+  出典一覧: Assets/Cottage_Materials/sources.json, Tools/outdoor_texture_sources.json
+
+■ フォント / Fonts
+
+- Cinzel (Natanael Gama) / EB Garamond (Georg Duffner, Octavio Pardo)
+  License: SIL Open Font License 1.1 (https://openfontlicense.org/)
+  使用箇所: タイトル・本文 (Assets/Font/)
+  ※ OFL はフォントを同梱して配布する時にライセンス文の同梱が必要。
+- 日本語: Windows 標準のメイリオ / 游明朝 (OS のフォントを読むだけで、同梱はしていない)
+
+■ 自作 / 生成した素材 / Made for this project
+
+- 剣の粗坯・完成形 (Assets/Model/weapon/)、鍛冶小屋 (Medieval_Blacksmith_Cottage_Production)、
+  窓の壁 (Blacksmith_Window_Wall_TestAsset)、屋外のメッシュ (Tools/build_outdoor.py で生成)
+- 温度ゲージの画像 (Assets/Ui/Heat_Gauge/): ChatGPT で生成
+- 羊皮紙の画像 (Assets/Ui/parchment*.png 等): ネットで見つけた画像を ChatGPT で加工
+  ※ 元画像の作者・ライセンスが不明。外部に配布・公開する前に、CC0 の素材か一から生成した物に差し替えること。
+
+==================================================
+※ 運用ルール: 効果音・BGM・モデル・テクスチャ・フォントを追加したら、その時点でここに追記する
+  (作品名 / 作者 / 入手元URL / ライセンス / 使用箇所 / 加工内容)。

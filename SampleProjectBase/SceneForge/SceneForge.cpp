@@ -453,6 +453,7 @@ void SceneForge::ResetRunState()
 	m_walkPitch = 0.0f;
 	m_player.Init(DirectX::XMFLOAT3(0.0f, m_walkFloorY, -2.0f), 0.0f);	// 開始位置/向きを戻す
 	m_door.Reset();			// 裏口の扉は閉じた状態から
+	ResetTestCut();			// 試し切りの藁人形を切る前の姿へ(作り直しは次の更新で)
 	m_score    = 0;
 	m_forging.Reset();		// 鉄を厚板・無傷・進捗0へ(表面が上に戻る。目標形状も再生成)
 	m_forging.SetHeat(START_HEAT);	// タイトルで打っていた熱い鉄のまま始まる(最初の加熱工程は即完了)
@@ -510,8 +511,8 @@ void SceneForge::ResetRunState()
 	m_carryPull = 0.0f; m_carryRaise = 0.0f;	// 手の鉄が道具/壁を避ける量
 	m_grindFlipStart = 0.0f;
 	for (float& t : m_temperCell) t = 0.0f;	// 焼き戻しの色
-	m_temperU = 0.5f; m_temperStarted = false; m_temperPoseW = 0.0f;
-	m_bellowsAir = 0.0f;	// 炉に溜まった風
+	m_temperU = 0.5f; m_temperStarted = false; m_temperPoseW = 0.0f; m_exitFromTemper = false; m_tongsHeat = 0.0f;
+	m_bellowsAir = 0.0f; m_bellowsSquash = 0.0f; m_bellowsPumpAt = -1000.0f;	// 炉に溜まった風・ふいごの動き
 	ResetGrindSegments();		// 研ぎの区域の「仕上がった」記録と光
 }
 
@@ -984,13 +985,27 @@ void SceneForge::UpdatePlay(float tick)
 	//   送った風は炉の中に溜まり(m_bellowsAir 0..1)、踏まなければ少しずつ抜ける=続けて踏むほど炭が熾る。
 	const bool simOn  = !ToolUiOpen() && !m_fade.IsBusy();
 	const bool inFire = !m_carrying && m_workAt == Station::Hearth;
-	if (inputOn && m_station == Station::Hearth && InputActions::Pressed(Action::Bellows))
+	// 一押し = 音(bellows_pump.wav)1回分。前の一押しから BELLOWS_PUMP_INTERVAL 経つまでは踏めない(速すぎる連打は無視=砥石のペダルと同じ)
+	if (inputOn && m_station == Station::Hearth && InputActions::Pressed(Action::Bellows)
+	    && (m_time - m_bellowsPumpAt) >= BELLOWS_PUMP_INTERVAL)
 	{
-		m_bellowsAir = fminf(m_bellowsAir + BELLOWS_PUMP, 1.0f);
 		++m_bellowsPumps;	// 操作の案内: ふいごを踏んだ回数(LessonMetric: Bellows)
 		Haptics::Pulse(RUMBLE_BELLOWS, BELLOWS_PUMP_RUMBLE_SEC);
+		Audio::PlayAt(Audio::SE_BELLOWS_PUMP, PropCenter("StBellows", CoalPos()), BELLOWS_PUMP_VOLUME);	// 踏む毎に一押しの音(唸りの上に段落が乗る)
+		m_bellowsPumpAt = m_time;
 	}
-	if (simOn) m_bellowsAir = Lerp::Damp(m_bellowsAir, 0.0f, BELLOWS_AIR_DECAY, tick);
+	// 音の「フーッ」の間(BLOW_START〜BLOW_END)だけ、風は少しずつ炉へ入る=聞こえている風と炉が熾る時が一致する
+	const float sincePump = m_time - m_bellowsPumpAt;
+	const bool  blowing   = sincePump >= BELLOWS_BLOW_START_SEC && sincePump < BELLOWS_BLOW_END_SEC;
+	if (simOn)
+	{
+		if (blowing) m_bellowsAir = fminf(m_bellowsAir + BELLOWS_PUMP * tick / (BELLOWS_BLOW_END_SEC - BELLOWS_BLOW_START_SEC), 1.0f);
+		m_bellowsAir = Lerp::Damp(m_bellowsAir, 0.0f, BELLOWS_AIR_DECAY, tick);
+	}
+	// ふいごの見た目: 「フーッ」が終わるまで押し下がり(風が出ている間=潰れていく)、その後 BELLOWS_REFILL_SEC で膨らみ直す。
+	//   次に踏めるのは戻り切った後(BELLOWS_PUMP_INTERVAL)なので、最速の節奏でも「潰れる→戻る」が毎回見える
+	const bool pressing = sincePump < BELLOWS_BLOW_END_SEC;
+	m_bellowsSquash = Lerp::Damp(m_bellowsSquash, pressing ? 1.0f : 0.0f, pressing ? BELLOWS_PRESS_LAMBDA : BELLOWS_REFILL_LAMBDA, tick);
 	const float air = m_bellowsAir;	// 0 = 炭火だけ / 1 = 風を送り続けて一番熾った状態
 	if (simOn)
 	{
@@ -1016,6 +1031,7 @@ void SceneForge::UpdatePlay(float tick)
 	{
 		if (!m_heatSndOn) { Audio::PlayLoop(Audio::SE_FORGE_LOOP, 0.0f); m_heatSndOn = true; }
 		Audio::SetLoop(Audio::SE_FORGE_LOOP, BELLOWS_SOUND_VOLUME * air, 1.0f);
+		Audio::SetLoopPos(Audio::SE_FORGE_LOOP, CoalPos());	// 唸りは炉の火床から
 	}
 	else if (m_heatSndOn) { Audio::Stop(Audio::SE_FORGE_LOOP); m_heatSndOn = false; }
 	// 炉の光: 風の分だけ燃え上がって部屋が明るくなり、抜けるとゆっくり落ち着く(上りと下りで速さが違う)
@@ -1028,7 +1044,7 @@ void SceneForge::UpdatePlay(float tick)
 	{
 		m_forging.BurnAll(BURN_RATE * tick);	// 過熱で鉄全体が焼ける(損傷が蓄積)
 		m_sizzleTimer -= tick;
-		if (m_sizzleTimer <= 0.0f) { Audio::Play(Audio::SE_SIZZLE); m_sizzleTimer = 0.22f; }
+		if (m_sizzleTimer <= 0.0f) { Audio::PlayAt(Audio::SE_SIZZLE, WorkAnchor()); m_sizzleTimer = 0.22f; }
 		// 火に入れたまま過熱させた=誤り。独白で一度だけ知らせる(罰は無い)。
 		if (inFire && !m_overheatWarned)
 		{
@@ -1248,7 +1264,7 @@ void SceneForge::DoStrike()
 		// 空振りでも錘は砧へ振り下ろされ弾む(鉄は変形しないだけ)=バネに接触＋初速を与える
 		m_hammer.Strike();
 		StartReboundHaptics();
-		Audio::Play(Audio::SE_SWING, 0.7f);	// 空を切る「ヒュッ」(鉄に当たっていない合図。文字は出さない)
+		Audio::PlayAt(Audio::SE_SWING, m_aimWorld, 0.7f);	// 空を切る「ヒュッ」(鉄に当たっていない合図。文字は出さない)
 		Haptics::Pulse(RUMBLE_SWING, RUMBLE_SWING_SEC);	// 金床だけを打った軽い手応え
 		m_reboundHardness = REBOUND_HARDNESS_HARD;		// 金床(硬い鋼)を直接打った = よく跳ね返る
 	
@@ -1278,11 +1294,11 @@ void SceneForge::DoStrike()
 	if (!cold) Strike(sparkScale);
 
 	// 打撃音: 冷打は鈍い音。通常打撃は金床音を 1→2→1→2 と交互に鳴らす
-	if (cold) Audio::Play(Audio::SE_COLD, 0.9f);
+	if (cold) Audio::PlayAt(Audio::SE_COLD, m_aimWorld, 0.9f);
 	else
 	{
 		// リズムに乗った打撃は、金床が少し高く澄んで鳴る(口笛の代わりのリズムの手応え。口笛は区域完成の合図専用)
-		Audio::Play(m_hammerAlt ? Audio::SE_ANVIL2 : Audio::SE_ANVIL1, 0.55f + power * 0.45f,
+		Audio::PlayAt(m_hammerAlt ? Audio::SE_ANVIL2 : Audio::SE_ANVIL1, m_aimWorld, 0.55f + power * 0.45f,
 		            inGroove ? GROOVE_RING_PITCH : 1.0f);
 		m_hammerAlt = !m_hammerAlt;
 	}
@@ -1376,6 +1392,7 @@ void SceneForge::UpdateBurnFx(float tick)
 
 	if (show && !m_burnSndOn)      { Audio::PlayLoop(Audio::SE_BURN_LOOP, 0.5f); m_burnSndOn = true; }
 	else if (!show && m_burnSndOn) { Audio::Stop(Audio::SE_BURN_LOOP);           m_burnSndOn = false; }
+	if (m_burnSndOn) Audio::SetLoopPos(Audio::SE_BURN_LOOP, WorkAnchor());	// 燃える鉄から(運んでいれば手の前)
 }
 
 //--- 研磨: 右クリック点按=足踏み(GrindWheel が回転を持つ)、左長押し=押し当て、マウス左右=刃を滑らす。
@@ -1576,6 +1593,7 @@ void SceneForge::UpdateGrind(float tick, bool inputOn)
 	{
 		const float pitch = (GRIND_PITCH_MIN + (GRIND_PITCH_MAX - GRIND_PITCH_MIN) * speed) * (onDoneSpot ? GRIND_DONE_PITCH_MUL : 1.0f);
 		Audio::SetLoop(Audio::SE_GRIND_LOOP, m_grindVol * GRIND_SND_VOLUME, pitch);
+		Audio::SetLoopPos(Audio::SE_GRIND_LOOP, PropCenter("StGrind", WorkAnchor()));	// 砥石から(工位を離れて鉄を運んでも、音の消え際は砥石に残る)
 		if (!atGrind && m_grindVol < GRIND_SND_OFF)	// 工位を離れ、音が消えきってから止める
 		{
 			Audio::Stop(Audio::SE_GRIND_LOOP);
@@ -1635,8 +1653,8 @@ void SceneForge::OnQuenchContact()
 	m_boilStage     = BoilStage::Film;
 	m_quenchStartHeat = m_forging.Heat();	// 淬火の完成度 % の起点
 	UpdateBladeWaterline();
-	Audio::Play(Audio::SE_QUENCH, 0.9f);	// 水に入った瞬間の「ジュワッ」
-	Audio::Play(Audio::SE_STEAM,  0.9f);	// 続く大量の蒸気「シュワーーッ」
+	Audio::PlayAt(Audio::SE_QUENCH, WorkAnchor(), 0.9f);	// 水に入った瞬間の「ジュワッ」
+	Audio::PlayAt(Audio::SE_STEAM,  WorkAnchor(), 0.9f);	// 続く大量の蒸気「シュワーーッ」
 	Haptics::Pulse(RUMBLE_QUENCH_CONTACT, RUMBLE_QUENCH_CONTACT_SEC);
 	const float ONE_FRAME = 1.0f;			// rate × dt = 個数。dt=1 として一度に STEAM_BURST 個を出す
 	m_particles.EmitSteamLine(m_bladeLineA, m_bladeLineB, STEAM_SPREAD, (float)STEAM_BURST, ONE_FRAME, STEAM_BURST_SPEED);
@@ -1813,6 +1831,12 @@ void SceneForge::EndQuenchPose()
 }
 
 //--- 炉の工位の振る舞いは「今の工程」だけで決まる: 焼き戻しなら色だけが進み温度は上がらない / それ以外は加熱。
+bool SceneForge::TemperHolding() const
+{
+	return Tempering() && !m_carrying && m_workAt == Station::Hearth && m_station == Station::Hearth
+	    && (!m_walkMode || Transitioning());
+}
+
 bool SceneForge::Tempering() const
 {
 	return m_recipe && m_stepIdx >= 0 && m_stepIdx < (int)m_recipe->steps.size()
@@ -1867,12 +1891,26 @@ float SceneForge::TemperLenCoord()
 //    色は戻らない(酸化膜は残る)=取り出しても冷ましても減らない。ふいごで炭が熾り、速く進む=行き過ぎやすい。
 void SceneForge::UpdateTemper(float tick, bool inputOn)
 {
-	// 構え(火ばさみで持ち上げて起こす): 焼き戻しで、刃が炉にあり、玩家が炉の工位にいる間 1 へ。
-	//   置いた直後(加熱と同じ姿勢)から持ち上がり、離れる/取る時は元へ下りる=跳ばない(入る/出る時の動き)
-	const bool onCoals = Tempering() && !m_carrying && m_workAt == Station::Hearth;
-	const bool held    = onCoals && !m_walkMode && !Transitioning() && m_station == Station::Hearth;
-	m_temperPoseW = Lerp::Damp(m_temperPoseW, held ? 1.0f : 0.0f, TEMPER_POSE_LAMBDA, tick);
-	if (!held) return;	// 色が進むのは火ばさみで炭の上に構えている間だけ(炉に置いて離れたら火から外して置いた扱い)
+	// 構え(火ばさみで持ち上げて起こす): 火钳で構えている間(入る/出る過渡中も)1 へ。
+	//   挟んだまま運んで来た所から持ち上がって起き、出る時は構えたまま=持ち上げ(Q)/置く(E)の拍子表へそのまま繋がる
+	m_temperPoseW = Lerp::Damp(m_temperPoseW, TemperHolding() ? 1.0f : 0.0f, TEMPER_POSE_LAMBDA, tick);
+	const bool held = TemperHolding() && !m_walkMode && !Transitioning();
+	// 火钳の口の熱さ: 口が炭床の上(四角の中)にあれば熱くなり、外へ離れるほど熱くなりにくい
+	//   (刃の手元の端を焼こうとすると口も火の上に来る=現実もそう)。常に少しずつ冷める=一時的な変化(火から離せば数秒で元の色)。
+	//   2026-10-20: 旧「炭の中心の真上だけ」では、手元の端を挟む口がほとんど中心に来ず、熱くならなかった
+	m_tongsHeat = Lerp::Damp(m_tongsHeat, 0.0f, TONGS_COOL_LAMBDA, tick);
+	if (held)
+	{
+		const XMFLOAT3 jaw = TemperTongsPose().grip;
+		// 炭床の四角(DrawCoalBed と同じ: ローカル X を sizeX、Z を sizeY、yaw で回す)のローカル座標へ
+		const float dx = jaw.x - m_coalPos[0], dz = jaw.z - m_coalPos[2];
+		const float c = cosf(m_coalYaw), s = sinf(m_coalYaw);
+		const float lx = dx * c - dz * s, lz = dx * s + dz * c;
+		const float ox = fmaxf(fabsf(lx) - m_coalSize[0], 0.0f);	// 四角の外へはみ出した距離(中なら 0)。m_coalSize は半径(半分の大きさ)
+		const float oz = fmaxf(fabsf(lz) - m_coalSize[1], 0.0f);
+		m_tongsHeat = fminf(m_tongsHeat + TONGS_HEAT_RATE * tick * expf(-(ox * ox + oz * oz) / (2.0f * TONGS_HEAT_SPREAD * TONGS_HEAT_SPREAD)), 1.0f);
+	}
+	if (!held) return;	// 色が進むのは工位で構えている間だけ(炉に置いて離れたら火から外して置いた扱い)
 	m_temperStarted = true;
 	if (inputOn)
 	{
@@ -2142,6 +2180,8 @@ void SceneForge::Update(float tick)
 			if (m_player.WantInteract() && m_focus >= 0) DoInteract(INTERACTABLES[m_focus]);
 			// 鉄を掴むのは別のキー(Q/X)。鉄は工位の上にあるので、同じキーだと「工位に入る」つもりで掴んでしまう(試遊 10-15)
 			else if (m_grabFocus >= 0 && InputActions::Pressed(Action::Grab)) DoInteract(INTERACTABLES[m_grabFocus]);
+			// 試し切り(段階1): 手が空いていれば「使う」で斬る。藁人形に届かなければ空振り(TestCut.cpp)
+			if (!m_carrying && InputActions::Pressed(Action::Use)) SlashTestCut();
 		}
 		else if (m_flipPhase != FlipPhase::None)
 		{
@@ -2174,6 +2214,7 @@ void SceneForge::Update(float tick)
 	}
 	// 過渡中=補間カメラ / 走動=玩家目線 / 工位=FPS式受限環視カメラ(編集は STAGESETTING シーンで行う)。
 	ApplyViewCamera();
+	UpdateListener();	// 3D音の聞き手をカメラに合わせる(声源の左右/遠近が振り向きに追従)
 	UpdateViewmodelSway(tick);	// 手に持った物がカメラの向きへ少し遅れて付いて来る(武器の揺れ。Carry.cpp)
 	UpdateBarAnchor();	// 金床の砧面の高さに鉄条を自動配置
 
@@ -2205,6 +2246,7 @@ void SceneForge::Update(float tick)
 		m_particles.EmitSteamLine(m_bladeLineA, m_bladeLineB, STEAM_SPREAD, STEAM_RATE * m_boil, tick, NORMAL_SPEED);
 	}
 	m_particles.Update(tick, m_time);
+	UpdateTestCut(tick);	// 試し切りの藁人形: 切った断片の落下(剛体)。どの状態でも動かす(切った直後に工位へ入っても落ち切る)
 	UpdateWaterSim(tick);	// 水槽の水面の波(刃・泡で押し、波動方程式で広げる)
 }
 
@@ -2225,6 +2267,7 @@ void SceneForge::Draw()
     CottageRender::ClearExterior();
 	ApplyViewCamera();	// Update と同じ規約でDrawでも適用(GetViewの前に)
 	{ GpuProfiler::Scope t((const char*)u8"場面（太陽の影を含む）"); DrawModelsTest(); }	// 先に不透明な3Dモデル(金床)を描く
+	{ GpuProfiler::Scope t((const char*)u8"試し切りの藁人形"); DrawTestCut(); }	// 藁人形と切れて落ちた断片(不透明。水・体積光より前)
 	ReflectionProbe::DrawDebugBall(GetObj<CameraBase>("Camera"));	// F1「Show probe ball」: 撮れた画像を映す鏡の球
 	ReflectionProbe::DrawRoomBox(GetObj<CameraBase>("Camera"));		// F1「Show room box」: ボックスプロジェクションの部屋の箱(橙の線)
 	// 鉄は置かれた工位に描く。運んでいる間は手のビューモデルとして最後に描く(DrawViewmodel。めり込み防止)。
