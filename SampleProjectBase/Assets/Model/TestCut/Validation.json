@@ -1,0 +1,193 @@
+{
+  "Post": {
+    "triangles": 64,
+    "vertices": 34,
+    "watertight": true,
+    "consistent_outward_winding": true,
+    "bounds_m": [
+      [
+        -0.06,
+        0.0,
+        -0.06
+      ],
+      [
+        0.06,
+        0.75,
+        0.06
+      ]
+    ],
+    "volume_m3": 0.009918702686085528,
+    "uv_range": [
+      0.04,
+      0.975
+    ],
+    "binary_fbx_readback": "passed",
+    "nonadjacent_triangle_crossings": 0
+  },
+  "Straw": {
+    "triangles": 1280,
+    "vertices": 642,
+    "watertight": true,
+    "consistent_outward_winding": true,
+    "bounds_m": [
+      [
+        -0.20178906697474497,
+        0.752,
+        -0.14101508804956428
+      ],
+      [
+        0.19894222341075057,
+        1.0,
+        0.14027053232648562
+      ]
+    ],
+    "volume_m3": 0.021662292909472188,
+    "uv_range": [
+      0.04,
+      0.975
+    ],
+    "binary_fbx_readback": "passed",
+    "nonadjacent_triangle_crossings": 0
+  },
+  "Armor": {
+    "triangles": 1056,
+    "vertices": 530,
+    "watertight": true,
+    "consistent_outward_winding": true,
+    "bounds_m": [
+      [
+        -0.23,
+        1.002,
+        -0.17336660388964076
+      ],
+      [
+        0.23,
+        1.52,
+        0.164
+      ]
+    ],
+    "volume_m3": 0.05137857012306999,
+    "uv_range": [
+      0.04,
+      0.975
+    ],
+    "binary_fbx_readback": "passed",
+    "nonadjacent_triangle_crossings": 0
+  },
+  "Helmet": {
+    "triangles": 1056,
+    "vertices": 530,
+    "watertight": true,
+    "consistent_outward_winding": true,
+    "bounds_m": [
+      [
+        -0.13,
+        1.522,
+        -0.135
+      ],
+      [
+        0.13,
+        1.8,
+        0.129
+      ]
+    ],
+    "volume_m3": 0.012362640206076846,
+    "uv_range": [
+      0.04,
+      0.975
+    ],
+    "binary_fbx_readback": "passed",
+    "nonadjacent_triangle_crossings": 0
+  },
+  "Guard": {
+    "triangles": 352,
+    "vertices": 178,
+    "watertight": true,
+    "consistent_outward_winding": true,
+    "bounds_m": [
+      [
+        -0.11,
+        -0.017,
+        -0.019
+      ],
+      [
+        0.11,
+        0.032901486827868406,
+        0.019
+      ]
+    ],
+    "volume_m3": 0.00014234491030170232,
+    "uv_range": [
+      0.04,
+      0.975
+    ],
+    "binary_fbx_readback": "passed",
+    "nonadjacent_triangle_crossings": 0
+  },
+  "Grip": {
+    "triangles": 864,
+    "vertices": 434,
+    "watertight": true,
+    "consistent_outward_winding": true,
+    "bounds_m": [
+      [
+        -0.018150000000000003,
+        -0.217,
+        -0.015064500000000002
+      ],
+      [
+        0.018150000000000003,
+        -0.016999999999999987,
+        0.015064500000000002
+      ]
+    ],
+    "volume_m3": 0.00014875676873644646,
+    "uv_range": [
+      0.04,
+      0.975
+    ],
+    "binary_fbx_readback": "passed",
+    "nonadjacent_triangle_crossings": 0
+  },
+  "Pommel": {
+    "triangles": 448,
+    "vertices": 226,
+    "watertight": true,
+    "consistent_outward_winding": true,
+    "bounds_m": [
+      [
+        -0.03,
+        -0.277,
+        -0.021
+      ],
+      [
+        0.03,
+        -0.219,
+        0.021
+      ]
+    ],
+    "volume_m3": 8.002240840500488e-05,
+    "uv_range": [
+      0.04,
+      0.975
+    ],
+    "binary_fbx_readback": "passed",
+    "nonadjacent_triangle_crossings": 0
+  },
+  "Sword_Trail.png": {
+    "size": [
+      512,
+      64
+    ],
+    "mode": "RGBA",
+    "alpha_levels": 256
+  },
+  "Ichitou_Ryoudan.png": {
+    "size": [
+      1600,
+      600
+    ],
+    "mode": "RGBA",
+    "alpha_levels": 256
+  }
+}

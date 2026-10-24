@@ -204,6 +204,19 @@ namespace MeshSlicer
         return XMFLOAT3(c.x * inv, c.y * inv, c.z * inv);
     }
 
+    float Volume(const Mesh& m)
+    {
+        float six = 0.0f;   // 6 x the signed volume
+        for (size_t i = 0; i + 2 < m.indices.size(); i += 3)
+        {
+            const XMFLOAT3& a = m.verts[m.indices[i]].pos;
+            const XMFLOAT3& b = m.verts[m.indices[i + 1]].pos;
+            const XMFLOAT3& c = m.verts[m.indices[i + 2]].pos;
+            six += Dot(a, Cross(b, c));
+        }
+        return fabsf(six) / 6.0f;   // the sign only says which way the triangles are wound
+    }
+
     bool Slice(const Mesh& in, const XMFLOAT3& point, const XMFLOAT3& normalIn, Mesh& front, Mesh& back)
     {
         front = Mesh(); back = Mesh();

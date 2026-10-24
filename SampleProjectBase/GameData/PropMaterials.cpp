@@ -48,6 +48,9 @@ namespace
 		//   屋外では「暗い部屋」を映して真っ黒になった(2026-10-20 F5。PBR の「金属が黒いプラスチックに見える」落とし穴と同じ)
 		{ "CutArmor",     0.75f, 0.2f, true,  { 1.00f, 1.00f, 1.00f }, nullptr,  nullptr,  false },	// 胸当て(錆びた鉄)
 		{ "CutHelmet",    0.70f, 0.2f, true,  { 1.00f, 1.00f, 1.00f }, nullptr,  nullptr,  false },	// 兜(錆びた鉄)
+		// 試し切りで刃に付ける仮の柄(2026-10-21)。鍔・柄頭 = 黒ずんだ鉄 / 握り = 木(革巻きの代わり)
+		{ "HiltMetal",    0.55f, 0.3f, true,  { 0.55f, 0.52f, 0.50f }, nullptr,  nullptr,  false },
+		{ "HiltGrip",     0.85f, 0.0f, true,  { 0.70f, 0.55f, 0.40f }, nullptr,  nullptr,  false },
 	};
 	#undef PACK
 	#undef ANVIL_N

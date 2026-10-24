@@ -52,9 +52,47 @@ FORGE - Credits / クレジット
 - 剣の粗坯・完成形 (Assets/Model/weapon/)、鍛冶小屋 (Medieval_Blacksmith_Cottage_Production)、
   窓の壁 (Blacksmith_Window_Wall_TestAsset)、屋外のメッシュ (Tools/build_outdoor.py で生成)
 - 温度ゲージの画像 (Assets/Ui/Heat_Gauge/): ChatGPT で生成
+- 試し切りの素材 (Assets/Model/TestCut/, 2026-10-21): ChatGPT で生成
+  鎧を着た藁人形 (Armored_Straw_Dummy.obj/.fbx) / 剣の柄 (Medieval_Sword_Hilt.obj/.fbx。FBX は assimp で読めず OBJ を使用) /
+  刀光の画像 (Sword_Trail.png, 今は未使用: 刀光は PS_Trail が式で描く) / 「一刀両断」の筆文字 (Ichitou_Ryoudan.png, 画像生成ツールで生成)
+  加工: なし (モデルの貼图は既存の小屋の素材を三平面投影で貼る)
 - 羊皮紙の画像 (Assets/Ui/parchment*.png 等): ネットで見つけた画像を ChatGPT で加工
   ※ 元画像の作者・ライセンスが不明。外部に配布・公開する前に、CC0 の素材か一から生成した物に差し替えること。
 
 ==================================================
 ※ 運用ルール: 効果音・BGM・モデル・テクスチャ・フォントを追加したら、その時点でここに追記する
   (作品名 / 作者 / 入手元URL / ライセンス / 使用箇所 / 加工内容)。
+
+
+■ 追加BGM候補 / Kevin MacLeod (2026-10-24)
+
+FORGE — Music attribution
+Official source pages checked: 2026-10-24
+
+"Crusade" Kevin MacLeod (incompetech.com)
+Licensed under Creative Commons: By Attribution 4.0 License
+https://creativecommons.org/licenses/by/4.0/
+Source: https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1100884
+ISRC: USUAN1100884
+
+"Five Armies" Kevin MacLeod (incompetech.com)
+Licensed under Creative Commons: By Attribution 4.0 License
+https://creativecommons.org/licenses/by/4.0/
+Source: https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1100875
+ISRC: USUAN1100875
+
+Changes made for this project:
+- Original MP3 files are preserved unchanged in this folder.
+- Full-length WAV copies: format conversion to 48 kHz, stereo, 16-bit PCM only.
+- FORGE promotional video: Five Armies excerpted, faded and mixed with game audio.
+- The game BGM selection has NOT been changed by this handoff.
+
+The official track pages currently supply the CC BY 4.0 attribution above.
+Older search results may mention CC BY 3.0; this package uses the current
+official download and its displayed CC BY 4.0 attribution.
+See CC_BY_4.0_legalcode.txt for the license text and sources.json for provenance.
+Credit the composer and link the license/source in the game credits and in the
+published video's description; keep a statement of any later edits.
+
+使用箇所: ゲームBGM候補（未接続）、Five Armies は FORGE 宣伝映像に使用。
+WAV: Assets/Sound/BGM/Crusade_Kevin_MacLeod.wav / Five_Armies_Kevin_MacLeod.wav

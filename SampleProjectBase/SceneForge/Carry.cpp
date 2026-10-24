@@ -351,6 +351,7 @@ void SceneForge::SayWhereIronIs()
 	case Station::Hearth:     line = (const char*)u8"鉄は炉の中だ";     break;
 	case Station::Grindstone: line = (const char*)u8"鉄は砥石の所だ";   break;
 	case Station::Trough:     line = (const char*)u8"鉄は水槽の所だ";   break;
+	case Station::TestCut:    line = (const char*)u8"剣は藁人形の所だ"; break;
 	}
 	Say(line, IM_COL32(255, 200, 90, 255));
 }

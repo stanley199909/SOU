@@ -9,6 +9,7 @@ const char* StepKey(StepName n)
     case StepName::Grind:  return "Grind";
     case StepName::Quench: return "Quench";
     case StepName::Temper: return "Temper";
+    case StepName::TestCut: return "TestCut";
     }
     return "None";
 }
@@ -22,6 +23,7 @@ Station StepStation(StepName n)
     case StepName::Grind:  return Station::Grindstone;
     case StepName::Quench: return Station::Trough;
     case StepName::Temper: return Station::Hearth;   // tempering is done above the forge coals
+    case StepName::TestCut: return Station::TestCut;
     }
     return Station::Anvil;
 }
@@ -43,8 +45,10 @@ const WeaponRecipe ShortSword = {
         { StepName::Quench, (const char*)u8"焼入れ", (const char*)u8"燃える刃を水槽に沈める" },
         // 焼き戻し(2026-10-19 追加): 焼入れした刃は硬いが脆い → 炉の上で軽く温め、刃先の色で止め時を見る(中世の鍛冶の方法)。
         { StepName::Temper, (const char*)u8"焼き戻し", (const char*)u8"刃を炭の上で動かして温め、刃先全体が麦わら〜茶色になったら{Grab}で取り出す" },
+        // 試し切り(2026-10-21 追加): 鍛えた出来がそのまま斬れ味になる。良い剣ほど少ない太刀で藁人形の胴を両断できる。
+        { StepName::TestCut, (const char*)u8"試し切り", (const char*)u8"柄を付けた剣で、藁人形の胴を一太刀で両断する（{Use}長押しで構え、息を整えて離す）" },
     },
-    // チュートリアルの課程(工程の区切り)。番号は上の steps の並び(0=加熱 1=鍛造 2=研ぎ 3=再加熱 4=焼入れ 5=焼き戻し)。
+    // チュートリアルの課程(工程の区切り)。番号は上の steps の並び(0=加熱 1=鍛造 2=研ぎ 3=再加熱 4=焼入れ 5=焼き戻し 6=試し切り)。
     //   鍛造   = 熱い鉄を金床に置いた所から(最初の加熱は済み)。途中で冷えたら炉へ戻る事も覚える
     //   研ぎ   = 鍛え終わった刃を砥石に置いた所から
     //   焼入れ = 研ぎ終わった刃を炉に置いた所から(火花が散るまで熱して → 水槽へ)
@@ -53,5 +57,6 @@ const WeaponRecipe ShortSword = {
         { (const char*)u8"研ぎ",   (const char*)u8"足踏みの砥石で、刃の角度を合わせて両側を研ぐ",                       2, 2 },
         { (const char*)u8"焼入れ", (const char*)u8"刃を火花が散るまで熱し、水槽に沈めて揺する",                         3, 4 },
         { (const char*)u8"焼き戻し", (const char*)u8"焼入れした刃を炉の上で温め、刃先の色を見て取り出す",               5, 5 },
+        { (const char*)u8"試し切り", (const char*)u8"仕上げた剣で、鎧を着た藁人形を斬る。強い斬りと連続の斬りを覚える",   6, 6 },
     }
 };

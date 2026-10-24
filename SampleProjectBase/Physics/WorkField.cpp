@@ -53,6 +53,34 @@ WorkField::Result WorkField::Apply(float coord, float amount, float spread)
     return Result::Worked;
 }
 
+WorkField::Result WorkField::ApplySegment(int s, int nseg, float amount)
+{
+    if (SegDone(s, nseg)) return Result::AlreadyDone;
+    const int per = N / nseg;
+    const int first = s * per;
+    // Even share among the unfinished cells; a cell that fills up passes its unused share
+    // to the others on the next round (cells of one segment stay level, so this rarely loops).
+    const float REST_EPS = 1e-6f;
+    float rest = amount;
+    while (rest > REST_EPS)
+    {
+        int open = 0;
+        for (int i = first; i < first + per; ++i) if (m_left[i] > 0.0f) ++open;
+        if (open == 0) break;   // segment finished; the leftover is not carried to other segments
+        const float share = rest / open;
+        for (int i = first; i < first + per; ++i)
+        {
+            if (m_left[i] <= 0.0f) continue;
+            const float take = fminf(m_left[i], share);
+            m_left[i] -= take;
+            rest      -= take;
+        }
+    }
+    const float DONE_EPS = 1e-4f;   // same snap as Apply: "done" is exact
+    for (int i = first; i < first + per; ++i) if (m_left[i] < DONE_EPS) m_left[i] = 0.0f;
+    return Result::Worked;
+}
+
 float WorkField::SegProgress(int s, int nseg) const
 {
     const int per = N / nseg;

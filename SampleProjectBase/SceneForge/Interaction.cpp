@@ -26,8 +26,12 @@ const SceneForge::Interactable SceneForge::INTERACTABLES[] = {
 	{ "StForge",  SceneForge::InteractAction::EnterStation, Station::Hearth,     1.0f },	// 炉 → 加熱(いつでも再加熱できる)
 	{ "StGrind",  SceneForge::InteractAction::EnterStation, Station::Grindstone, 0.9f },	// 砥石 → 研磨
 	{ "StTrough", SceneForge::InteractAction::EnterStation, Station::Trough,     1.0f },	// 水槽 → 淬火
+	{ SceneForge::CUT_TARGET_KEY, SceneForge::InteractAction::EnterStation, Station::TestCut, 1.2f },	// 藁人形 → 試し切り(道具ではない: 箱は m_cutTarget から)
 	{ SceneForge::IRON_KEY,  SceneForge::InteractAction::GripIron,   Station::Anvil, 1.2f },	// 置いてある鉄 → 火钳で掴んで運ぶ(station は使わない)
-	{ CottageDoor::DOOR_KEY, SceneForge::InteractAction::ToggleDoor, Station::Anvil, 1.0f },	// 裏口の扉 → 開閉(station は使わない)
+	// 裏口の扉 → 開閉(station は使わない)。reach は他より長い: 壁が厚く(約 1.07)扉は壁の穴の奥(室内の壁面から約 0.86)に
+	//   嵌まっている。1.0 だと室内の壁の前に立った足(壁から半径 0.3 離れる)が範囲に約 0.16 届かず、
+	//   戸口の穴へ踏み込まないと E が効かなかった(2026-10-23 試遊「押しても開かない時がある」)。
+	{ CottageDoor::DOOR_KEY, SceneForge::InteractAction::ToggleDoor, Station::Anvil, 1.8f },
 };
 const int SceneForge::NUM_INTERACTABLES = _countof(SceneForge::INTERACTABLES);
 
@@ -87,6 +91,9 @@ bool SceneForge::InteractBox(const Interactable& it, XMFLOAT3& mn, XMFLOAT3& mx)
 		if (!m_wpOk) return false;
 		return TransformAABB(m_wpMin, m_wpMax, WeaponWorld(), mn, mx);
 	}
+	// 藁人形も道具ではない: 立っている部分の箱(切られると小さくなる)
+	if (it.action == InteractAction::EnterStation && it.station == Station::TestCut)
+		return m_cutTarget.WorldBox(mn, mx);
 	Prop* p = GetProp(it.propKey);
 	if (!p || p->hidden) return false;
 	return PropWorldBox(*p, mn, mx);
@@ -102,7 +109,7 @@ bool SceneForge::InteractEnabled(const Interactable& it) const
 		// 入らずに鉄の在り処を言うだけ(DoInteract)。=縛るのは「工程」でなく「鉄が物理的にそこにあるか」。
 		return true;
 	case InteractAction::GripIron:
-		return !m_carrying;		// 既に手に持っていれば掴む対象は無い
+		return !m_carrying && !SwordInHand();		// 既に火钳で持っている / 柄を付けた剣を手に持っている → 掴む対象は無い
 	case InteractAction::ToggleDoor:
 		// 扉はいつでも開閉できる(回っている途中でも押し直せば引き返す)。
 		return true;
@@ -124,6 +131,8 @@ const char* SceneForge::PromptLabel(const Interactable& it) const
 	switch (it.action)
 	{
 	case InteractAction::EnterStation:
+		if (it.station == Station::TestCut)	// 藁人形: 手に持った剣で構える
+			return SwordInHand() ? (const char*)u8"剣を構える" : (const char*)u8"剣はここに無い";
 		if (m_carrying)             return (const char*)u8"ここに鉄を置く";
 		if (m_workAt == it.station) return (const char*)u8"ここで作業する";
 		return (const char*)u8"鉄はここに無い";
@@ -226,6 +235,19 @@ void SceneForge::DoInteract(const Interactable& it)
 		if (it.station == Station::Grindstone && !StepReached(StepName::Grind))
 		{
 			Say((const char*)u8"まだ研げない。先に鍛造を終わらせる", IM_COL32(255, 200, 90, 255));
+			break;
+		}
+		// 試し切りは焼き戻しまで済んでから(焼きの入っていない刃では斬れ味を確かめられない。砥石と同じ考え)。
+		//   柄は試し切りの工程に入った時に付く(FitHilt)=ここへは剣を手に持って来る。E で立つ位置へ移って構える
+		if (it.station == Station::TestCut)
+		{
+			if (!StepReached(StepName::TestCut))
+			{
+				Say((const char*)u8"まだ試し切りはできない。剣を仕上げてから", IM_COL32(255, 200, 90, 255));
+				break;
+			}
+			if (SwordInHand()) BeginEnterStation(it.station);
+			else               SayWhereIronIs();
 			break;
 		}
 		if (m_carrying)                  PlaySequence(PutIronSequence(it.station), it.station);
@@ -333,6 +355,7 @@ void SceneForge::DrawInteractBoxes()
 		             : inRange                     ? XMFLOAT4(0.2f, 1.0f, 0.3f, 1.0f)
 		                                           : XMFLOAT4(0.6f, 0.6f, 0.6f, 1.0f);
 		Geometory::SetColor(col);
+		mn.y = fminf(mn.y, foot.y);			// 範囲は足元で判定する=箱の底を足の高さまで下ろす(床の線が見える様に)
 		for (int c = 0; c < 8; ++c)			// 12辺: 1ビットだけ違う隅同士を結ぶ
 			for (int b = 1; b <= 4; b <<= 1)
 				if (!(c & b))
@@ -343,5 +366,20 @@ void SceneForge::DrawInteractBoxes()
 					Geometory::AddLine(pc, pd);
 				}
 	}
+	// 目線の射線(②視線の判定に使う線。UpdateInteract と同じ作り方)。白 = これが箱に当たれば E が出る
+	if (m_walkMode)
+	{
+		const float GAZE_LEN = 4.0f;	// 描く長さ(単位)。互動の範囲より少し長ければ足りる
+		const float cp = cosf(m_walkPitch), yaw = m_player.GetYaw();
+		const XMFLOAT3 eye(foot.x, foot.y + m_walkEyeH, foot.z);
+		// 目の位置から出すと画面の中心の1点にしか見えないので、目より少し下から平行に出す(線の先が狙っている所の少し下)
+		const float GAZE_DROP = 0.3f;	// 単位
+		const XMFLOAT3 from(eye.x, eye.y - GAZE_DROP, eye.z);
+		const XMFLOAT3 to(from.x + sinf(yaw) * cp * GAZE_LEN, from.y + sinf(m_walkPitch) * GAZE_LEN, from.z + cosf(yaw) * cp * GAZE_LEN);
+		Geometory::SetColor(XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f));
+		Geometory::AddLine(from, to);
+	}
+	SetDepthTest(DEPTH_DISABLE);	// 壁越しに見える(床・壁と重なる線が隠れない様に)
 	Geometory::DrawLines();
+	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
 }

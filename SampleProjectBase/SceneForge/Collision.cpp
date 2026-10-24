@@ -195,7 +195,8 @@ void SceneForge::BuildCollisionWorld()
 	//   → カメラが近裁剪面(0.2m)より刃に近づき、刃が切れて中が見えた(2026-10-16 F5)。
 	//   刃は叩くたびに形が変わる(モーフ)ので、凸包はキャッシュせず毎フレーム作る。
 	//   m_wpVtx は BuildWeaponMorph がワールド座標で作った頂点(前フレームの描画分=1フレーム遅れは無害)。
-	if (m_wpOk && !m_carrying && !m_wpVtx.empty())
+	//   柄を付けた剣を手に持っている時(m_carrying=false でも手の中)も除く=自分の剣に押し出されて歩けなかった(2026-10-22 F5)。
+	if (m_wpOk && !m_carrying && !SwordInHand() && !m_wpVtx.empty())
 	{
 		const float headY = m_walkFloorY + PLAYER_BODY_HEIGHT;	// 道具と同じ: 背丈より上は頭上を通る
 		std::vector<XMFLOAT3> body;

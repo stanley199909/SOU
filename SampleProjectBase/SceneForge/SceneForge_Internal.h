@@ -44,4 +44,8 @@ DirectX::XMMATRIX RotationFromTo(DirectX::FXMVECTOR from, DirectX::FXMVECTOR to)
 // Scene-snapshot post process (global owned by Main), used by the water refraction pass.
 extern std::shared_ptr<PostProcess> g_pPost;
 
+// Smooth non-repeating wobble in about -1..1 (sum of sines with non-integer frequency ratios).
+// Camera hand-held feel (CameraAim.cpp) and the breath sway of the test-cut guard (TestCut.cpp).
+float OrganicNoise(float t, float seed);
+
 #endif // __SCENE_FORGE_INTERNAL_H__

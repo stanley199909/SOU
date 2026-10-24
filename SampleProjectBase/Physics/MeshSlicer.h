@@ -51,4 +51,9 @@ namespace MeshSlicer
 
     // Average vertex position (used as the pivot of a falling piece).
     DirectX::XMFLOAT3 Centroid(const Mesh& m);
+
+    // Volume of a closed mesh (m^3). Each triangle and the origin form a tetrahedron whose
+    // SIGNED volume is a . (b x c) / 6; summed over a closed surface, the parts outside cancel
+    // and the inside remains (divergence theorem). Search: "mesh volume signed tetrahedron".
+    float Volume(const Mesh& m);
 }

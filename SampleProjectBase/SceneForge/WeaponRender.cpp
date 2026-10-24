@@ -277,6 +277,7 @@ XMMATRIX SceneForge::WeaponSpin() const
 XMMATRIX SceneForge::WeaponRot() const
 {
 	if (m_seqIronOverride) return XMLoadFloat4x4(&m_seqIronRot);	// 拍子表で動かしている間(Sequence.cpp)
+	if (SwordInHand()) return SwordRotation();					// 試し切りで構えた剣(振りの姿勢。TestCut.cpp)
 	XMMATRIX r = WeaponSpin() *
 		XMMatrixRotationRollPitchYaw(m_wpPitch, m_wpYaw, m_wpRoll) *
 		XMMatrixRotationY(StationAlignYaw());
@@ -384,6 +385,7 @@ float SceneForge::BladeDepthBelowCentre() const
 XMFLOAT3 SceneForge::WorkAnchor()
 {
 	if (m_carrying) return HeldPoint();	// 火钳で掴んで運んでいる=手の前(Carry.cpp)
+	if (SwordInHand()) return SwordCenter();	// 柄を付けた剣(試し切り): 鍔が手の位置に来る様に。歩いている時も手に持つ(TestCut.cpp)
 	XMFLOAT3 a = StationBase(m_workAt);
 	switch (m_workAt)
 	{

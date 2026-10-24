@@ -49,7 +49,7 @@ namespace {
 	constexpr float kNoiseSeedBreath[3] = { 11.0f, 27.0f, 43.0f };	// 呼吸用(X,Y,Z)
 	constexpr float kNoiseSeedTremor[3] = {  5.0f, 15.0f, 31.0f };	// 微顫用(X,Y,Z)
 }
-static float OrganicNoise(float t, float seed)
+float OrganicNoise(float t, float seed)	// 試し切りの呼吸の揺れも使う(SceneForge_Internal.h で宣言)
 {
 	float s = 0.0f;
 	for (const NoiseHarmonic& h : kNoiseHarmonics)
@@ -227,8 +227,9 @@ void SceneForge::TargetViewPose(XMFLOAT3& eye, XMFLOAT3& fwd)
 	if (!cam) return;
 	if (m_modeTrans == ModeTrans::Enter)						// 工位の視点(金床は専用カメラ、他は工位カメラ)
 	{
-		if (m_station == Station::Anvil) ApplyCamera();
-		else                             ApplyWorkCamera();
+		if (m_station == Station::Anvil)        ApplyCamera();
+		else if (m_station == Station::TestCut) ApplyTestCutCamera();
+		else                                    ApplyWorkCamera();
 	}
 	else ApplyWalkCamera();	// 走動の視点(玩家は BeginExitStation で配置済み)
 	eye = cam->GetPos();
@@ -257,6 +258,7 @@ void SceneForge::BeginEnterStation(Station s)
 
 	// 工位の視点は「正面の既定」から始める(前回の視角のずれを持ち越さない)。
 	m_lookYaw = 0.0f; m_lookPitch = 0.0f;
+	m_cutLookYaw = 0.0f; m_cutLookPitch = 0.0f;	// 試し切りも藁人形の正面から
 	m_modeTrans  = ModeTrans::Enter;
 	m_transTimer = 0.0f;
 	m_transDur   = TransDuration();
@@ -407,6 +409,7 @@ void SceneForge::ApplyViewCamera()
 	else if (Transitioning()) ApplyTransCamera();
 	else if (m_walkMode) ApplyWalkCamera();				// 走動: 玩家目線の一人称カメラ
 	else if (m_station == Station::Anvil) ApplyCamera();	// 金床: FPS式受限環視カメラ
+	else if (m_station == Station::TestCut) ApplyTestCutCamera();	// 試し切り: 脚は固定・自由に見回す(TestCut.cpp)
 	else                 ApplyWorkCamera();				// 炉/砥石/水槽: 固定の工位カメラ
 }
 
@@ -456,6 +459,15 @@ XMFLOAT3 SceneForge::StationBase(Station s)
 		return m_barAnchor;
 	case Station::Trough:
 		return XMFLOAT3(m_waterPos[0], m_waterPos[1] + m_troughHover, m_waterPos[2]);	// 水面の上に構える
+	case Station::TestCut:
+	{
+		// 藁人形の胴の高さ(部品の表の「胴」の中心)= 案内の印・工位のカメラが見る所。
+		//   斬られて形が変わっても動かない様に、今の形でなく表から決める
+		float chestY = 0.0f;
+		for (int i = 0; i < NUM_CUT_PARTS; ++i)
+			if (CUT_PARTS[i].core) chestY = CUT_PARTS[i].center.y;
+		return XMFLOAT3(m_cutPosXZ[0], m_walkFloorY + chestY, m_cutPosXZ[1]);
+	}
 	}
 	return m_barAnchor;
 }
@@ -540,6 +552,14 @@ void SceneForge::StationView(Station s, XMFLOAT3& eye, XMFLOAT3& target)
 	{
 		eye    = XMFLOAT3(m_camPos[0], m_camPos[1], m_camPos[2]);
 		target = m_barAnchor;
+		return;
+	}
+	if (s == Station::TestCut)
+	{
+		// 試し切り: 立つ所(柱から m_cutStandDist 手前・目の高さ)から藁人形の胴を見る
+		target = StationBase(s);
+		eye = XMFLOAT3(m_cutPosXZ[0] + m_stationViewDir.x * m_cutStandDist, m_walkFloorY + m_walkEyeH,
+		               m_cutPosXZ[1] + m_stationViewDir.z * m_cutStandDist);
 		return;
 	}
 	XMFLOAT3 base = StationBase(s);
@@ -907,7 +927,7 @@ void SceneForge::SaveTuning()
 	fprintf(fp, "wheel %.5f %.5f %.5f %.5f\n", m_wheel.pedalImpulse, m_wheel.maxSpeed, m_wheel.friction, m_wheel.bladeDrag);
 	fprintf(fp, "grindsens %.6f\n", m_grindSens);
 	fprintf(fp, "forgestrikes %.5f\n", m_forging.strikesPerFace);
-	fprintf(fp, "grindwork %.5f %.5f\n", m_forging.grindSecondsPerSide, m_forging.grindSpread);
+	fprintf(fp, "grindwork %.5f\n", m_forging.grindSecondsPerSide);
 	fprintf(fp, "strikespread %.5f\n", m_forging.strikeSpread);
 	fprintf(fp, "impactflash %.5f %.5f %.5f\n", m_impactFlashTime, m_impactFlashHeat, m_impactFlashSpread);
 	fprintf(fp, "grindview %.5f\n", m_grindViewYaw);
@@ -971,7 +991,7 @@ void SceneForge::TuningRefs(std::vector<float*>& out)
 		&m_stationCamDist, &m_stationCamHeight, &m_stationLookLift,
 		&m_hearthLift, &m_grindLift, &m_troughHover,
 		&m_wheel.pedalImpulse, &m_wheel.maxSpeed, &m_wheel.friction, &m_wheel.bladeDrag, &m_grindSens,
-		&m_forging.strikesPerFace, &m_grindViewYaw, &m_forging.grindSecondsPerSide, &m_forging.grindSpread, &m_forging.strikeSpread,
+		&m_forging.strikesPerFace, &m_grindViewYaw, &m_forging.grindSecondsPerSide, &m_forging.strikeSpread,
 		&m_impactFlashTime, &m_impactFlashHeat, &m_impactFlashSpread,
 		&m_wpHotGain, &m_wpHotReflect, &m_wpHotTint, &m_wpHotEmisMin,
 		&m_scaleTiling, &m_scaleSoft, &m_scaleOpacity, &m_scaleGlow, &m_scaleStart, &m_scaleHoldMax,
@@ -1065,7 +1085,7 @@ void SceneForge::LoadTuning()
 		else if (strcmp(key, "bladelift")  == 0) sscanf_s(v, "%f %f %f", &m_hearthLift, &m_grindLift, &m_troughHover);
 		else if (strcmp(key, "wheel")      == 0) sscanf_s(v, "%f %f %f %f", &m_wheel.pedalImpulse, &m_wheel.maxSpeed, &m_wheel.friction, &m_wheel.bladeDrag);
 		else if (strcmp(key, "grindsens")  == 0) sscanf_s(v, "%f", &m_grindSens);
-		else if (strcmp(key, "grindwork")    == 0) sscanf_s(v, "%f %f", &m_forging.grindSecondsPerSide, &m_forging.grindSpread);
+		else if (strcmp(key, "grindwork")    == 0) sscanf_s(v, "%f", &m_forging.grindSecondsPerSide);	// 旧形式の2つ目(当たる幅)は区域研ぎで不要になったので読まない
 		else if (strcmp(key, "forgestrikes") == 0) sscanf_s(v, "%f", &m_forging.strikesPerFace);	// 旧 forgework(倍率)は意味が変わったので読まない
 		else if (strcmp(key, "strikespread") == 0) sscanf_s(v, "%f", &m_forging.strikeSpread);
 		else if (strcmp(key, "impactflash")  == 0) sscanf_s(v, "%f %f %f", &m_impactFlashTime, &m_impactFlashHeat, &m_impactFlashSpread);

@@ -225,8 +225,11 @@ void SceneForge::DrawScenery()
     // 影の地図へ描いていた(2026-10-17 F3: 太陽の影 約3ms)。境界箱の球で判定する(安い・取りこぼさない)
     CameraBase* camForShadow = GetObj<CameraBase>("Camera");
     const XMFLOAT3 camPos = camForShadow ? camForShadow->GetPos() : shadowCenter;
-    const float SQRT2 = 1.41421356f;
-    const float shadowReach = SHADOW_RANGE_M * 0.5f * SQRT2;	// 正方形の中心から角までの距離
+    // 範囲 = 屋内 20m(窓の光の縁を細かく) / 屋外 48m(見ている家が丸ごと入る)。
+    //   旧: いつも 20m → 屋外で家を見ると家の半分が範囲の外=「影無し(日向)」扱いになり、歩くと影の境目が家の上を這った
+    const float shadowRange = ShadowCameraIndoors() ? SHADOW_RANGE_M : SHADOW_RANGE_OUTDOOR_M;
+    const XMFLOAT4 sunNow=LitRender::Sun();
+    const XMFLOAT4 sunDirOnly(sunNow.x,sunNow.y,sunNow.z,1.0f);   // the shadow map depends only on the DIRECTION (brightness changes must not re-render it)
     for(auto& p:m_props) {
         if(p.key=="StGround" || p.hidden) continue;
         auto world=PropWorld(p);
@@ -235,14 +238,13 @@ void SceneForge::DrawScenery()
         if (!model) continue;
         float radius; XMFLOAT3 cc;
         PropSphere(p, world, cc, radius);	// 読込時にキャッシュした境界箱から(毎フレーム全頂点を調べない)
-        const float dx = cc.x - camPos.x, dz = cc.z - camPos.z;
-        if (sqrtf(dx*dx + dz*dz) - radius > shadowReach) continue;	// 影の範囲に全く掛からない
+        // 太陽から見た正方形に球が掛かるかで判定(正射影の影の地図の形そのもの)。
+        //   旧: 地面の上の距離 → 太陽が低いと、範囲の外の木・屋根の長い影が範囲の中へ落ちるのに捨てていた
+        if (!SunStage::CasterInRange(sunDirOnly, camPos, shadowRange, cc, radius)) continue;
         casters.push_back(SunStage::MakeItem(model,world));
     }
     if (Model* door = GetObj<Model>(CottageDoor::DOOR_KEY); door && GetProp(CottageDoor::HOUSE_KEY))	// 扉も影を落とす(今の角度で)
         casters.push_back(SunStage::MakeItem(door, DoorWorld()));
-    const XMFLOAT4 sunNow=LitRender::Sun();
-    const XMFLOAT4 sunDirOnly(sunNow.x,sunNow.y,sunNow.z,1.0f);   // the shadow map depends only on the DIRECTION (brightness changes must not re-render it)
     // 影の範囲は「家全体の 48m」でなく「見ている人の周り」だけ(1テクセル 2.3cm → 約 1cm)。
     //   窓から差す光の縁が細かくなる=太陽が動いた時に光の縁が前後に揺れて見えるのを抑える(2026-10-17 F5「先-1再+1」)。
     //   中心はカメラ(歩けば付いて来る。テクセル単位に吸着するので歩いても影の縁は這わない)。
@@ -250,7 +252,7 @@ void SceneForge::DrawScenery()
     // 反射の写真を撮っている間は影の地図を作り直さない(本描画で作った物をそのまま使う)。
     //   撮影のカメラ(金床の上)を中心に作り直すと、撮影で1回 + 本描画に戻って1回 = 毎回 2 回余計に描いていた
     if (!m_capturingProbe)
-    { GpuProfiler::Scope t((const char*)u8"　・太陽の影（場面の内訳）"); SunStage::Prepare(casters,sunDirOnly,shadowCenter,SHADOW_RANGE_M); }
+    { GpuProfiler::Scope t((const char*)u8"　・太陽の影（場面の内訳）"); SunStage::Prepare(casters,sunDirOnly,shadowCenter,shadowRange); }
     const XMFLOAT4& skySaved=CottageRender::Data().exteriorSky; const float skyK=LitRender::SkyScale();
     // 空は不透明な物を全部描いた「後」に、何も描かれていない画素だけへ(深度テスト)。
     //   前は最初に画面全体へ描いて、その上を家で塗り潰していた=屋内では丸ごと無駄(2026-10-17 F3: 空 0.8ms)
@@ -322,12 +324,16 @@ void SceneForge::DrawScenery()
 	{
 		GpuProfiler::Scope t(!m_capturingProbe ? (const char*)u8"　・屋外（木・草・石）" : nullptr);
 		Model* om = GetObj<Model>(op->key.c_str());
+		const bool yard = (op->key == "StOutdoorGround");
+		if (yard && m_hideYard) continue;	// F1「Hide yard ground」(Z-fighting の原因確認用)
+		if (yard) SetYardRaster(true);		// 地面だけ深度バイアス(戸口の敷居=家の地基の上面と 1.4cm で重なる)
 		// 草だけ VS_Grass(玩家を避けて倒れる)。出力は VS_Wall と同じなので PS/材質はそのまま。
 		const bool grass = IsGrass(op->key) && m_grassMap.IsReady();
 		VertexShader* vs = GetObj<VertexShader>(grass ? "VS_Grass" : "VS_Wall");
 		if (grass && vs) BindGrassParams(vs, *op);
 		CottageRender::Draw(om,PropWorld(*op),GetObj<CameraBase>("Camera"),vs,GetObj<PixelShader>("PS_Wall"),m_coalPos,false,true);
 		if (grass && vs) vs->SetTexture(0, nullptr);	// 次のフレームで貼图を描画先にする前に、読み取り側から外す
+		if (yard) SetYardRaster(false);
 	}
 	drawSky();	// 不透明な物を全部描いた後(空の見える画素だけ)。窓ガラスより前(ガラスは空の上に重ねる)
     if (Prop* house = GetProp("StCottage"))
@@ -401,6 +407,82 @@ void SceneForge::UpdateProbeRoomBox()
 	XMStoreFloat3(&bmn, XMVectorAdd(mn, inset));
 	XMStoreFloat3(&bmx, XMVectorSubtract(mx, inset));
 	ReflectionProbe::SetRoomBox(bmn, bmx);
+}
+
+//--- カメラが家の中か = 反射プローブの部屋の箱(家の境界箱を内側へ縮めた物)の中。UpdateProbeRoomBox の後で呼ぶ。
+bool SceneForge::ShadowCameraIndoors()
+{
+	CameraBase* cam = GetObj<CameraBase>("Camera");
+	XMFLOAT3 mn, mx;
+	if (!cam || !ReflectionProbe::RoomBox(mn, mx)) return true;	// 家が無い=従来通り 20m
+	const XMFLOAT3 e = cam->GetPos();
+	return e.x > mn.x && e.x < mx.x && e.y > mn.y && e.y < mx.y && e.z > mn.z && e.z < mx.z;
+}
+
+//--- 地面用の深度バイアス(depth bias)付きラスタライザ。今のステート(既定 = 裏面も描く)を写し、バイアスだけ足す。
+//    深度バイアス = 深度テストの時だけ面を奥へずらす GPU の機能(D3D11_RASTERIZER_DESC::DepthBias / SlopeScaledDepthBias)。
+//    重なった2枚の面のどちらを前にするかを決めて Z-fighting を止める定番の手(デカールや影の地図と同じ)。
+//    検索: "depth bias z-fighting", "polygon offset" / JP: 深度バイアス
+void SceneForge::SetYardRaster(bool on)
+{
+	static ID3D11RasterizerState* s_prev = nullptr;	// 差し替える前のステート(戻す用)
+	static ID3D11RasterizerState* s_bias = nullptr;	// バイアス付き(値が変わった時だけ作り直す)
+	static int s_biasUnits = 0;
+	ID3D11DeviceContext* ctx = GetContext();
+	if (!on)
+	{
+		if (s_prev) { ctx->RSSetState(s_prev); s_prev->Release(); s_prev = nullptr; }
+		return;
+	}
+	if (!m_yardDepthBias) return;	// F1 で OFF = 何も変えない(原因の確認用)
+	ctx->RSGetState(&s_prev);
+	if (!s_prev) return;
+	if (!s_bias || s_biasUnits != m_yardBiasUnits)
+	{
+		if (s_bias) { s_bias->Release(); s_bias = nullptr; }
+		D3D11_RASTERIZER_DESC desc;
+		s_prev->GetDesc(&desc);
+		desc.DepthBias = m_yardBiasUnits;
+		desc.SlopeScaledDepthBias = YARD_SLOPE_DEPTH_BIAS;
+		if (FAILED(GetDevice()->CreateRasterizerState(&desc, &s_bias))) s_bias = nullptr;
+		s_biasUnits = m_yardBiasUnits;
+	}
+	if (s_bias) ctx->RSSetState(s_bias);
+}
+
+//--- F1「Show shadow range」: 影の地図が掛かる正方形(太陽から見た正方形)を、太陽の向きに沿って床の高さへ落として描く。
+//    この線の外側は「影の計算をしない=全部日向」。屋外 48m / 屋内 20m が切り替わるのも見える。
+void SceneForge::DrawShadowRange()
+{
+	CameraBase* cam = GetObj<CameraBase>("Camera");
+	const SunStage::Resources& r = SunStage::Data();
+	if (!cam || !r.hasShadow) return;
+	const XMFLOAT4 sun = LitRender::Sun();
+	XMVECTOR right, upL; SunStage::LightAxes(sun, right, upL);
+	const XMVECTOR toSun = XMVector3Normalize(XMVectorSet(sun.x, sun.y, sun.z, 0.0f));
+	const float sunY = XMVectorGetY(toSun);
+	const float MIN_SUN_Y = 0.05f;	// 太陽が地平線すれすれ=床へ落とすと無限に伸びる。それ以下は描かない
+	if (sunY < MIN_SUN_Y) return;
+	const XMVECTOR c = XMLoadFloat3(&r.center);
+	const float h = r.width * 0.5f;
+	const float sx[4] = { -1, 1, 1, -1 }, sy[4] = { -1, -1, 1, 1 };
+	XMFLOAT3 q[4];
+	for (int i = 0; i < 4; ++i)
+	{
+		const XMVECTOR p = c + right * (sx[i] * h) + upL * (sy[i] * h);
+		const float t = (XMVectorGetY(p) - m_walkFloorY) / sunY;	// 太陽の光線に沿って床まで下ろす
+		XMStoreFloat3(&q[i], p - toSun * t);
+	}
+	XMFLOAT4X4 id; XMStoreFloat4x4(&id, XMMatrixIdentity());
+	Geometory::SetWorld(id);
+	Geometory::SetView(cam->GetView());
+	Geometory::SetProjection(cam->GetProj());
+	const XMFLOAT4 SHADOW_RANGE_COLOR(0.2f, 0.9f, 1.0f, 1.0f);	// 水色 = 影の範囲
+	Geometory::SetColor(SHADOW_RANGE_COLOR);
+	for (int i = 0; i < 4; ++i) Geometory::AddLine(q[i], q[(i + 1) % 4]);
+	SetDepthTest(DEPTH_DISABLE);	// 壁越しに見える(デバッグ表示)
+	Geometory::DrawLines();
+	SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
 }
 
 //--- 自作の光る炭ベッド。合成炭テクスチャを明るく描き、時間で明滅させる(Bloomで光る)

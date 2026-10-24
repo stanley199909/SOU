@@ -145,6 +145,10 @@ void SceneForge::Init()
 	PixelShader* glintPS = CreateObj<PixelShader>("PS_Glint");
 	if (FAILED(glintPS->Load("Assets/Shader/PS_Glint.cso")))
 		MessageBox(nullptr, "PS_Glint.cso", "Shader Error", MB_OK);
+	// 試し切りの刀光(ウェポントレイル)。形は式で描く(貼图なし)
+	PixelShader* trailPS = CreateObj<PixelShader>("PS_Trail");
+	if (FAILED(trailPS->Load("Assets/Shader/PS_Trail.cso")))
+		MessageBox(nullptr, "PS_Trail.cso", "Shader Error", MB_OK);
 
 	// 光の粒テクスチャ(中心が明るい)
 	const int S = 64;
@@ -362,7 +366,7 @@ void SceneForge::Init()
 	InitTongsGeometry();		// 火钳モデルの形(口の端・挟む点・輪の向き)を読む(Carry.cpp)
 	CottageRender::Load();
 	LoadTuning();	// F1で調整したハンマー/カメラ値(forge_tuning.txt)を復元
-	LoadCourseProgress();	// チュートリアルの済んだ課程(✓)
+	ResetCourseProgress();	// チュートリアルの ✓ は起動の度に空(展示で次の人が来る=保存しない)
 	LoadOptions();			// 玩家の設定(教学アニメの速さ)
 	BuildPropHulls();	// 衝突の凸包: 配置(LoadLayout)と床の高さ(LoadTuning)が決まった後=背丈以下の頂点を選べる
 	// Layout/tuning must be loaded before assigning the walking spawn height.
@@ -389,6 +393,7 @@ void SceneForge::Uninit()
 	DestroyObj("PS_Forge");
 	DestroyObj("PS_Spark");
 	DestroyObj("PS_Glint");
+	DestroyObj("PS_Trail");
 	DestroyObj("VS_Bar");
 	DestroyObj("PS_Bar");
 	DestroyObj("VS_Coal");
@@ -499,7 +504,7 @@ void SceneForge::ResetRunState()
 	m_stepTimes.assign(m_recipe ? m_recipe->steps.size() : 0, StepTime{});	// プレイテスト計時も 0 から
 	for (LessonState& l : m_lessons) l = LessonState{};		// 操作の案内は毎回最初から(新しい人が遊ぶ)
 	m_lessonShown = -1; m_lessonShownRescue = false;
-	m_aimTravel = 0.0f; m_lastAimRail = -1.0f; m_validStrikes = 0; m_bellowsPumps = 0; m_flipCount = 0;	// 案内の「できた」量
+	m_aimTravel = 0.0f; m_lastAimRail = -1.0f; m_validStrikes = 0; m_bellowsHeldSec = 0.0f; m_flipCount = 0;	// 案内の「できた」量
 	m_leaveCount = 0; m_gripCount = 0; m_putCount = 0; m_reachCount = 0; m_heatReadyCount = 0;
 	m_prevFocusGoal = false; m_prevHeatReady = false;
 	m_grindRunTime = 0.0f; m_grindGoodStreak = 0.0f; m_grindAngleHolds = 0; m_grindSlideTravel = 0.0f; m_grindFlipCount = 0;
@@ -537,11 +542,13 @@ void SceneForge::SetupSteps()
 	m_grindStep  = std::make_unique<GrindStep>(this);
 	m_quenchStep = std::make_unique<QuenchStep>(this);
 	m_temperStep = std::make_unique<TemperStep>(this);
+	m_testCutStep = std::make_unique<TestCutStep>(this);
 	m_heatStep->RegisterState(m_stepMachine);
 	m_forgeStep->RegisterState(m_stepMachine);
 	m_grindStep->RegisterState(m_stepMachine);
 	m_quenchStep->RegisterState(m_stepMachine);
 	m_temperStep->RegisterState(m_stepMachine);
+	m_testCutStep->RegisterState(m_stepMachine);
 }
 
 //--- 配方でその種類の工程まで進んだか(その工程が今か、もう済んだ)。工位に入れるかの判定に使う(データ駆動=順序は配方が決める)。
@@ -616,6 +623,9 @@ void SceneForge::StartAtStep(int idx, bool placeNow)
 		{
 		case StepName::Forge: m_forging.CompleteForging();  break;
 		case StepName::Grind: m_forging.CompleteGrinding(); break;
+		case StepName::Temper:	// 焼き戻し済み = 刃先が良い色(試し切りの課程: 色の悪さで「欠けた/まくれた」と言わない様に)
+			for (float& c : m_temperCell) c = (TEMPER_IDEAL_MIN + TEMPER_IDEAL_MAX) * 0.5f;
+			break;
 		default: break;	// 加熱/淬火は形に残らない
 		}
 	}
@@ -626,6 +636,7 @@ void SceneForge::StartAtStep(int idx, bool placeNow)
 	case StepName::Heat:   m_forging.SetHeat(COLD_LIMIT); break;	// 冷えた鉄(すぐ「済」にならない)
 	case StepName::Quench: m_forging.SetHeat((QUENCH_MIN_TEMP + QUENCH_MAX_TEMP) * 0.5f); break;
 	case StepName::Temper: m_forging.SetHeat(0.0f); break;	// 焼入れ後=冷えた刃(焼き戻しは温度を上げない)
+	case StepName::TestCut: m_forging.SetHeat(0.0f); break;	// 仕上がった冷たい剣
 	default:               m_forging.SetHeat(START_HEAT); break;
 	}
 
@@ -653,9 +664,7 @@ void SceneForge::StartAtStep(int idx, bool placeNow)
 //====================================================================
 //  チュートリアルの課程
 //====================================================================
-static const char* COURSE_PROGRESS_PATH = "Assets/tutorial_progress.txt";
-
-//--- 課程の最後の工程が済んだ: ✓ を付けて保存し、「レッスン完了」を見せる(COURSE_DONE_SHOW_SEC 後に一覧へ。Update)。
+//--- 課程の最後の工程が済んだ: ✓ を付け、「レッスン完了」を見せる(COURSE_DONE_SHOW_SEC 後に一覧へ。Update)。
 void SceneForge::CompleteCourse()
 {
 	const float DONE_VOLUME = 0.8f;
@@ -663,7 +672,6 @@ void SceneForge::CompleteCourse()
 	m_courseCompleteAt = m_time;
 	m_clearDecided     = true;	// HUD を消して「レッスン完了」だけを見せる
 	if (m_courseIdx >= 0 && m_courseIdx < (int)m_courseDone.size()) m_courseDone[m_courseIdx] = true;
-	SaveCourseProgress();
 	Audio::Play(Audio::SE_SUCCESS, DONE_VOLUME);
 }
 
@@ -677,7 +685,13 @@ void SceneForge::ReturnToTitle(bool openCourses)
 		ResetTitleStage();						// 1回分の状態を全部戻す(拍子表・翻面・鳴り続ける音も ResetRunState が片付ける)+金床に新しい熱い鉄
 		m_courseComplete = false;
 		m_courseIdx      = -1;
-		if (openCourses && m_recipe)
+		bool openList = openCourses;
+		if (openList && AllCoursesDone())	// 全課程を終えた=この人のチュートリアルは終わり → ✓ を消し、一覧でなく最初のタイトルで次の人を待つ
+		{
+			ResetCourseProgress();
+			openList = false;
+		}
+		if (openList && m_recipe)
 		{
 			m_courseSelectOpen = true;
 			m_courseSel        = (nextCourse < (int)m_recipe->courses.size()) ? nextCourse : (int)m_recipe->courses.size();	// 次の課程(無ければ「戻る」)
@@ -688,29 +702,62 @@ void SceneForge::ReturnToTitle(bool openCourses)
 	});
 }
 
-//--- 済んだ課程の保存/読み込み。1行 = "done <番号> <0/1>"。無い/壊れた行は「まだ」のまま。
-void SceneForge::LoadCourseProgress()
+//--- ✓ を全部外す(起動時 / 全課程を終えた / 通常モードを遊び終えた / タイトル放置 / 手動)。
+void SceneForge::ResetCourseProgress()
 {
 	m_courseDone.assign(m_recipe ? m_recipe->courses.size() : 0, false);
-	FILE* fp = nullptr;
-	if (fopen_s(&fp, COURSE_PROGRESS_PATH, "r") != 0 || !fp) return;
-	char line[64];
-	while (fgets(line, sizeof(line), fp))
-	{
-		int idx = -1, done = 0;
-		if (sscanf_s(line, "done %d %d", &idx, &done) == 2 && idx >= 0 && idx < (int)m_courseDone.size())
-			m_courseDone[idx] = (done != 0);
-	}
-	fclose(fp);
 }
 
-void SceneForge::SaveCourseProgress() const
+bool SceneForge::AllCoursesDone() const
 {
-	FILE* fp = nullptr;
-	if (fopen_s(&fp, COURSE_PROGRESS_PATH, "w") != 0 || !fp) return;
-	for (size_t i = 0; i < m_courseDone.size(); ++i)
-		fprintf(fp, "done %d %d\n", (int)i, m_courseDone[i] ? 1 : 0);
-	fclose(fp);
+	if (m_courseDone.empty()) return false;
+	for (bool done : m_courseDone) if (!done) return false;
+	return true;
+}
+
+//--- タイトルで何か触られたか。キー/マウスのボタン(GetKeyboardState は両方を持つ)・マウスの移動・手柄のボタンとスティック。
+bool SceneForge::TitleInputThisFrame()
+{
+	bool touched = false;
+	for (int key = 1; key < 256; ++key)
+		if (IsKeyPress((BYTE)key)) { touched = true; break; }
+	for (int a = 0; a < (int)Action::Count && !touched; ++a)
+		if (InputActions::Held((Action)a)) touched = true;		// 手柄のボタン(キーは上で見た)
+	float lx, ly, hx, hy;
+	InputActions::LookDelta(lx, ly);
+	InputActions::HandDelta(hx, hy);
+	if (lx != 0.0f || ly != 0.0f || hx != 0.0f || hy != 0.0f) touched = true;	// 手柄のスティック
+	float mx, my, cw, ch;
+	GetMouseClient(mx, my, cw, ch);
+	if (fabsf(mx - m_titleMouseX) > TITLE_MOUSE_MOVE_PX || fabsf(my - m_titleMouseY) > TITLE_MOUSE_MOVE_PX) touched = true;
+	m_titleMouseX = mx; m_titleMouseY = my;
+	return touched;
+}
+
+//--- タイトル: ✓ の自動リセット(放置)と手動リセット(Shift+Delete 長押し)。
+//    放置 = 前の人が去った合図。メニューも閉じて、最初のタイトルで次の人を待つ。
+void SceneForge::UpdateProgressReset(float tick)
+{
+	// 導入の運鏡/黒転じ中は数えない(=遊び始めた/終えた途中)
+	if (m_introPhase != IntroPhase::None || m_fade.IsBusy()) { m_titleIdleSec = 0.0f; m_progressResetHold = 0.0f; return; }
+
+	const bool holding = IsKeyPress(VK_SHIFT) && IsKeyPress(VK_DELETE);
+	m_progressResetHold = holding ? m_progressResetHold + tick : 0.0f;
+	if (m_progressResetHold >= PROGRESS_RESET_HOLD_SEC)
+	{
+		const float NOTE_VOLUME = 0.8f;
+		ResetCourseProgress();
+		m_progressResetHold   = -FLT_MAX;	// 離すまで2回目を出さない(押し続けても1回だけ)
+		m_progressResetNoteAt = m_time;
+		Audio::Play(Audio::SE_LEARNED, NOTE_VOLUME);
+	}
+
+	m_titleIdleSec = TitleInputThisFrame() ? 0.0f : m_titleIdleSec + tick;
+	if (m_titleIdleSec < TITLE_IDLE_RESET_SEC) return;
+	m_titleIdleSec     = 0.0f;
+	ResetCourseProgress();
+	m_modeSelectOpen   = false;
+	m_courseSelectOpen = false;
 }
 
 //--- 今実行中の工程設定(HUD の指示文表示などが読む)。範囲外は端にクランプ。
@@ -861,8 +908,10 @@ void SceneForge::FinishGame()
 }
 
 //--- タイトル: 雰囲気で自動的に火花を出しつつ、SPACEで開始
-void SceneForge::UpdateTitle(float /*tick*/)
+void SceneForge::UpdateTitle(float tick)
 {
+	UpdateProgressReset(tick);	// チュートリアルの ✓: 放置で自動リセット / Shift+Delete 長押しで手動リセット
+
 	// 黒転じは使わない: タイトルはゲーム世界そのもの。
 	// SPACE → モード選択(チュートリアル / 通常モード) → 決定 → ロゴ淡出 → カメラが金床へ → 鍛打(Title.cpp UpdateIntro)。
 	if (m_introPhase != IntroPhase::None || m_fade.IsBusy()) return;
@@ -955,8 +1004,9 @@ void SceneForge::UpdatePlay(float tick)
 	}
 	// --- 工位から鉄を掴んで出る: Q/X。E と同じ条件で出て、出終わったら続けて火钳で掴む(UpdateModeTrans)。
 	//   鉄匠は鉄を置いて離れてから取りに戻らない=火钳で掴んだまま出る。「E で出る → 鉄を見て Q」の2手を1手に(2026-10-17 ユーザー決定)。
+	//   試し切りでは使わない(柄を付けた剣を火ばさみで掴む事は無い。離れるのは E)
 	if (inputOn && m_flipPhase == FlipPhase::None && !quenchLocked && InputActions::Pressed(Action::Grab)
-	    && m_workAt == m_station && !m_carrying)
+	    && m_workAt == m_station && !m_carrying && m_station != Station::TestCut)
 	{
 		m_charging = false; m_charge = 0.0f;
 		BeginExitStation();
@@ -981,31 +1031,27 @@ void SceneForge::UpdatePlay(float tick)
 	//   自然冷却は鉄そのものの物理なので simOn で毎フレーム進める=走動中も冷める。
 	//   熱源は炉の炭火: 鉄が炉に置かれている間(m_workAt==Hearth)だけ熱が入る。
 	//   風箱は炉の工位で玩家が行う行為なので inputOn の時だけ=炭火に追加で風を送る。
-	//   2026-10-19(ユーザー決定 10-15「ふいごは押す毎に」): 押しっぱなしでなく、1回押す=1回踏んで風を送る(中世の足踏みふいご)。
-	//   送った風は炉の中に溜まり(m_bellowsAir 0..1)、踏まなければ少しずつ抜ける=続けて踏むほど炭が熾る。
+	//   2026-10-22(ユーザー決定。10-19 の「押す毎に1回踏む」を置き換え): R を押している間だけ風が送られる。
+	//     押す = 風(m_bellowsAir 0..1)が Lerp::Damp でだんだん強くなる / 離す = だんだん弱まり、炭火だけの速さへ戻る。
+	//     旧方式は「離しても溜まった風で数秒速いまま」「踏んだ後 2.2 秒は押しても無反応」で、操作と結果が結び付かなかった。
 	const bool simOn  = !ToolUiOpen() && !m_fade.IsBusy();
 	const bool inFire = !m_carrying && m_workAt == Station::Hearth;
-	// 一押し = 音(bellows_pump.wav)1回分。前の一押しから BELLOWS_PUMP_INTERVAL 経つまでは踏めない(速すぎる連打は無視=砥石のペダルと同じ)
-	if (inputOn && m_station == Station::Hearth && InputActions::Pressed(Action::Bellows)
-	    && (m_time - m_bellowsPumpAt) >= BELLOWS_PUMP_INTERVAL)
+	const bool pumping = inputOn && m_station == Station::Hearth && InputActions::Held(Action::Bellows);
+	if (pumping)
 	{
-		++m_bellowsPumps;	// 操作の案内: ふいごを踏んだ回数(LessonMetric: Bellows)
-		Haptics::Pulse(RUMBLE_BELLOWS, BELLOWS_PUMP_RUMBLE_SEC);
-		Audio::PlayAt(Audio::SE_BELLOWS_PUMP, PropCenter("StBellows", CoalPos()), BELLOWS_PUMP_VOLUME);	// 踏む毎に一押しの音(唸りの上に段落が乗る)
-		m_bellowsPumpAt = m_time;
+		m_bellowsHeldSec += tick;	// 操作の案内: ふいごを押していた秒(LessonMetric: Bellows)
+		// 押した瞬間に「フッ」+ 震動。押し続けている間は、音1回分(BELLOWS_PUMP_INTERVAL)ごとに鳴らし直す=踏み続けている音
+		if (InputActions::Pressed(Action::Bellows) || (m_time - m_bellowsPumpAt) >= BELLOWS_PUMP_INTERVAL)
+		{
+			Haptics::Pulse(RUMBLE_BELLOWS, BELLOWS_PUMP_RUMBLE_SEC);
+			Audio::PlayAt(Audio::SE_BELLOWS_PUMP, PropCenter("StBellows", CoalPos()), BELLOWS_PUMP_VOLUME);
+			m_bellowsPumpAt = m_time;
+		}
 	}
-	// 音の「フーッ」の間(BLOW_START〜BLOW_END)だけ、風は少しずつ炉へ入る=聞こえている風と炉が熾る時が一致する
-	const float sincePump = m_time - m_bellowsPumpAt;
-	const bool  blowing   = sincePump >= BELLOWS_BLOW_START_SEC && sincePump < BELLOWS_BLOW_END_SEC;
 	if (simOn)
-	{
-		if (blowing) m_bellowsAir = fminf(m_bellowsAir + BELLOWS_PUMP * tick / (BELLOWS_BLOW_END_SEC - BELLOWS_BLOW_START_SEC), 1.0f);
-		m_bellowsAir = Lerp::Damp(m_bellowsAir, 0.0f, BELLOWS_AIR_DECAY, tick);
-	}
-	// ふいごの見た目: 「フーッ」が終わるまで押し下がり(風が出ている間=潰れていく)、その後 BELLOWS_REFILL_SEC で膨らみ直す。
-	//   次に踏めるのは戻り切った後(BELLOWS_PUMP_INTERVAL)なので、最速の節奏でも「潰れる→戻る」が毎回見える
-	const bool pressing = sincePump < BELLOWS_BLOW_END_SEC;
-	m_bellowsSquash = Lerp::Damp(m_bellowsSquash, pressing ? 1.0f : 0.0f, pressing ? BELLOWS_PRESS_LAMBDA : BELLOWS_REFILL_LAMBDA, tick);
+		m_bellowsAir = Lerp::Damp(m_bellowsAir, pumping ? 1.0f : 0.0f, pumping ? BELLOWS_AIR_RISE : BELLOWS_AIR_FALL, tick);
+	// ふいごの見た目: 押している間は押し下がり、離すと BELLOWS_REFILL_SEC で膨らみ直す
+	m_bellowsSquash = Lerp::Damp(m_bellowsSquash, pumping ? 1.0f : 0.0f, pumping ? BELLOWS_PRESS_LAMBDA : BELLOWS_REFILL_LAMBDA, tick);
 	const float air = m_bellowsAir;	// 0 = 炭火だけ / 1 = 風を送り続けて一番熾った状態
 	if (simOn)
 	{
@@ -1061,6 +1107,7 @@ void SceneForge::UpdatePlay(float tick)
 		UpdateBurnFx(tick);
 		UpdateGrind(tick, inputOn);
 		UpdateTemper(tick, inputOn);	// 焼き戻し(炉の工位で、工程が焼き戻しの時だけ働く)
+		UpdateTestCutStation(tick, inputOn);	// 試し切り(藁人形の工位で剣を構えている時だけ働く。TestCut.cpp)
 	}
 	const bool atAnvil = (m_station == Station::Anvil);	// 鍛打(照準/蓄力/打撃)は金床の工位だけ
 
@@ -1964,6 +2011,7 @@ void SceneForge::UpdateResult(float /*tick*/)
 		m_fade.Transition([this] {
 			m_state = GAME_TITLE;
 			ResetTitleStage();	// 金床の上を「新しい熱い鉄」に戻す(完成した剣は片付ける)
+			ResetCourseProgress();	// 通常モードを最後まで遊んだ=この人は終わり → 次の人の為にチュートリアルの ✓ を消す
 			Audio::Stop(Audio::BGM_RESULT);				// 結果BGMを止める
 			Audio::PlayLoop(Audio::BGM_TITLE, TITLE_BGM_VOLUME);	// タイトルBGMを再開
 		});
@@ -2120,6 +2168,7 @@ void SceneForge::Update(float tick)
 
 	if (IsKeyTrigger(VK_F2)) m_lightPanelOpen = !m_lightPanelOpen;	// 設計者用: ライティング確認パネル(HUD.cpp DrawLightPanel)
 	if (IsKeyTrigger(VK_F3)) m_profilerPanelOpen = !m_profilerPanelOpen;	// 設計者用: 処理の重さ(GPU 計時)。遊びながら見られる様に入力は止めない
+	if (IsKeyTrigger('H')) m_shotMode = (ShotMode)(((int)m_shotMode + 1) % (int)ShotMode::Count);	// 撮影用: 普通 → UI なし → UI なし+「一刀両断」なし → 普通
 	UpdateCursorVisibility();	// 一時停止中も決める(下で return する前に)
 
 	// --- 一時停止メニュー(ESC)。開いている間は世界を止める(以下の更新を全部飛ばす=時間・温度・粒子も止まる) ---
@@ -2180,14 +2229,16 @@ void SceneForge::Update(float tick)
 			if (m_player.WantInteract() && m_focus >= 0) DoInteract(INTERACTABLES[m_focus]);
 			// 鉄を掴むのは別のキー(Q/X)。鉄は工位の上にあるので、同じキーだと「工位に入る」つもりで掴んでしまう(試遊 10-15)
 			else if (m_grabFocus >= 0 && InputActions::Pressed(Action::Grab)) DoInteract(INTERACTABLES[m_grabFocus]);
-			// 試し切り(段階1): 手が空いていれば「使う」で斬る。藁人形に届かなければ空振り(TestCut.cpp)
-			if (!m_carrying && InputActions::Pressed(Action::Use)) SlashTestCut();
 		}
 		else if (m_flipPhase != FlipPhase::None)
 		{
 			// 翻面中(F を押し続けている間)はハンマーを置いている=狙いも視角も動かさない(回すのは F だけ)。
 			// マウス移動は読んで捨てる(光標は中心へ戻す)=翻面明けに溜まった移動量で視点が跳ばない。
 			float dx, dy; ReadMouseDelta(dx, dy);
+		}
+		else if (m_station == Station::TestCut)
+		{
+			UpdateTestCutLook();			// 試し切り: 脚は固定、マウス/右スティックで見回す(準心の所を斬る)
 		}
 		else if (m_station != Station::Anvil)
 		{
@@ -2287,11 +2338,14 @@ void SceneForge::Draw()
 		if (ReflectionProbe::RoomBox(roomMin, roomMax))	// 空気は部屋の中だけ(反射プローブと同じ箱)
 			VolumetricLight::Render(GetObj<CameraBase>("Camera"), g_pPost ? g_pPost->GetSceneRT() : nullptr, GetObj<DepthStencil>("DSV"), roomMin, roomMax);
 	}
-	if (DebugUI::IsVisible()) { DrawDebugBoxes(); DrawInteractBoxes(); }	// F1中はAABB/箱・互動範囲を線で表示
+	if (DebugUI::IsVisible()) DrawDebugBoxes();	// F1中はAABB/箱を線で表示
+	if (DebugUI::IsVisible() || m_showInteract) DrawInteractBoxes();	// 互動範囲の箱 + 目線(F1 最上段「Show interact」なら F1 を閉じて歩きながらも)
+	if (m_showShadowRange) DrawShadowRange();	// 太陽の影の範囲(F1 最上段「Show shadow range」。水色の正方形。壁越しに透視)
 	if (m_showCollision) DrawCollision();	// 衝突形状(F1 最上段「Show collision」で ON。壁越しに透視。F1を閉じて歩きながらも見られる)
 
 	{ GpuProfiler::Scope t((const char*)u8"火の粉・蒸気"); DrawEmbers(); DrawSteam(); }	// 炭火から立ち上る余燼(火花描画より前に) / 淬火の蒸気
 	DrawGrindGlints();	// 研ぎの区域が仕上がった瞬間の光芒(刃の手前に加算で重ねる)
+	DrawSwordTrail();	// 試し切りの刀光(加算。剣の後ろに残る光の帯。TestCut.cpp)
 	{ GpuProfiler::Scope t((const char*)u8"手に持った物"); DrawViewmodel(); }	// 手に持った鉄+火钳(深度範囲を詰めて手前に。運んでいない時は何もしない。Carry.cpp)
 
 	CameraBase* pCamera = GetObj<CameraBase>("Camera");

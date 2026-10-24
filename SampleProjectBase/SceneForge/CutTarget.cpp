@@ -65,6 +65,102 @@ namespace
     }
 }
 
+MeshSlicer::Mesh MakeBoxMesh(const XMFLOAT3& center, const XMFLOAT3& halfSize)
+{
+    return MakeBox(center, halfSize);
+}
+
+bool CutTarget::WorldBox(XMFLOAT3& mn, XMFLOAT3& mx) const
+{
+    if (m_standing.empty()) return false;
+    XMFLOAT3 lmn, lmx;
+    StandingBox(lmn, lmx);
+    const XMMATRIX w = World();
+    mn = XMFLOAT3(FLT_MAX, FLT_MAX, FLT_MAX);
+    mx = XMFLOAT3(-FLT_MAX, -FLT_MAX, -FLT_MAX);
+    for (int i = 0; i < 8; ++i)
+    {
+        XMFLOAT3 c((i & 1) ? lmx.x : lmn.x, (i & 2) ? lmx.y : lmn.y, (i & 4) ? lmx.z : lmn.z);
+        XMFLOAT3 p; XMStoreFloat3(&p, XMVector3TransformCoord(XMLoadFloat3(&c), w));
+        mn.x = fminf(mn.x, p.x); mn.y = fminf(mn.y, p.y); mn.z = fminf(mn.z, p.z);
+        mx.x = fmaxf(mx.x, p.x); mx.y = fmaxf(mx.y, p.y); mx.z = fmaxf(mx.z, p.z);
+    }
+    return true;
+}
+
+CutTarget::StrikeResult CutTarget::Strike(const XMFLOAT3& pointW, const XMFLOAT3& normalW, const XMFLOAT3& swingDir, float damage,
+                                          float pushScale, float holdSevered)
+{
+    StrikeResult r;
+    // the plane in local space (same as Cut)
+    const XMMATRIX inv = XMMatrixInverse(nullptr, World());
+    XMFLOAT3 p, n;
+    XMStoreFloat3(&p, XMVector3TransformCoord(XMLoadFloat3(&pointW), inv));
+    XMStoreFloat3(&n, XMVector3Normalize(XMVector3TransformNormal(XMLoadFloat3(&normalW), inv)));
+
+    // which parts does the plane cross (a vertex on each side)
+    std::vector<bool> crossed(m_defs.size(), false);
+    for (const Piece& piece : m_standing)
+    {
+        bool pos = false, neg = false;
+        for (const MeshSlicer::Vertex& v : piece.mesh.verts)
+        {
+            if (PlaneDist(v.pos, p, n) > 0.0f) pos = true; else neg = true;
+            if (pos && neg) { crossed[piece.part] = true; break; }
+        }
+    }
+
+    // every crossed part takes the damage; the slash goes through only if all of them give
+    float worstLeft = 0.0f;
+    bool allGive = true;
+    for (size_t i = 0; i < m_defs.size(); ++i)
+    {
+        if (!crossed[i]) continue;
+        r.hit = true;
+        if (m_defs[i].kind == PartKind::Armor) r.armorHit = true;
+        m_damage[i] += damage;
+        const float left = m_defs[i].durability - m_damage[i];
+        if (left > 0.0f) allGive = false;
+        if (r.stoppedBy < 0 || left > worstLeft) { worstLeft = left; r.stoppedBy = (int)i; }
+    }
+    if (!r.hit) return r;
+    if (!allGive) return r;            // stopped by r.stoppedBy
+
+    r.stoppedBy = -1;
+    // How much of the torso stands before the cut (to tell "cut in two" from "a chip off it")
+    const float coreBefore = StandingVolume(true);
+    if (!Cut(pointW, normalW, swingDir, pushScale)) return r;
+    r.cut = true;
+    for (size_t i = 0; i < m_defs.size(); ++i)
+    {
+        if (!crossed[i]) continue;
+        m_damage[i] = 0.0f;           // a fresh edge: the remaining part has to be worked again
+        if (m_defs[i].core) r.coreCut = true;
+    }
+    if (r.coreCut && coreBefore > 0.0f)
+    {
+        // The smaller of the two sides of the torso, as a share of the torso that stood before this cut.
+        //   Cut through the middle -> both sides are big. A slice off the side -> one side is tiny.
+        //   (2026-10-21 F5: measured against the ORIGINAL torso, a torso first trimmed by a few chips
+        //    could never be "cut in two" any more -- every later half was below the share.)
+        const float coreAfter = StandingVolume(true);
+        const float fell = coreBefore - coreAfter;
+        r.coreSplit = fminf(coreAfter, fell) / coreBefore;
+        r.severed = r.coreSplit >= severMinShare;
+        // cut in two: the falling half hangs a moment before it slides off (the "beat")
+        if (r.severed && !m_debris.empty()) m_debris.back().hold = holdSevered;
+    }
+    return r;
+}
+
+float CutTarget::StandingVolume(bool coreOnly) const
+{
+    float v = 0.0f;
+    for (const Piece& p : m_standing)
+        if (!coreOnly || m_defs[p.part].core) v += MeshSlicer::Volume(p.mesh);
+    return v;
+}
+
 void CutTarget::Upload(Piece& p)
 {
     if (p.mesh.Empty()) { p.gpu.reset(); return; }
@@ -80,15 +176,17 @@ void CutTarget::Upload(Piece& p)
     p.gpu = std::make_shared<MeshBuffer>(desc);
 }
 
-void CutTarget::Build(const PartDef* defs, int count)
+void CutTarget::Build(const PartDef* defs, int count, const std::vector<MeshSlicer::Mesh>* meshes)
 {
     m_defs.assign(defs, defs + count);
+    m_damage.assign(count, 0.0f);
     m_standing.clear();
     m_debris.clear();
     for (int i = 0; i < count; ++i)
     {
         Piece p;
-        p.mesh = MakeBox(defs[i].center, defs[i].halfSize);
+        const bool fromModel = meshes && i < (int)meshes->size() && !(*meshes)[i].Empty();
+        p.mesh = fromModel ? (*meshes)[i] : MakeBox(defs[i].center, defs[i].halfSize);
         p.part = i;
         Upload(p);
         m_standing.push_back(p);
@@ -134,7 +232,7 @@ bool CutTarget::RayHit(const XMFLOAT3& origin, const XMFLOAT3& dir, float& t) co
     return true;
 }
 
-bool CutTarget::Cut(const XMFLOAT3& pointW, const XMFLOAT3& normalW, const XMFLOAT3& swingDir)
+bool CutTarget::Cut(const XMFLOAT3& pointW, const XMFLOAT3& normalW, const XMFLOAT3& swingDir, float pushScale, float holdSec)
 {
     // the plane in the target's local space
     const XMMATRIX world = World();
@@ -231,12 +329,13 @@ bool CutTarget::Cut(const XMFLOAT3& pointW, const XMFLOAT3& normalW, const XMFLO
     XMStoreFloat4(&rot, XMQuaternionRotationRollPitchYaw(0.0f, m_yaw, 0.0f));
     d.body.Init(pts, mass, half, comW, rot);
 
-    // the blade's push, applied where the blade went through (so it also sets the piece turning)
+    // the blade's push, applied where the blade went through (so it also sets the piece turning).
+    // Given when the piece starts to fall (after holdSec), not now.
     XMVECTOR swing = XMVector3Normalize(XMLoadFloat3(&swingDir));
-    XMVECTOR vel = XMVectorAdd(XMVectorScale(swing, pushSpeed), XMVectorScale(XMLoadFloat3(&faceNW), sepSpeed));
-    XMFLOAT3 impulse;
-    XMStoreFloat3(&impulse, XMVectorScale(vel, mass));
-    d.body.ApplyImpulse(impulse, pointW);
+    XMVECTOR vel = XMVectorAdd(XMVectorScale(swing, pushSpeed * pushScale), XMVectorScale(XMLoadFloat3(&faceNW), sepSpeed));
+    XMStoreFloat3(&d.impulse, XMVectorScale(vel, mass));
+    d.impulseAt = pointW;
+    d.hold = holdSec;
 
     d.planes.push_back(Ground());
     if (capN > 0) d.planes.push_back({ capCW, faceNW, capR });
@@ -246,10 +345,19 @@ bool CutTarget::Cut(const XMFLOAT3& pointW, const XMFLOAT3& normalW, const XMFLO
 
 void CutTarget::Update(float dt)
 {
-    for (Debris& d : m_debris) d.body.Update(dt, d.planes, physics);
+    for (Debris& d : m_debris)
+    {
+        if (d.hold > 0.0f) { d.hold -= dt; continue; }   // still hanging in place (the beat after a clean cut)
+        if (d.impulse.x != 0.0f || d.impulse.y != 0.0f || d.impulse.z != 0.0f)
+        {
+            d.body.ApplyImpulse(d.impulse, d.impulseAt);   // now the blade's push sends it off
+            d.impulse = XMFLOAT3(0, 0, 0);
+        }
+        d.body.Update(dt, d.planes, physics);
+    }
 }
 
-void CutTarget::Draw(CameraBase* camera)
+void CutTarget::Draw(CameraBase* camera, float highlight)
 {
     if (!camera) return;
     auto drawPiece = [&](const Piece& p, FXMMATRIX world)
@@ -257,7 +365,7 @@ void CutTarget::Draw(CameraBase* camera)
         if (!p.gpu) return;
         const PartDef& def = m_defs[p.part];
         std::shared_ptr<Texture> tex = TextureCache::Get(def.texture);
-        LitRender::DrawMesh(p.gpu.get(), tex.get(), world, camera, PropMaterials::Find(def.materialKey));
+        LitRender::DrawMesh(p.gpu.get(), tex.get(), world, camera, PropMaterials::Find(def.materialKey), highlight);
     };
     const XMMATRIX world = World();
     for (const Piece& p : m_standing) drawPiece(p, world);

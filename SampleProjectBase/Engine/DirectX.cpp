@@ -50,7 +50,11 @@ HRESULT InitDirectX(HWND hWnd, UINT width, UINT height, bool fullscreen)
 	UINT numDriverTypes = ARRAYSIZE(driverTypes);
 
 	UINT createDeviceFlags = 0;
+#ifdef _DEBUG
+	// Debug layer only in Debug builds: it exists only on PCs with the Windows SDK / Graphics Tools.
+	// Setting it in Release made device creation fail on ordinary PCs (window opened and closed, 2026-10-23).
 	createDeviceFlags |= D3D11_CREATE_DEVICE_DEBUG;
+#endif
 
 	// �@�\���x��
 	D3D_FEATURE_LEVEL featureLevels[] =

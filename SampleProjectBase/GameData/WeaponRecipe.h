@@ -18,6 +18,7 @@ enum class StepName
     Grind,    // sharpen the edge on the grindstone (rough grind, before hardening)
     Quench,   // plunge the burning blade into water to harden it
     Temper,   // warm the hardened blade gently above the coals; stop when the edge shows the right oxide color
+    TestCut,  // fit a hilt and cut an armored straw dummy: the forged quality becomes the sword's cutting power
 };
 
 // Work places in the smithy. The player walks to one and presses E to work there;
@@ -28,6 +29,7 @@ enum class Station
     Hearth,      // the forge fire (heating). Always usable: re-heat whenever the iron cools
     Grindstone,  // pedal-driven sharpening wheel
     Trough,      // water trough (quenching)
+    TestCut,     // the straw dummy outside the cottage (test cut). Not a prop: SceneForge::m_cutTarget
 };
 
 // One entry in a recipe = one step. Holds only fields common to every step.

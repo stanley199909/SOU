@@ -202,9 +202,14 @@ bool ForgingSim::BothSidesDone() const
 ForgingSim::GrindOutcome ForgingSim::ApplyGrind(int side, float lenCoord, float dt)
 {
     // Fixed rate: one bevel = NL cell-units of work over grindSecondsPerSide seconds.
+    // Only the segment under the wheel gains (each segment = 1/NSEG of the bevel, so one
+    // segment takes grindSecondsPerSide / NSEG seconds of valid grinding).
     const float MIN_SECONDS = 1.0f;   // guard against a zero/negative slider value
     const float work = (float)NL * dt / fmaxf(grindSecondsPerSide, MIN_SECONDS);
-    if (m_edge[side ? 1 : 0].Apply(lenCoord, work, grindSpread) == WorkField::Result::AlreadyDone)
+    int seg = (int)(lenCoord / (float)CELLS_PER_SEG);
+    if (seg < 0) seg = 0;
+    if (seg > NSEG - 1) seg = NSEG - 1;
+    if (m_edge[side ? 1 : 0].ApplySegment(seg, NSEG, work) == WorkField::Result::AlreadyDone)
         return GrindOutcome::AlreadySharp;   // grinding a finished edge only wastes metal
     return GrindOutcome::Sharpened;
 }

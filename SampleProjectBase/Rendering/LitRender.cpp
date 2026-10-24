@@ -155,11 +155,11 @@ namespace LitRender
 		EndDraw();
 	}
 
-	void DrawMesh(MeshBuffer* mesh, Texture* baseColor, FXMMATRIX world, CameraBase* camera, const PropMaterial& mat)
+	void DrawMesh(MeshBuffer* mesh, Texture* baseColor, FXMMATRIX world, CameraBase* camera, const PropMaterial& mat, float highlight)
 	{
 		if (!mesh || !camera || !SunStage::Init()) return;
 		auto& r = SunStage::Data();
-		BeginDraw(world, camera, mat, 0.0f, XMFLOAT4(0, 0, 0, 0), 0.0f);
+		BeginDraw(world, camera, mat, highlight, XMFLOAT4(0, 0, 0, 0), 0.0f);
 		r.propPS.SetTexture(0, baseColor);
 		r.propPS.Bind();
 		SunStage::BindShadow();

@@ -21,6 +21,7 @@ struct Resources {
  ComPtr<ID3D11RasterizerState> raster;
  VertexShader vs; PixelShader skyPS; PixelShader propPS; Model sky;
  XMFLOAT4X4 lightVP{};
+ XMFLOAT3 center{}; float width=0;   // snapped centre + side (m) of the square the current map covers (debug draw)
  uint64_t signature=0; bool initialized=false,ready=false,hasShadow=false;
 };
 inline Resources& Data() {static Resources r;return r;}
@@ -42,6 +43,24 @@ inline bool Init() {
  if(FAILED(GetDevice()->CreateRasterizerState(&rd,&r.raster)))return false;
  r.ready=true;return true;
 }
+// The light's own right/up axes, the same ones XMMatrixLookAtLH builds in Prepare
+// (forward = toward the scene, right = up x forward). The shadow map is a square in the right/upL plane.
+inline void LightAxes(const XMFLOAT4& sun,XMVECTOR& right,XMVECTOR& upL) {
+ XMVECTOR dir=XMVectorSet(sun.x,sun.y,sun.z,0);
+ if(XMVectorGetX(XMVector3LengthSq(dir))<SunDirectionMinLengthSq)dir=XMVectorSet(0,1,0,0);
+ dir=XMVector3Normalize(dir);
+ const XMVECTOR up=fabsf(XMVectorGetY(dir))>VerticalSunThreshold?XMVectorSet(0,0,1,0):XMVectorSet(0,1,0,0);
+ const XMVECTOR fwd=-dir; right=XMVector3Normalize(XMVector3Cross(up,fwd)); upL=XMVector3Cross(fwd,right);
+}
+// Caster culling for an orthographic light: a bounding sphere can put shadow into the map only if it
+// overlaps the square as seen FROM THE SUN (offset measured along right/upL). Ground distance from the
+// centre is the wrong test: with the sun low, a tree far away still throws a long shadow into the square.
+inline bool CasterInRange(const XMFLOAT4& sun,const XMFLOAT3& center,float width,const XMFLOAT3& sphereCenter,float radius) {
+ XMVECTOR right,upL;LightAxes(sun,right,upL);
+ const XMVECTOR d=XMLoadFloat3(&sphereCenter)-XMLoadFloat3(&center);
+ const float half=width*.5f+radius;
+ return fabsf(XMVectorGetX(XMVector3Dot(d,right)))<=half && fabsf(XMVectorGetX(XMVector3Dot(d,upL)))<=half;
+}
 inline Item MakeItem(Model* m, FXMMATRIX world) {Item i{};i.model=m;XMStoreFloat4x4(&i.world,world);return i;}
 inline void Hash(uint64_t& h,const void* bytes,size_t count) {
  constexpr uint64_t FnvPrime=1099511628211ull;
@@ -58,7 +77,7 @@ inline void Prepare(const std::vector<Item>& items,const XMFLOAT4& sun,const XMF
  dir=XMVector3Normalize(dir);XMVECTOR at=XMLoadFloat3(&center);
  XMVECTOR up=fabsf(XMVectorGetY(dir))>VerticalSunThreshold?XMVectorSet(0,0,1,0):XMVectorSet(0,1,0,0);
  {  // texel snapping: same axes as XMMatrixLookAtLH (forward = toward the scene, right = up x forward)
-  const XMVECTOR fwd=-dir, right=XMVector3Normalize(XMVector3Cross(up,fwd)), upL=XMVector3Cross(fwd,right);
+  XMVECTOR right,upL;LightAxes(sun,right,upL);
   const float texel=width/float(ShadowSize);
   const float x=XMVectorGetX(XMVector3Dot(at,right)), y=XMVectorGetX(XMVector3Dot(at,upL));
   at=at+right*(floorf(x/texel)*texel-x)+upL*(floorf(y/texel)*texel-y);
@@ -68,7 +87,7 @@ inline void Prepare(const std::vector<Item>& items,const XMFLOAT4& sun,const XMF
  for(const auto& i:items){Hash(h,&i.model,sizeof(i.model));Hash(h,&i.world,sizeof(i.world));}
  if(r.hasShadow && h==r.signature)return;
  XMMATRIX view=XMMatrixLookAtLH(at+dir*LightDistance,at,up),proj=XMMatrixOrthographicLH(width,width,ShadowNear,ShadowFar);
- XMStoreFloat4x4(&r.lightVP,XMMatrixTranspose(view*proj));
+ XMStoreFloat4x4(&r.lightVP,XMMatrixTranspose(view*proj));r.center=snapped;r.width=width;
  auto* ctx=GetContext();ComPtr<ID3D11RenderTargetView> rt;ComPtr<ID3D11DepthStencilView> oldDepth;ComPtr<ID3D11RasterizerState> oldRaster;
  ctx->OMGetRenderTargets(1,&rt,&oldDepth);ctx->RSGetState(&oldRaster);
  UINT count=D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;D3D11_VIEWPORT oldVP[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];ctx->RSGetViewports(&count,oldVP);

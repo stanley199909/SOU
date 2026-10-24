@@ -27,6 +27,11 @@ public:
     // Take `amount` cell-units of work around `coord`. spread = Gaussian sigma in cells.
     // AlreadyDone (nothing taken) when no unfinished cell is really within reach.
     Result Apply(float coord, float amount, float spread);
+    // Take `amount` cell-units of work from segment s (of nseg) only, shared evenly by its
+    // unfinished cells. Used by grinding (2026-10-22 user decision): the segment under the
+    // wheel always gains, so a job can never hang at 99% hunting for one stray cell.
+    // AlreadyDone when the whole segment is finished.
+    Result ApplySegment(int s, int nseg, float amount);
 
     float CellProgress(int i) const { return 1.0f - m_left[i]; }   // 0..1
     bool  CellDone(int i)     const { return m_left[i] <= 0.0f; }  // exact: work is floored at 0

@@ -72,8 +72,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	UpdateWindow(hWnd);
 
 	// ����������
-	if (FAILED(Init(hWnd, SCREEN_WIDTH, SCREEN_HEIGHT)))
+	const HRESULT initHr = Init(hWnd, SCREEN_WIDTH, SCREEN_HEIGHT);
+	if (FAILED(initHr))
 	{
+		// 黙って終わらない: 他の PC で起動できない時、原因(HRESULT)を伝えてもらえる様に(2026-10-23 同級生の PC で窓が一瞬で閉じた)
+		char msg[128];
+		sprintf_s(msg, "Failed to initialize the game (DirectX 11).\nError code: 0x%08X", (unsigned)initHr);
+		MessageBoxA(hWnd, msg, "FORGE", MB_OK | MB_ICONERROR);
 		Uninit();
 		UnregisterClass(wcex.lpszClassName, hInstance);
 		return 0;

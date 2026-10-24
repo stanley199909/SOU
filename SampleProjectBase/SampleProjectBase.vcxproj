@@ -73,18 +73,18 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <LinkIncremental>true</LinkIncremental>
-    <IncludePath>$(ProjectDir);$(ProjectDir)GameLogic;$(ProjectDir)GameData;$(ProjectDir)StateMachine;$(ProjectDir)StateMachine\Player;$(ProjectDir)Physics;$(ProjectDir)ImGui;$(ProjectDir)ThirdParty\SDL3\include;$(IncludePath)</IncludePath>
+    <IncludePath>$(ProjectDir);$(ProjectDir)Engine;$(ProjectDir)Rendering;$(ProjectDir)Scenes;$(ProjectDir)GameLogic;$(ProjectDir)GameData;$(ProjectDir)StateMachine;$(ProjectDir)StateMachine\Player;$(ProjectDir)Physics;$(ProjectDir)ImGui;$(ProjectDir)ThirdParty\SDL3\include;$(IncludePath)</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <LinkIncremental>false</LinkIncremental>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
-    <IncludePath>$(ProjectDir);$(ProjectDir)GameLogic;$(ProjectDir)GameData;$(ProjectDir)StateMachine;$(ProjectDir)StateMachine\Player;$(ProjectDir)Physics;$(ProjectDir)ImGui;$(ProjectDir)ThirdParty\SDL3\include;$(IncludePath)</IncludePath>
+    <IncludePath>$(ProjectDir);$(ProjectDir)Engine;$(ProjectDir)Rendering;$(ProjectDir)Scenes;$(ProjectDir)GameLogic;$(ProjectDir)GameData;$(ProjectDir)StateMachine;$(ProjectDir)StateMachine\Player;$(ProjectDir)Physics;$(ProjectDir)ImGui;$(ProjectDir)ThirdParty\SDL3\include;$(IncludePath)</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>false</LinkIncremental>
-    <IncludePath>$(ProjectDir);$(ProjectDir)GameLogic;$(ProjectDir)GameData;$(ProjectDir)StateMachine;$(ProjectDir)StateMachine\Player;$(ProjectDir)Physics;$(ProjectDir)ImGui;$(ProjectDir)ThirdParty\SDL3\include;$(IncludePath)</IncludePath>
+    <IncludePath>$(ProjectDir);$(ProjectDir)Engine;$(ProjectDir)Rendering;$(ProjectDir)Scenes;$(ProjectDir)GameLogic;$(ProjectDir)GameData;$(ProjectDir)StateMachine;$(ProjectDir)StateMachine\Player;$(ProjectDir)Physics;$(ProjectDir)ImGui;$(ProjectDir)ThirdParty\SDL3\include;$(IncludePath)</IncludePath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -180,10 +180,10 @@
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="Box.cpp" />
-    <ClCompile Include="Player.cpp" />
-    <ClCompile Include="Deferred.cpp" />
-    <ClCompile Include="PostProcess.cpp" />
+    <ClCompile Include="Engine\Box.cpp" />
+    <ClCompile Include="GameLogic\Player.cpp" />
+    <ClCompile Include="Rendering\Deferred.cpp" />
+    <ClCompile Include="Rendering\PostProcess.cpp" />
     <ClCompile Include="GameLogic\AimSystem.cpp" />
     <ClCompile Include="GameLogic\Lerp.cpp" />
     <ClCompile Include="GameLogic\HingedDoor.cpp" />
@@ -210,6 +210,7 @@
     <ClCompile Include="StateMachine\StateBase.cpp" />
     <ClCompile Include="StateMachine\Player\HeatStep.cpp" />
     <ClCompile Include="StateMachine\Player\TemperStep.cpp" />
+    <ClCompile Include="StateMachine\Player\TestCutStep.cpp" />
     <ClCompile Include="StateMachine\Player\ForgeStep.cpp" />
     <ClCompile Include="StateMachine\Player\QuenchStep.cpp" />
     <ClCompile Include="StateMachine\Player\GrindStep.cpp" />
@@ -225,9 +226,9 @@
     <ClCompile Include="SceneForge\Title.cpp" />
     <ClCompile Include="SceneForge\Carry.cpp" />
     <ClCompile Include="SceneForge\Sequence.cpp" />
-    <ClCompile Include="SceneParticleLab.cpp" />
-    <ClCompile Include="Audio.cpp" />
-    <ClCompile Include="DebugUI.cpp" />
+    <ClCompile Include="Scenes\SceneParticleLab.cpp" />
+    <ClCompile Include="Engine\Audio.cpp" />
+    <ClCompile Include="Engine\DebugUI.cpp" />
     <ClCompile Include="imgui\imgui.cpp" />
     <ClCompile Include="imgui\imgui_draw.cpp" />
     <ClCompile Include="imgui\imgui_tables.cpp" />
@@ -235,37 +236,37 @@
     <ClCompile Include="imgui\imgui_demo.cpp" />
     <ClCompile Include="imgui\imgui_impl_dx11.cpp" />
     <ClCompile Include="imgui\imgui_impl_win32.cpp" />
-    <ClCompile Include="CameraDCC.cpp" />
-    <ClCompile Include="CameraBase.cpp" />
-    <ClCompile Include="DirectX.cpp" />
-    <ClCompile Include="Input.cpp" />
-    <ClCompile Include="LightBase.cpp" />
-    <ClCompile Include="MeshBuffer.cpp" />
-    <ClCompile Include="Geometory.cpp" />
-    <ClCompile Include="Main.cpp" />
-    <ClCompile Include="Model.cpp" />
-    <ClCompile Include="LitRender.cpp" />
-    <ClCompile Include="ReflectionProbe.cpp" />
-    <ClCompile Include="OutlineRender.cpp" />
-    <ClCompile Include="VolumetricLight.cpp" />
-    <ClCompile Include="AutoExposure.cpp" />
-    <ClCompile Include="GpuProfiler.cpp" />
-    <ClCompile Include="MoveLight.cpp" />
-    <ClCompile Include="SceneBase.cpp" />
-    <ClCompile Include="StageEditor.cpp" />
-    <ClCompile Include="Shader.cpp" />
-    <ClCompile Include="Sprite.cpp" />
-    <ClCompile Include="InteractionMap.cpp" />
-    <ClCompile Include="Startup.cpp" />
-    <ClCompile Include="Texture.cpp" />
-    <ClCompile Include="TextureCache.cpp" />
-    <ClCompile Include="SceneRoot.cpp" />
+    <ClCompile Include="Engine\CameraDCC.cpp" />
+    <ClCompile Include="Engine\CameraBase.cpp" />
+    <ClCompile Include="Engine\DirectX.cpp" />
+    <ClCompile Include="Engine\Input.cpp" />
+    <ClCompile Include="Engine\LightBase.cpp" />
+    <ClCompile Include="Engine\MeshBuffer.cpp" />
+    <ClCompile Include="Engine\Geometory.cpp" />
+    <ClCompile Include="Engine\Main.cpp" />
+    <ClCompile Include="Engine\Model.cpp" />
+    <ClCompile Include="Rendering\LitRender.cpp" />
+    <ClCompile Include="Rendering\ReflectionProbe.cpp" />
+    <ClCompile Include="Rendering\OutlineRender.cpp" />
+    <ClCompile Include="Rendering\VolumetricLight.cpp" />
+    <ClCompile Include="Rendering\AutoExposure.cpp" />
+    <ClCompile Include="Rendering\GpuProfiler.cpp" />
+    <ClCompile Include="Engine\MoveLight.cpp" />
+    <ClCompile Include="Engine\SceneBase.cpp" />
+    <ClCompile Include="Scenes\StageEditor.cpp" />
+    <ClCompile Include="Engine\Shader.cpp" />
+    <ClCompile Include="Engine\Sprite.cpp" />
+    <ClCompile Include="Rendering\InteractionMap.cpp" />
+    <ClCompile Include="Engine\Startup.cpp" />
+    <ClCompile Include="Engine\Texture.cpp" />
+    <ClCompile Include="Engine\TextureCache.cpp" />
+    <ClCompile Include="Scenes\SceneRoot.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="Box.h" />
-    <ClInclude Include="Player.h" />
-    <ClInclude Include="Deferred.h" />
-    <ClInclude Include="PostProcess.h" />
+    <ClInclude Include="Engine\Box.h" />
+    <ClInclude Include="GameLogic\Player.h" />
+    <ClInclude Include="Rendering\Deferred.h" />
+    <ClInclude Include="Rendering\PostProcess.h" />
     <ClInclude Include="GameLogic\AimSystem.h" />
     <ClInclude Include="GameLogic\Lerp.h" />
     <ClInclude Include="GameLogic\HingedDoor.h" />
@@ -292,165 +293,170 @@
     <ClInclude Include="StateMachine\StateBase.h" />
     <ClInclude Include="StateMachine\Player\HeatStep.h" />
     <ClInclude Include="StateMachine\Player\TemperStep.h" />
+    <ClInclude Include="StateMachine\Player\TestCutStep.h" />
     <ClInclude Include="StateMachine\Player\ForgeStep.h" />
     <ClInclude Include="StateMachine\Player\QuenchStep.h" />
     <ClInclude Include="StateMachine\Player\GrindStep.h" />
     <ClInclude Include="SceneForge\SceneForge.h" />
     <ClInclude Include="SceneForge\SceneForge_Internal.h" />
-    <ClInclude Include="SceneParticleLab.h" />
-    <ClInclude Include="Audio.h" />
-    <ClInclude Include="DebugUI.h" />
+    <ClInclude Include="Scenes\SceneParticleLab.h" />
+    <ClInclude Include="Engine\Audio.h" />
+    <ClInclude Include="Engine\DebugUI.h" />
     <ClInclude Include="imgui\imgui.h" />
     <ClInclude Include="imgui\imgui_internal.h" />
     <ClInclude Include="imgui\imconfig.h" />
     <ClInclude Include="imgui\imgui_impl_dx11.h" />
     <ClInclude Include="imgui\imgui_impl_win32.h" />
-    <ClInclude Include="CameraDCC.h" />
-    <ClInclude Include="CameraBase.h" />
-    <ClInclude Include="DebugLog.h" />
-    <ClInclude Include="Defines.h" />
-    <ClInclude Include="DirectX.h" />
-    <ClInclude Include="Input.h" />
-    <ClInclude Include="LightBase.h" />
-    <ClInclude Include="MeshBuffer.h" />
-    <ClInclude Include="Geometory.h" />
-    <ClInclude Include="Main.h" />
-    <ClInclude Include="Model.h" />
-    <ClInclude Include="LitRender.h" />
-    <ClInclude Include="ReflectionProbe.h" />
-    <ClInclude Include="OutlineRender.h" />
-    <ClInclude Include="VolumetricLight.h" />
-    <ClInclude Include="AutoExposure.h" />
-    <ClInclude Include="GpuProfiler.h" />
-    <ClInclude Include="ModelImport.h" />
-    <ClInclude Include="PropParts.h" />
-    <ClInclude Include="CottageDoor.h" />
-    <ClInclude Include="CoalBedMesh.h" />
-    <ClInclude Include="CottageRender.h" />
-    <ClInclude Include="MoveLight.h" />
-    <ClInclude Include="SceneBase.hpp" />
-    <ClInclude Include="StageEditor.h" />
-    <ClInclude Include="SceneRoot.h" />
-    <ClInclude Include="Shader.h" />
-    <ClInclude Include="Sprite.h" />
-    <ClInclude Include="InteractionMap.h" />
-    <ClInclude Include="Texture.h" />
-    <ClInclude Include="TextureCache.h" />
+    <ClInclude Include="Engine\CameraDCC.h" />
+    <ClInclude Include="Engine\CameraBase.h" />
+    <ClInclude Include="Engine\DebugLog.h" />
+    <ClInclude Include="Engine\Defines.h" />
+    <ClInclude Include="Engine\DirectX.h" />
+    <ClInclude Include="Engine\Input.h" />
+    <ClInclude Include="Engine\LightBase.h" />
+    <ClInclude Include="Engine\MeshBuffer.h" />
+    <ClInclude Include="Engine\Geometory.h" />
+    <ClInclude Include="Engine\Main.h" />
+    <ClInclude Include="Engine\Model.h" />
+    <ClInclude Include="Rendering\LitRender.h" />
+    <ClInclude Include="Rendering\ReflectionProbe.h" />
+    <ClInclude Include="Rendering\OutlineRender.h" />
+    <ClInclude Include="Rendering\VolumetricLight.h" />
+    <ClInclude Include="Rendering\AutoExposure.h" />
+    <ClInclude Include="Rendering\GpuProfiler.h" />
+    <ClInclude Include="Engine\ModelImport.h" />
+    <ClInclude Include="GameData\PropParts.h" />
+    <ClInclude Include="GameData\CottageDoor.h" />
+    <ClInclude Include="Rendering\CoalBedMesh.h" />
+    <ClInclude Include="Rendering\CottageRender.h" />
+    <ClInclude Include="Engine\MoveLight.h" />
+    <ClInclude Include="Engine\SceneBase.hpp" />
+    <ClInclude Include="Scenes\StageEditor.h" />
+    <ClInclude Include="Scenes\SceneRoot.h" />
+    <ClInclude Include="Engine\Shader.h" />
+    <ClInclude Include="Engine\Sprite.h" />
+    <ClInclude Include="Rendering\InteractionMap.h" />
+    <ClInclude Include="Engine\Texture.h" />
+    <ClInclude Include="Engine\TextureCache.h" />
   </ItemGroup>
   <ItemGroup>
-    <FxCompile Include="PS_TexColor.hlsl">
+    <FxCompile Include="Shaders\PS_TexColor.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
     </FxCompile>
-    <FxCompile Include="PS_TexTint.hlsl">
+    <FxCompile Include="Shaders\PS_TexTint.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
     </FxCompile>
-    <FxCompile Include="VS_Object.hlsl">
+    <FxCompile Include="Shaders\VS_Object.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Vertex</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Vertex</ShaderType>
     </FxCompile>
-    <FxCompile Include="VS_Coal.hlsl">
+    <FxCompile Include="Shaders\VS_Coal.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Vertex</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Vertex</ShaderType>
     </FxCompile>
-    <FxCompile Include="PS_Coal.hlsl">
+    <FxCompile Include="Shaders\PS_Coal.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
     </FxCompile>
-    <FxCompile Include="VS_Particle.hlsl">
+    <FxCompile Include="Shaders\VS_Particle.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Vertex</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Vertex</ShaderType>
     </FxCompile>
-    <FxCompile Include="PS_Particle.hlsl">
+    <FxCompile Include="Shaders\PS_Particle.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
     </FxCompile>
-    <FxCompile Include="PS_Water.hlsl">
+    <FxCompile Include="Shaders\PS_Water.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
     </FxCompile>
-    <FxCompile Include="VS_Wall.hlsl">
+    <FxCompile Include="Shaders\VS_Wall.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Vertex</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Vertex</ShaderType>
     </FxCompile>
-    <FxCompile Include="VS_Wp.hlsl">
+    <FxCompile Include="Shaders\VS_Wp.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Vertex</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Vertex</ShaderType>
     </FxCompile>
-    <FxCompile Include="VS_Grass.hlsl">
+    <FxCompile Include="Shaders\VS_Grass.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Vertex</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Vertex</ShaderType>
     </FxCompile>
-    <FxCompile Include="PS_Spark.hlsl">
+    <FxCompile Include="Shaders\PS_Spark.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
     </FxCompile>
-    <FxCompile Include="VS_Water.hlsl">
+    <FxCompile Include="Shaders\VS_Water.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Vertex</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Vertex</ShaderType>
     </FxCompile>
-    <FxCompile Include="PS_InteractStamp.hlsl">
+    <FxCompile Include="Shaders\PS_InteractStamp.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
     </FxCompile>
-    <FxCompile Include="PS_Wall.hlsl">
+    <FxCompile Include="Shaders\PS_Wall.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
     </FxCompile>
-    <FxCompile Include="PS_Sky.hlsl">
+    <FxCompile Include="Shaders\PS_Sky.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
     </FxCompile>
-    <FxCompile Include="PS_StageProp.hlsl">
+    <FxCompile Include="Shaders\PS_StageProp.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
     </FxCompile>
-    <FxCompile Include="PS_Glint.hlsl">
+    <FxCompile Include="Shaders\PS_Glint.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
     </FxCompile>
-    <FxCompile Include="VS_Outline.hlsl">
+    <FxCompile Include="Shaders\PS_Trail.hlsl">
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
+      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
+    </FxCompile>
+    <FxCompile Include="Shaders\VS_Outline.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Vertex</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Vertex</ShaderType>
     </FxCompile>
-    <FxCompile Include="PS_Outline.hlsl">
+    <FxCompile Include="Shaders\PS_Outline.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
     </FxCompile>
-    <FxCompile Include="VS_ProbeBall.hlsl">
+    <FxCompile Include="Shaders\VS_ProbeBall.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Vertex</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Vertex</ShaderType>
     </FxCompile>
-    <FxCompile Include="PS_ProbeBall.hlsl">
+    <FxCompile Include="Shaders\PS_ProbeBall.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
     </FxCompile>
-    <FxCompile Include="VS_Fullscreen.hlsl">
+    <FxCompile Include="Shaders\VS_Fullscreen.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Vertex</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Vertex</ShaderType>
     </FxCompile>
-    <FxCompile Include="PS_IblPrefilter.hlsl">
+    <FxCompile Include="Shaders\PS_IblPrefilter.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
     </FxCompile>
-    <FxCompile Include="PS_IblBrdfLut.hlsl">
+    <FxCompile Include="Shaders\PS_IblBrdfLut.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
     </FxCompile>
-    <FxCompile Include="PS_LogLuminance.hlsl">
+    <FxCompile Include="Shaders\PS_LogLuminance.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
     </FxCompile>
-    <FxCompile Include="PS_VolumetricMarch.hlsl">
+    <FxCompile Include="Shaders\PS_VolumetricMarch.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
     </FxCompile>
-    <FxCompile Include="PS_VolumetricComposite.hlsl">
+    <FxCompile Include="Shaders\PS_VolumetricComposite.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
     </FxCompile>
-    <FxCompile Include="PS_Wp.hlsl">
+    <FxCompile Include="Shaders\PS_Wp.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
     </FxCompile>

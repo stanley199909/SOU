@@ -28,20 +28,26 @@ namespace CottageDoor
     // true = the edge with the smaller coordinate. (Data: flip it to hang the door the other way.)
     constexpr bool HINGE_ON_MIN_SIDE = true;
 
+    // Which way the door swings: true = into the room, false = out into the yard.
+    // false since 2026-10-24 (user: it opened the opposite way to what they wanted). The leaf sits on the
+    // OUTER side of the frame's stop, so opening outward is also the physically right way.
+    constexpr bool SWING_INTO_ROOM = false;
+
     // Where the hinge axis is and which way is "into the room". Computed once from
     // the models' bounding boxes (no hand-typed coordinates).
     struct Hinge
     {
         DirectX::XMFLOAT3 pivot = { 0, 0, 0 };  // a point on the vertical hinge axis (house model space)
-        float sign = 1.0f;                      // +1/-1: rotation direction that swings the door INTO the room
+        float sign = 1.0f;                      // +1/-1: rotation direction that swings the door the SWING_INTO_ROOM way
         bool  valid = false;
     };
 
     // The door is a thin slab. Its thinnest horizontal axis is the wall normal; the
     // other horizontal axis is its width. The room is on the side of the house's center.
-    // Hinge = the inner face (room side) at one end of the width.
+    // Hinge = the face on the side the door swings toward, at one end of the width (a hinge on the
+    // other face would sweep the leaf's thickness into the stones beside the frame).
     // The swing direction is found by TRYING +angle and checking whether the free edge
-    // moved into the room -- simpler and safer than deriving the sign by hand.
+    // moved the wanted way -- simpler and safer than deriving the sign by hand.
     inline Hinge ComputeHinge(Model* door, Model* house)
     {
         using namespace DirectX;
@@ -56,18 +62,19 @@ namespace CottageDoor
         const float doorT  = thinX ? (dmn.x + dmx.x) * 0.5f : (dmn.z + dmx.z) * 0.5f;
         const float houseT = thinX ? (hmn.x + hmx.x) * 0.5f : (hmn.z + hmx.z) * 0.5f;
         const float inward = (houseT > doorT) ? 1.0f : -1.0f;  // room side along the wall normal
+        const float swing  = SWING_INTO_ROOM ? inward : -inward; // the side the door opens toward
 
-        const float tFace  = (inward > 0.0f) ? (thinX ? dmx.x : dmx.z) : (thinX ? dmn.x : dmn.z);
+        const float tFace  = (swing > 0.0f) ? (thinX ? dmx.x : dmx.z) : (thinX ? dmn.x : dmn.z);
         const float wHinge = HINGE_ON_MIN_SIDE ? (thinX ? dmn.z : dmn.x) : (thinX ? dmx.z : dmx.x);
         const float wFree  = HINGE_ON_MIN_SIDE ? (thinX ? dmx.z : dmx.x) : (thinX ? dmn.z : dmn.x);
         h.pivot = thinX ? XMFLOAT3(tFace, 0.0f, wHinge) : XMFLOAT3(wHinge, 0.0f, tFace);
         const XMFLOAT3 freeEdge = thinX ? XMFLOAT3(tFace, 0.0f, wFree) : XMFLOAT3(wFree, 0.0f, tFace);
 
-        // Try a quarter turn in the + direction: did the free edge go into the room?
+        // Try a quarter turn in the + direction: did the free edge go the swing way?
         const XMVECTOR p = XMLoadFloat3(&h.pivot);
         const XMVECTOR moved = XMVector3Transform(XMLoadFloat3(&freeEdge) - p, XMMatrixRotationY(XM_PIDIV2)) + p;
         const float movedT = thinX ? XMVectorGetX(moved) : XMVectorGetZ(moved);
-        h.sign  = ((movedT - tFace) * inward > 0.0f) ? 1.0f : -1.0f;
+        h.sign  = ((movedT - tFace) * swing > 0.0f) ? 1.0f : -1.0f;
         h.valid = true;
         return h;
     }

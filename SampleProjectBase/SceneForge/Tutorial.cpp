@@ -35,7 +35,7 @@ const SceneForge::LessonDef SceneForge::LESSONS[] =
 	{ LessonId::HitScale,  LessonAnim::StrikeHold,    NO_KEY,           (const char*)u8"{Use}で、表面の黒い皮が残っている所を叩く",   1.0f,  0.0f,  0 },	// 術語(黒皮/酸化スケール/金肌)でなく見た目で言う=時代設定に依らない(2026-10-14)
 	// --- 炉 ---
 	{ LessonId::TakeOut,   LessonAnim::PressKey,      Action::Grab,     (const char*)u8"十分に熱くなった。{Grab}で鉄を掴んで炉から出す", 1.0f,  0.0f,  0 },
-	{ LessonId::Bellows,   LessonAnim::PressKey,      Action::Bellows,  (const char*)u8"{Bellows}を何度も押して、ふいごで風を送る",         3.0f,  3.0f,  0 },
+	{ LessonId::Bellows,   LessonAnim::PressKey,      Action::Bellows,  (const char*)u8"{Bellows}を押し続けて、ふいごで風を送る",           2.0f,  3.0f,  0 },	// need = 押していた秒(2026-10-22 長押しへ)
 	{ LessonId::WaitHot,   LessonAnim::PointGauge,    NO_KEY,           (const char*)u8"温度ゲージの印が、囲んだ所に入るまで待つ",     1.0f,  0.0f,  0 },
 	// --- 走動・搬運(通常モードの救急は無し: 行き先の ▼ が点滅する) ---
 	{ LessonId::GripIron,  LessonAnim::PressKey,      Action::Grab,     (const char*)u8"鉄を見て、{Grab}で火ばさみで掴む",           1.0f,  0.0f,  0 },
@@ -52,6 +52,8 @@ const SceneForge::LessonDef SceneForge::LESSONS[] =
 	// --- 水槽(救急: 3 秒、2026-10-12 ユーザー決定) ---
 	{ LessonId::Plunge,    LessonAnim::PressKey,      Action::Use,      (const char*)u8"{Use}で、刃を水に入れる",                 1.0f,  3.0f,  0 },
 	{ LessonId::Stir,      LessonAnim::MouseVertical, NO_KEY,           (const char*)u8"{Hand}を上下に動かして、水の中で刃を揺する",   0.15f, 3.0f,  0 },
+	// --- 試し切り(2026-10-22 構えと集中の一太刀)。救急: 斬らずに 6 秒 / 落ち着かないまま離して鎧に 2 回弾かれたら ---
+	{ LessonId::Slash,     LessonAnim::StrikeHold,    NO_KEY,           (const char*)u8"{Use}長押しで構えて胴を狙い、照準の揺れが止まった瞬間に離して斬る", 1.0f, 6.0f, 2 },
 };
 
 //====================================================================
@@ -98,8 +100,8 @@ bool SceneForge::LessonActive(LessonId id) const
 		return inFireHere && heat < HearthTargetTemp();
 	case LessonId::TakeOut:
 		return inFireHere && heat >= HearthTargetTemp();
-	case LessonId::GripIron:	// 走動中、置いてある鉄を見ていて E で掴める
-		return walking && !m_carrying && FocusOnGuideTarget();
+	case LessonId::GripIron:	// 走動中、置いてある鉄を見ていて E で掴める(柄を付けた剣は手に持っている=掴む物が無い)
+		return walking && !m_carrying && !SwordInHand() && FocusOnGuideTarget();
 	case LessonId::PutDown:		// 走動中、鉄を持って行き先の工位を見ていて E で置ける
 		return walking &&  m_carrying && FocusOnGuideTarget();
 	case LessonId::WalkTo:		// 走動中、行き先がまだ遠い(E が効かない)
@@ -123,6 +125,8 @@ bool SceneForge::LessonActive(LessonId id) const
 		    && m_quenchTurn <= 0.0f && !QuenchStirring() && heat >= QUENCH_MIN_TEMP && heat <= QUENCH_MAX_TEMP;
 	case LessonId::Stir:		// 水の中で、蒸気の膜がまだ破れていない
 		return QuenchStirring() && m_boilStage == BoilStage::Film;
+	case LessonId::Slash:		// 藁人形の前に立っていて、まだ両断していない
+		return SwordAtStation() && !m_cutSevered;
 	default: return false;
 	}
 }
@@ -154,7 +158,7 @@ float SceneForge::LessonMetric(LessonId id) const
 	{
 	case LessonId::Aim:     return m_aimTravel;
 	case LessonId::Strike:  return (float)m_validStrikes;
-	case LessonId::Bellows: return (float)m_bellowsPumps;	// 踏んだ回数
+	case LessonId::Bellows: return m_bellowsHeldSec;	// 押していた秒
 	case LessonId::Flip:    return (float)m_flipCount;
 	case LessonId::ReadGauge: return (float)m_validStrikes;
 	case LessonId::HitScale:  return (float)m_validStrikes;	// 黒皮の残る所(未完成の区域)を適温で叩いた回数=有効打。1回で「できた」(2026-10-19 ユーザー: 旧「両面の進み 30%」は何回叩いても済まない様に見えた)
@@ -170,6 +174,7 @@ float SceneForge::LessonMetric(LessonId id) const
 	case LessonId::GrindSlide:return m_grindSlideTravel;
 	case LessonId::Plunge:    return (float)m_plungeCount;
 	case LessonId::Stir:      return m_stirTravel;
+	case LessonId::Slash:     return (float)m_cutStrikes;	// 構えて離した回数
 	default: return 0.0f;
 	}
 }

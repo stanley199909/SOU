@@ -69,12 +69,13 @@ public:
     float coolRate = 0.006f;     // natural cooling speed (/sec). Was 0.008; x0.75 on 2026-10-12 so the iron stays in the forging band longer (see SceneForge IDEAL_MIN). Tunable
     // Valid strikes (hot enough, not overheated, on unfinished metal) one face needs. Every
     // such strike removes exactly 1/strikesPerFace of the face's work. Tunable
-    // (the forge step was too long next to heat/grind/quench in the 2026-10-02 playtest).
-    float strikesPerFace = 14.0f;
+    // (the forge step was too long next to heat/grind/quench in the 2026-10-02 playtest;
+    // 14 -> 8 on 2026-10-22: whole run cut to ~3 min for a first-time player).
+    float strikesPerFace = 8.0f;
     // Seconds of valid grinding (pressed on a spinning wheel at a usable angle) one bevel
     // needs. Valid grinding removes work at a fixed rate; angle/speed only grade it. Tunable
-    float grindSecondsPerSide = 15.0f;
-    float grindSpread = 1.0f;    // Gaussian sigma (cells) of the wheel contact along the length
+    // (15 -> 8 on 2026-10-22: ~3 min run).
+    float grindSecondsPerSide = 8.0f;
     // How far one strike's shaping spreads along the length: the standard deviation of
     // the Gaussian falloff, in length cells. Small = only the spot under the hammer moves
     // (precise but more strikes to cover the blade); large = feels like the old segments.
