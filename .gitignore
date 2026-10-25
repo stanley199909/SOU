@@ -56,3 +56,13 @@ SampleProjectBase/Tools/outdoor_validation.json
 
 # SDL3 (third-party import lib is needed to link; *.lib above is for our own build output)
 !SampleProjectBase/ThirdParty/**/*.lib
+
+# Licensed assets: used by the game locally, but their licenses forbid redistributing the files.
+# (On-Jin SE: no redistribution / purchased packs: no source-file redistribution / parchment: source license unknown)
+# See CREDITS.txt. The files stay on disk; only git stops tracking them.
+SampleProjectBase/Assets/Sound/
+SampleProjectBase/Assets/MM_Blacksmith_Pack/
+SampleProjectBase/Assets/Fantasy Props MegaKit[[]Standard[]]/
+SampleProjectBase/Assets/Ui/parchment*
+SampleProjectBase/Assets/Ui/paper_strip.png
+SampleProjectBase/Assets/Ui/selected_button_strip.png
