@@ -4,9 +4,16 @@
 C++ / DirectX 11 の自作フレームワーク上で、加熱 → 鍛造 → 研ぎ → 焼入れ → 焼き戻し → 試し切り までを一本の流れとして遊べます。
 内蔵 GPU（AMD Radeon 610M）で動作することを前提に作っています。
 
-<!-- TODO: プレイ動画 (YouTube リンク) と GIF をここに置く。面接官が最初の 30 秒で見る場所。 -->
+<!-- TODO: プレイ動画を YouTube (限定公開) に上げたら、下の画像のリンク先をその URL に変える。 -->
+![鍛冶場](docs/images/workshop.jpg)
 
 > 『Kingdom Come: Deliverance II』の鍛冶ミニゲームを出発点に、実際の鍛冶の工程を調べて工程を増やし、自分の解釈で作り直した作品です。
+
+### 工程
+
+| 加熱 | 鍛造 | 研ぎ | 焼入れ | 焼き戻し | 試し切り |
+|:---:|:---:|:---:|:---:|:---:|:---:|
+| <img src="docs/images/step1_heat.jpg" width="150"> | <img src="docs/images/step2_forge.jpg" width="150"> | <img src="docs/images/step3_grind.jpg" width="150"> | <img src="docs/images/step4_quench.jpg" width="150"> | <img src="docs/images/step5_temper.jpg" width="150"> | <img src="docs/images/step6_testcut.jpg" width="150"> |
 
 ---
 
@@ -22,6 +29,14 @@ C++ / DirectX 11 の自作フレームワーク上で、加熱 → 鍛造 → �
 | 焼入れの水面 | 2D 波動方程式の高さ場。刃を沈める・揺らすと波が広がり、壁で反射する | `Physics/WaterSim` |
 | 足踏み砥石 | 一踏み = 角速度の力積、間は指数減衰。刃を当てると抵抗が増える | `Physics/GrindWheel` |
 | ステージエディタ | 道具の配置をゲーム内で編集し、テキストファイルに保存。ゲーム本体も同じファイルを読む | `Scenes/StageEditor` |
+
+**鍛造：叩くたびに刃の形ができていく**（左から 打ち始め → 途中 → 仕上げ間近）
+
+<img src="docs/images/forge_shape_early.jpg" width="32%"> <img src="docs/images/forge_shape_mid.jpg" width="32%"> <img src="docs/images/forge_shape_late.jpg" width="32%">
+
+| 焼入れの水面（波動方程式） | 試し切り（メッシュ分割） |
+|:---:|:---:|
+| <img src="docs/images/quench_water.jpg" width="400"> | <img src="docs/images/testcut_slice.jpg" width="400"> |
 
 ## 設計で考えたこと
 
