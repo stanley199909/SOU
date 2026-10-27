@@ -9,8 +9,8 @@
 // is the caller's business (score), never the amount of work.
 //
 // Where the work is taken from is local: mostly the cells around the contact point
-// (Gaussian falloff), and what finished cells cannot absorb goes to the nearest
-// unfinished cells. So the metal changes where the tool touched it.
+// (Gaussian falloff). For forging, what finished cells cannot absorb goes to the nearest
+// unfinished cells; for grinding it is lost (Spill). So the metal changes where the tool touched it.
 //
 // Coordinates: coord is the contact position along the blade in cells (0..N,
 // continuous), in the weapon's local-length convention (AimSystem::SegCoordLocal).
@@ -24,14 +24,14 @@ public:
     void Reset()    { for (int i = 0; i < N; ++i) m_left[i] = 1.0f; }  // all work still to do
     void Complete() { for (int i = 0; i < N; ++i) m_left[i] = 0.0f; }  // debug: job already done
 
+    // Where the work that finished cells cannot take goes:
+    //   ToNearest = to the nearest unfinished cells (forging: every valid strike removes exactly `amount`)
+    //   None      = nowhere (grinding: only the spot under the wheel gains, so the blade must be slid along)
+    enum class Spill { ToNearest, None };
+
     // Take `amount` cell-units of work around `coord`. spread = Gaussian sigma in cells.
     // AlreadyDone (nothing taken) when no unfinished cell is really within reach.
-    Result Apply(float coord, float amount, float spread);
-    // Take `amount` cell-units of work from segment s (of nseg) only, shared evenly by its
-    // unfinished cells. Used by grinding (2026-10-22 user decision): the segment under the
-    // wheel always gains, so a job can never hang at 99% hunting for one stray cell.
-    // AlreadyDone when the whole segment is finished.
-    Result ApplySegment(int s, int nseg, float amount);
+    Result Apply(float coord, float amount, float spread, Spill spill);
 
     float CellProgress(int i) const { return 1.0f - m_left[i]; }   // 0..1
     bool  CellDone(int i)     const { return m_left[i] <= 0.0f; }  // exact: work is floored at 0

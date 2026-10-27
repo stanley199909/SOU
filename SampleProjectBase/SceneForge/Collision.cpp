@@ -247,7 +247,7 @@ void SceneForge::DrawCollision()
 {
 	CameraBase* cam = GetObj<CameraBase>("Camera");
 	if (!cam) return;
-	BuildCollisionWorld();	// F1 中(更新が止まる)やエディタでの移動中も今の配置で描く
+	BuildCollisionWorld();	// 設計者用パネル(F2/F4/F5)中(更新が止まる)やエディタでの移動中も今の配置で描く
 
 	XMFLOAT4X4 id; XMStoreFloat4x4(&id, XMMatrixIdentity());
 	Geometory::SetWorld(id);

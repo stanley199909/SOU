@@ -576,6 +576,15 @@ namespace
 	float g_loopVolume[Audio::SE_MAX] = {};	// PlayLoop で指定された本来の音量(解除時に戻す)
 
 	bool IsBgm(Audio::SoundId id) { return id >= Audio::BGM_TITLE && id <= Audio::BGM_RESULT; }
+
+	// 玩家の設定の音量(2026-10-26 設定画面)。全体 = マスターボイス / BGM・効果音 = 鳴らす時の音量に掛ける倍率
+	//   (3D定位は各ボイス → マスターへ直接出力行列を張っているので、サブミックスを挟まず倍率で分ける)
+	float g_bgmScale = 1.0f, g_seScale = 1.0f;
+	float LoopOutVolume(Audio::SoundId id, float volume)	// ループの実際の音量 = 本来の音量 × 種類の倍率(BGM ミュート中は 0)
+	{
+		if (IsBgm(id)) return g_bgmMuted ? 0.0f : volume * g_bgmScale;
+		return volume * g_seScale;
+	}
 }
 
 namespace Audio
@@ -666,7 +675,7 @@ namespace Audio
 		b.pAudioData = s.data.data();
 		b.Flags      = XAUDIO2_END_OF_STREAM;
 		v->SubmitSourceBuffer(&b);
-		v->SetVolume(volume);
+		v->SetVolume(volume * (IsBgm(id) ? g_bgmScale : g_seScale));
 		v->SetFrequencyRatio(pitch);	// 毎回設定する(ボイスは使い回し=前回の音程が残らない様に)
 		v->Start(0);
 	}
@@ -725,7 +734,7 @@ namespace Audio
 		b.LoopCount  = XAUDIO2_LOOP_INFINITE;	// 閉じるまでループ
 		v->SubmitSourceBuffer(&b);
 		g_loopVolume[id] = volume;
-		v->SetVolume((IsBgm(id) && g_bgmMuted) ? 0.0f : volume);	// ミュート中は無音で開始
+		v->SetVolume(LoopOutVolume(id, volume));	// ミュート中は無音で開始
 		v->SetFrequencyRatio(1.0f);	// 前回 SetLoop で変えた音程を戻す
 		v->Start(0);
 	}
@@ -738,7 +747,7 @@ namespace Audio
 		Sound& s = g_sound[id];
 		if (s.voices.empty()) return;
 		g_loopVolume[id] = volume;
-		s.voices[0]->SetVolume((IsBgm(id) && g_bgmMuted) ? 0.0f : volume);	// BGM ミュート中は無音のまま(PlayLoop と同じ規則)
+		s.voices[0]->SetVolume(LoopOutVolume(id, volume));	// BGM ミュート中は無音のまま(PlayLoop と同じ規則)
 		s.voices[0]->SetFrequencyRatio(pitch);
 	}
 
@@ -751,7 +760,21 @@ namespace Audio
 		{
 			Sound& s = g_sound[i];
 			if (s.voices.empty()) continue;
-			s.voices[0]->SetVolume(g_bgmMuted ? 0.0f : g_loopVolume[i]);
+			s.voices[0]->SetVolume(LoopOutVolume((SoundId)i, g_loopVolume[i]));
+		}
+	}
+
+	//--- 設定画面の音量。全体はマスターボイスへ、BGM/効果音は倍率として持ち、鳴っているループにもすぐ反映する
+	void SetVolumes(float master, float bgm, float se)
+	{
+		g_bgmScale = bgm;
+		g_seScale  = se;
+		if (!g_xa) return;
+		if (g_master) g_master->SetVolume(master);
+		for (int i = 0; i < SE_MAX; ++i)
+		{
+			Sound& s = g_sound[i];
+			if (!s.voices.empty()) s.voices[0]->SetVolume(LoopOutVolume((SoundId)i, g_loopVolume[i]));
 		}
 	}
 

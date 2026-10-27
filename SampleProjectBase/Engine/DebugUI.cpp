@@ -1,11 +1,7 @@
 ﻿#include "DebugUI.h"
+#include "Display.h"		// UI の座標 = バックバッファの大きさ
 #include <cfloat>
 #include <cmath>
-
-//--- デバッグUIの表示フラグ(F1で切替)。ゲームとしては既定で非表示
-static bool s_debugVisible = false;
-bool DebugUI::IsVisible() { return s_debugVisible; }
-void DebugUI::Toggle()    { s_debugVisible = !s_debugVisible; }
 
 //--- ゲームHUD用の追加フォント。Init で読み込み、ここに保持する
 static ImFont* s_fontTitle = nullptr;
@@ -135,6 +131,11 @@ void DebugUI::NewFrame()
 {
 	ImGui_ImplDX11_NewFrame();
 	ImGui_ImplWin32_NewFrame();
+	// UI の座標 = バックバッファ(ゲームを描く大きさ)。Win32 バックエンドは窓の大きさを入れるので上書きする。
+	//   無枠の全画面ではバッファ(選んだ解像度)を窓(モニター)へ引き伸ばして映す → 窓の大きさのままだと UI が
+	//   バッファの外へはみ出して切れた(2026-10-26)。マウスも同じ座標へ直してある(Startup.cpp WndProc / Display::ScaleMouse)。
+	UINT bw, bh; Display::BufferSize(bw, bh);
+	ImGui::GetIO().DisplaySize = ImVec2((float)bw, (float)bh);
 	ImGui::NewFrame();
 }
 
@@ -142,25 +143,4 @@ void DebugUI::Render()
 {
 	ImGui::Render();
 	ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-}
-
-void DebugUI::DrawPerformance()
-{
-	ImGuiIO& io = ImGui::GetIO();
-
-	// FPSの履歴(グラフ用)
-	static float hist[120] = {};
-	static int   idx = 0;
-	hist[idx] = io.Framerate;
-	idx = (idx + 1) % IM_ARRAYSIZE(hist);
-
-	ImGui::SetNextWindowPos(ImVec2(12, 12), ImGuiCond_FirstUseEver);
-	ImGui::SetNextWindowSize(ImVec2(300, 0), ImGuiCond_FirstUseEver);
-	ImGui::Begin("Performance");
-
-	ImGui::Text("%.1f FPS  (%.2f ms)", io.Framerate, 1000.0f / io.Framerate);
-	ImGui::PlotLines("##fps", hist, IM_ARRAYSIZE(hist), idx, nullptr,
-		0.0f, 240.0f, ImVec2(-1, 60));
-
-	ImGui::End();
 }

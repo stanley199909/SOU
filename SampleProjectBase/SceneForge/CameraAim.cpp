@@ -292,7 +292,7 @@ void SceneForge::SetupStationView(Station s)
 		// 後ろから E を押すと視点が炉の中/壁の向こうになり、出た時に壁の外へ立ってしまった(2026-10-05 F5)。
 		// 正面 = 道具の箱の中心から見て、作業点がある側(炉の本体=煙突は炭床より後ろにある)。
 		// 中心と作業点がほぼ同じ所(水槽の様に前後対称)なら正面は無い → 近づいた側のまま。
-		// 自動判定が外れる配置用に F1 Stations の「front flip」で逆にできる。
+		// 自動判定が外れる配置用に forge_tuning.txt の stationfront で逆にできる。
 		const char* key = (s == Station::Hearth) ? "StForge" : "StTrough";
 		const bool  flip = (s == Station::Hearth) ? m_hearthFrontFlip : m_troughFrontFlip;
 		XMFLOAT3 mn, mx;
@@ -309,7 +309,7 @@ void SceneForge::SetupStationView(Station s)
 	{
 		m_stationViewDir = GrindViewDir();	// 近づいた側に関係なく固定(刃の位置が毎回同じになる)
 		m_grindU = 0.5f;					// 刃の中央から研ぎ始める
-		m_grindAngle = m_grindAngleTarget = 0.0f;	// 平らに寝た状態から(角度は玩家が付ける)
+		m_grindAngle = 0.0f;	// 平らに寝た状態から(当てると研ぎ角へ自動で傾く)
 	}
 }
 
@@ -319,8 +319,8 @@ float SceneForge::TransDuration()
 	XMFLOAT3 toEye, toFwd; TargetViewPose(toEye, toFwd);
 	float dist = XMVectorGetX(XMVector3Length(XMVectorSubtract(XMLoadFloat3(&toEye), XMLoadFloat3(&m_transFromEye))));
 	float d = dist / m_transSpeed;
-	if (d < TRANS_MIN_TIME) d = TRANS_MIN_TIME;
-	if (d > TRANS_MAX_TIME) d = TRANS_MAX_TIME;
+	if (d < m_transMinTime) d = m_transMinTime;
+	if (d > m_transMaxTime) d = m_transMaxTime;
 	return d;
 }
 
@@ -526,7 +526,7 @@ XMFLOAT3 SceneForge::StationRight() const
 }
 
 //--- 刃の長軸(向き付け後のワールド方向)を StationRight へ揃える追加 yaw。
-//    金床は従来の向き(F1「Weapon Align」で合わせた値)のまま=0。
+//    金床は従来の向き(m_wpYaw 等。forge_tuning.txt)のまま=0。
 //    Y 軸回転 θ はベクトルの水平角 atan2(x,z) に θ を足すので、差を取れば揃う。
 float SceneForge::StationAlignYaw() const
 {
@@ -585,10 +585,13 @@ void SceneForge::ApplyWorkCamera()
 	cam->SetFovY(m_camFov);
 
 	XMFLOAT3 eye, target; StationView(m_station, eye, target);
+	// 砥石では呼吸を乗せない(2026-10-26): 刃をほぼ真横から見る=細い線になり、カメラが漂うと縁のギザギザが毎フレーム這って見えた。
+	//   研ぎは細かい手仕事=視線は据わっている方が自然。
+	const float breathAmp = (m_station == Station::Grindstone) ? 0.0f : m_camBreathAmp;
 	float bt = m_time * m_camBreathSpeed;
-	float ox = OrganicNoise(bt, kNoiseSeedBreath[0]) * m_camBreathAmp;
-	float oy = OrganicNoise(bt, kNoiseSeedBreath[1]) * m_camBreathAmp;
-	float oz = OrganicNoise(bt, kNoiseSeedBreath[2]) * m_camBreathAmp;
+	float ox = OrganicNoise(bt, kNoiseSeedBreath[0]) * breathAmp;
+	float oy = OrganicNoise(bt, kNoiseSeedBreath[1]) * breathAmp;
+	float oz = OrganicNoise(bt, kNoiseSeedBreath[2]) * breathAmp;
 	const float LN = m_camLookNoise;
 	const float shake = ShakeOffsetY();	// 機位と注視点を同じだけ縦に動かす=視線の向きは変えず、画が揺れる
 	eye.y += shake; target.y += shake;
@@ -645,7 +648,7 @@ void SceneForge::UpdateMouseLook()
 	// マウスを上げる(dy<0)=奥(far, rail 1)へ / 下げる(dy>0)=手前(near, rail 0)へ。
 	// ※ここの符号が「瞄準の上下反転」を決める。rail→世界Z の写像(UpdateAim/ApplyCamera の
 	//   rz = anchor.z - half + rail*len)と対で効く。どちらか片方だけ反すと反転する。
-	// 感度 m_aimSens は F1「Aim sens」で調整。低い=同じ移動に鼠標を多く要る=慎重で「重い」手応え。
+	// 感度 m_aimSens は F5「照準の感度」で調整。低い=同じ移動に鼠標を多く要る=慎重で「重い」手応え。
 	m_aimRail -= dy * m_aimSens;
 	if (m_aimRail < 0.0f) m_aimRail = 0.0f;
 	if (m_aimRail > 1.0f) m_aimRail = 1.0f;
@@ -715,41 +718,6 @@ void SceneForge::UpdateAim()
 	m_aimValid = true;
 }
 
-//--- Unity風ドラッグ配置: F1中に、選択プロップを地面(XZ)上でLMBドラッグ移動する。
-//    ALT+ドラッグはカメラなので、素のLMBドラッグだけを移動に使う(競合しない)。
-void SceneForge::UpdateEditorDrag()
-{
-	if (!DebugUI::IsVisible()) { m_editDragging = false; return; }
-	if (m_editSel < 0 || m_editSel >= (int)m_props.size()) { m_editDragging = false; return; }
-	// ImGuiのウィンドウ上を操作中は無視(スライダ等と競合しない)
-	if (ImGui::GetIO().WantCaptureMouse) { m_editDragging = false; return; }
-	// ALT(カメラ操作)中や、LMB非押下なら移動しない
-	if (IsKeyPress(VK_MENU) || !IsKeyPress(VK_LBUTTON)) { m_editDragging = false; return; }
-
-	float mx, my, cw, ch; GetMouseClient(mx, my, cw, ch);
-	if (!m_editDragging) { m_editDragging = true; m_editPrevX = mx; m_editPrevY = my; return; }
-	float dx = mx - m_editPrevX, dy = my - m_editPrevY;
-	m_editPrevX = mx; m_editPrevY = my;
-	if (dx == 0.0f && dy == 0.0f) return;
-
-	CameraBase* cam = GetObj<CameraBase>("Camera");
-	if (!cam) return;
-	XMFLOAT3 cp = cam->GetPos(), cl = cam->GetLook();
-	XMVECTOR vp = XMLoadFloat3(&cp), vl = XMLoadFloat3(&cl);
-	XMVECTOR fwd  = XMVector3Normalize(XMVectorSubtract(vl, vp));
-	XMVECTOR up   = XMVectorSet(0, 1, 0, 0);
-	XMVECTOR right= XMVector3Normalize(XMVector3Cross(up, fwd));	// 画面右=+
-	XMVECTOR fwdG = XMVector3Normalize(XMVectorSetY(fwd, 0.0f));	// 地面に投影した前方
-	float dist; XMStoreFloat(&dist, XMVector3Length(XMVectorSubtract(vl, vp)));
-	float k = dist * 0.0016f;	// 距離に応じた移動感度
-
-	// マウス右→+right、マウス下→カメラ手前(=-fwdG)
-	XMVECTOR move = XMVectorAdd(XMVectorScale(right, dx * k), XMVectorScale(fwdG, -dy * k));
-	Prop& p = m_props[m_editSel];
-	p.pos[0] += XMVectorGetX(move);
-	p.pos[2] += XMVectorGetZ(move);
-}
-
 //--- 金床のAABBを現在のワールド変換で評価し、砧面(上面)の高さに鉄条を乗せる
 //    アンカー方式: 金床のスケール/位置/回転を変えても鉄条が自動で追従する。
 //    別の金床モデルに差し替えてもAABBが変わるだけで再調整不要。
@@ -782,7 +750,7 @@ void SceneForge::UpdateBarAnchor()
 	m_barAnchor.x = (minX + maxX) * 0.5f;
 	m_barAnchor.z = (minZ + maxZ) * 0.5f;
 	m_barAnchor.y = topY + m_barThick + m_barLift;
-	m_barY = m_barAnchor.y;	// F1表示用
+	m_barY = m_barAnchor.y;	// 表示用
 }
 
 //--- デバッグ: 8隅の点から箱の12辺を線で描く
@@ -795,7 +763,7 @@ static void DrawBoxEdges(const XMFLOAT3 c[8])
 				Geometory::AddLine(c[i], c[i | b]);
 }
 
-//--- デバッグ: 金床AABBと鉄条の箱を線で可視化(F1中のみ)
+//--- デバッグ: 金床AABBと鉄条の箱を線で可視化(F4「道具の箱」の時のみ)
 void SceneForge::DrawDebugBoxes()
 {
 	CameraBase* cam   = GetObj<CameraBase>("Camera");
@@ -852,9 +820,9 @@ void SceneForge::DrawDebugBoxes()
 }
 
 //====================================================================================
-//  F1調整値の永続化: Assets/forge_tuning.txt (単純な key value テキスト)
+//  調整値の永続化: Assets/forge_tuning.txt (単純な key value テキスト)
 //  行頭のキーで分岐し、必要な数だけ数値を読む。未知キー/欠損は無視(前方互換)。
-//  Init で LoadTuning(), Uninit と F1「Save tuning」ボタンで SaveTuning()。
+//  Init で LoadTuning(), Uninit と F5「保存」ボタンで SaveTuning()。
 //====================================================================================
 static const char* kTuningPath = "Assets/forge_tuning.txt";
 
@@ -871,7 +839,8 @@ void SceneForge::SaveTuning()
 	fprintf(fp, "stiffness %.5f\n",  m_hammer.stiffness);
 	fprintf(fp, "damping %.5f\n",    m_hammer.damping);
 	fprintf(fp, "mass %.5f\n",       m_hammer.mass);
-	fprintf(fp, "impulse %.5f\n",    m_hammer.impulse);
+	fprintf(fp, "hammerswing %.5f %.5f %.5f\n", m_hammer.swingSpeedMin, m_hammer.swingSpeedGain, m_hammer.swingAccel);	// 振り下ろし(離した速さ / 溜めで増える速さ / 加速度)
+	fprintf(fp, "restitution %.5f %.5f %.5f\n", m_hammer.restitutionHot, m_hammer.restitutionCold, m_hammer.restitutionAnvil);	// 反発係数(熱い鉄 / 冷たい鉄 / 金床)
 	fprintf(fp, "recoilback %.5f\n", HAMMER_RECOIL_BACK);
 	fprintf(fp, "recoiltilt %.5f\n", HAMMER_RECOIL_TILT);
 	fprintf(fp, "chargeraise %.5f\n",m_hammer.chargeRaise);
@@ -942,6 +911,14 @@ void SceneForge::SaveTuning()
 	// -- 試し切り(藁人形の置き場所・切った断片の物理) --
 	fprintf(fp, "cuttarget %.5f %.5f %.5f\n", m_cutPosXZ[0], m_cutPosXZ[1], m_cutYaw);	// 高さは歩く床(m_walkFloorY)
 	fprintf(fp, "cutphys %.5f %.5f %.5f %.5f\n", m_cutTarget.physics.restitution, m_cutTarget.physics.friction, m_cutTarget.pushSpeed, m_cutTarget.sepSpeed);
+	// -- F5 の手感(2026-10-25 追加: 翻面の拍・動作の速さ・工位への移動・歩く速さ・斬撃の強さ) --
+	fprintf(fp, "fliptimes %.5f %.5f %.5f\n", m_flipTongsOutTime, m_flipGripTime, m_flipPutBackTime);
+	fprintf(fp, "seqspeed %.5f\n", m_seqTimeScale);
+	fprintf(fp, "transtime %.5f %.5f\n", m_transMinTime, m_transMaxTime);
+	fprintf(fp, "walkspeed %.5f\n", m_walkSpeed);
+	fprintf(fp, "cutdamage %.5f\n", m_cutStrikeDamage);
+	fprintf(fp, "grindspread %.5f\n", m_forging.grindSpread);	// 研ぎが当たった所から広がる幅(2026-10-26)
+	fprintf(fp, "edgejag %.5f %.5f\n", m_edgeJagAmp, m_edgeJagFreq);	// 研ぐ前の刃先のギザギザ(深さ, 細かさ)
 
 	fclose(fp);
 }
@@ -960,7 +937,9 @@ void SceneForge::TuningRefs(std::vector<float*>& out)
 		&m_hammer.restLift, &m_hammerScale,
 		&m_hammerRot[0], &m_hammerRot[1], &m_hammerRot[2],
 		&m_hammerOff[0], &m_hammerOff[1], &m_hammerOff[2],
-		&m_hammer.stiffness, &m_hammer.damping, &m_hammer.mass, &m_hammer.impulse,
+		&m_hammer.stiffness, &m_hammer.damping, &m_hammer.mass,
+		&m_hammer.swingSpeedMin, &m_hammer.swingSpeedGain, &m_hammer.swingAccel,
+		&m_hammer.restitutionHot, &m_hammer.restitutionCold, &m_hammer.restitutionAnvil,
 		&HAMMER_RECOIL_BACK, &HAMMER_RECOIL_TILT, &m_hammer.chargeRaise,
 		// -- Camera (organic feel) --
 		&CAM_SHAKE_AMP, &m_camBreathAmp, &m_camBreathSpeed,
@@ -998,6 +977,9 @@ void SceneForge::TuningRefs(std::vector<float*>& out)
 		// -- Sequence feel / hearth insert --
 		&m_seqHandLag, &m_seqArcLift, &m_seqTimeJitter, &m_seqArcJitter, &m_hearthYaw, &m_hearthTipSide, &m_hearthTipDepth,
 		&m_carryAvoidMaxRaise, &m_carryAvoidMargin, &m_carryAvoidLambda, &m_carryAvoidMaxPull,
+		// -- F5 pacing (flip beats / sequence speed / station move / walk / cut strength) --
+		&m_flipTongsOutTime, &m_flipGripTime, &m_flipPutBackTime, &m_seqTimeScale, &m_transMinTime, &m_transMaxTime,
+		&m_walkSpeed, &m_cutStrikeDamage, &m_forging.grindSpread, &m_edgeJagAmp, &m_edgeJagFreq,
 	};
 	out.assign(r, r + _countof(r));
 }
@@ -1036,7 +1018,8 @@ void SceneForge::LoadTuning()
 		else if (strcmp(key, "stiffness")  == 0) sscanf_s(v, "%f", &m_hammer.stiffness);
 		else if (strcmp(key, "damping")    == 0) sscanf_s(v, "%f", &m_hammer.damping);
 		else if (strcmp(key, "mass")       == 0) sscanf_s(v, "%f", &m_hammer.mass);
-		else if (strcmp(key, "impulse")    == 0) sscanf_s(v, "%f", &m_hammer.impulse);
+		else if (strcmp(key, "hammerswing") == 0) sscanf_s(v, "%f %f %f", &m_hammer.swingSpeedMin, &m_hammer.swingSpeedGain, &m_hammer.swingAccel);
+		else if (strcmp(key, "restitution") == 0) sscanf_s(v, "%f %f %f", &m_hammer.restitutionHot, &m_hammer.restitutionCold, &m_hammer.restitutionAnvil);
 		else if (strcmp(key, "recoilback") == 0) sscanf_s(v, "%f", &HAMMER_RECOIL_BACK);
 		else if (strcmp(key, "recoiltilt") == 0) sscanf_s(v, "%f", &HAMMER_RECOIL_TILT);
 		else if (strcmp(key, "chargeraise")== 0) sscanf_s(v, "%f", &m_hammer.chargeRaise);
@@ -1101,6 +1084,13 @@ void SceneForge::LoadTuning()
 		else if (strcmp(key, "forgescale") == 0) sscanf_s(v, "%f %f %f %f %f %f", &m_scaleTiling, &m_scaleSoft, &m_scaleOpacity, &m_scaleGlow, &m_scaleStart, &m_scaleHoldMax);	// 足りない旧ファイルは残りが既定のまま
 		else if (strcmp(key, "cuttarget")  == 0) sscanf_s(v, "%f %f %f", &m_cutPosXZ[0], &m_cutPosXZ[1], &m_cutYaw);
 		else if (strcmp(key, "cutphys")    == 0) sscanf_s(v, "%f %f %f %f", &m_cutTarget.physics.restitution, &m_cutTarget.physics.friction, &m_cutTarget.pushSpeed, &m_cutTarget.sepSpeed);
+		else if (strcmp(key, "fliptimes")  == 0) sscanf_s(v, "%f %f %f", &m_flipTongsOutTime, &m_flipGripTime, &m_flipPutBackTime);
+		else if (strcmp(key, "seqspeed")   == 0) sscanf_s(v, "%f", &m_seqTimeScale);
+		else if (strcmp(key, "transtime")  == 0) sscanf_s(v, "%f %f", &m_transMinTime, &m_transMaxTime);
+		else if (strcmp(key, "walkspeed")  == 0) sscanf_s(v, "%f", &m_walkSpeed);
+		else if (strcmp(key, "cutdamage")  == 0) sscanf_s(v, "%f", &m_cutStrikeDamage);
+		else if (strcmp(key, "grindspread") == 0) sscanf_s(v, "%f", &m_forging.grindSpread);
+		else if (strcmp(key, "edgejag")    == 0) sscanf_s(v, "%f %f", &m_edgeJagAmp, &m_edgeJagFreq);
 	}
 	fclose(fp);
 }

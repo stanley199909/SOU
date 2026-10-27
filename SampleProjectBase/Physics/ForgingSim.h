@@ -15,7 +15,7 @@
 // Where the work is taken from is local: mostly the cells under the hammer (Gaussian
 // falloff), and what those cells cannot absorb (already finished) goes to the nearest
 // unfinished cells. So the iron changes where it was hit. The NSEG segments are only a
-// grouping read from the cells (HUD/F1), never what a strike writes.
+// grouping read from the cells (HUD/F4), never what a strike writes.
 //
 // Boundary: the player's ACTION (swinging the hammer) lives in the forge step;
 // this class only answers "given a strike, how does the iron react". Game rules
@@ -72,10 +72,14 @@ public:
     // (the forge step was too long next to heat/grind/quench in the 2026-10-02 playtest;
     // 14 -> 8 on 2026-10-22: whole run cut to ~3 min for a first-time player).
     float strikesPerFace = 8.0f;
-    // Seconds of valid grinding (pressed on a spinning wheel at a usable angle) one bevel
-    // needs. Valid grinding removes work at a fixed rate; angle/speed only grade it. Tunable
-    // (15 -> 8 on 2026-10-22: ~3 min run).
-    float grindSecondsPerSide = 8.0f;
+    // Seconds of valid grinding (pressed on a spinning wheel) one bevel needs. Valid grinding
+    // removes work at a fixed rate. Tunable (15 -> 8 on 2026-10-22: ~3 min run; 8 -> 15 on
+    // 2026-10-26: one segment took only 1.6 s, user: "a region finishes too fast").
+    float grindSecondsPerSide = 15.0f;
+    // How far the wheel's grinding spreads along the length: Gaussian sigma in length cells,
+    // like strikeSpread. Small = only the spot under the wheel gains, so the blade must be
+    // slid along to finish it. Tunable.
+    float grindSpread = 1.0f;
     // How far one strike's shaping spreads along the length: the standard deviation of
     // the Gaussian falloff, in length cells. Small = only the spot under the hammer moves
     // (precise but more strikes to cover the blade); large = feels like the old segments.
@@ -92,15 +96,15 @@ public:
     // length cells as shaping. Grinding only ever subtracts.
     enum class GrindOutcome { Sharpened, AlreadySharp };
     // Grind bevel `side` for dt seconds at lenCoord (contact along the length, cells 0..NL).
-    // Call only while the grinding is valid (pressed, wheel spinning, usable angle).
+    // Call only while the grinding is valid (pressed, wheel spinning fast enough).
     GrindOutcome ApplyGrind(int side, float lenCoord, float dt);
-    float EdgeCellProgOf(int side, int i) const { return m_edge[side ? 1 : 0].CellProgress(i); } // renderer
+    float EdgeCellProgOf(int side, int i) const { return m_edge[side ? 1 : 0].CellProgress(i); } // per cell: F4 readout + the renderer (ground cells lose the temper color)
     bool  EdgeCellDoneOf(int side, int i) const { return m_edge[side ? 1 : 0].CellDone(i); }
-    bool  SharpDoneOf(int side, int s)  const { return m_edge[side ? 1 : 0].SegDone(s, NSEG); }     // F1 readout
-    float SharpRatioOf(int side, int s) const { return m_edge[side ? 1 : 0].SegProgress(s, NSEG); } // F1 readout
+    bool  SharpDoneOf(int side, int s)  const { return m_edge[side ? 1 : 0].SegDone(s, NSEG); }     // F4 readout
+    float SharpRatioOf(int side, int s) const { return m_edge[side ? 1 : 0].SegProgress(s, NSEG); } // F4 readout
     bool  AllSharp() const { return m_edge[0].Done() && m_edge[1].Done(); } // both bevels ground (ends the Grind step)
 
-    // Debug step jump (F1): put the piece into the state "this step was already done".
+    // Debug step jump (F4): put the piece into the state "this step was already done".
     void  CompleteForging();  // both faces shaped to the target, no damage
     void  CompleteGrinding(); // every edge segment ground
 
@@ -118,7 +122,7 @@ public:
     float Damage(int i, int j) const { return m_dmgF[m_side][i][j]; }
     float CellProgOf(int side, int i) const { return m_shape[side ? 1 : 0].CellProgress(i); }  // shaping progress of one length cell = 1 - work left (renderer)
     bool  CellDoneOf(int side, int i) const { return m_shape[side ? 1 : 0].CellDone(i); }      // no work left (exact)
-    float SegProgOf(int side, int s)  const { return m_shape[side ? 1 : 0].SegProgress(s, NSEG); } // F1 readout
+    float SegProgOf(int side, int s)  const { return m_shape[side ? 1 : 0].SegProgress(s, NSEG); } // F4 readout
     bool  SegDoneOf(int side, int s)  const { return m_shape[side ? 1 : 0].SegDone(s, NSEG); }
     float Start()              const { return m_hStart; }
     bool  BothSidesDone()      const; // every segment of BOTH faces is shaped (ends the Forge step)

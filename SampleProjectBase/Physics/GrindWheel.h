@@ -21,7 +21,7 @@ public:
     float Speed01() const;                         // Speed normalised by maxSpeed (0..1)
     float Angle() const { return m_angle; }        // accumulated rotation (rad), for drawing the wheel
 
-    // Tunables (public, like HammerPhysics, so F1 sliders can bind to them).
+    // Tunables (public, like HammerPhysics, so the F5 sliders can bind to them).
     float pedalImpulse = 2.2f;   // rad/s added by one stroke
     float maxSpeed     = 10.0f;  // physical top speed of the wheel (rad/s)
     float friction     = 0.45f;  // bearing friction decay rate k (1/s) while free-spinning

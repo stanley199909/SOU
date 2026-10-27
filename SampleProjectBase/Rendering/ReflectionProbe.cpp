@@ -1,11 +1,8 @@
 #include "ReflectionProbe.h"
 #include "DirectX.h"
 #include "CameraBase.h"
-#include "Shader.h"
-#include "MeshBuffer.h"
 #include "Geometory.h"
 #include "LitRender.h"   // LightToggles (F2 light switches)
-#include "imgui/imgui.h"
 #include <DirectXPackedVector.h>
 #include <fstream>
 #include <iterator>
@@ -30,15 +27,9 @@ namespace
     const DXGI_FORMAT LUT_FORMAT  = DXGI_FORMAT_R16G16_FLOAT;         // two numbers per texel (A, B)
     const UINT        LUT_SIZE    = 128;                              // n.v x roughness; smooth, so small is enough
 
-    // Debug ball mesh resolution (UV sphere)
-    const int BALL_RINGS = 24;
-    const int BALL_SEGS  = 32;
-    const float LUT_PREVIEW_PX = 128.0f;   // F1 preview size of the BRDF LUT
     // Data texture read by the lit shaders (Lighting.hlsli iblBox): 0 probe, 1 box min, 2 box max, 3..11 SH
     const UINT SH_FIRST_TEXEL = 3;
     const UINT BOX_TEXELS     = SH_FIRST_TEXEL + 9;
-
-    struct BallVertex { XMFLOAT3 pos; XMFLOAT3 nrm; };
 
     struct State
     {
@@ -71,29 +62,20 @@ namespace
         XMFLOAT3 boxMin{}, boxMax{};
         bool     hasBox        = false;
         bool     boxDirty      = true;
-        bool     boxProjection = true;   // F1: compare with / without the correction
-        bool     showBox       = false;  // F1: draw the room box as lines
+        bool     boxProjection = true;   // off = look the reflection up from the probe as-is (was an F1 comparison switch)
+        bool     showBox       = false;  // F4 visualize section: draw the room box as lines
 
-        bool     useInLighting = true;   // F1: compare with / without IBL
+        bool     useInLighting = true;   // off = the old flat room color (was an F1 comparison switch)
         // diffuse IBL (irradiance SH)
         XMFLOAT3 sh[9] = {};
         bool     hasSH           = false;
-        bool     useDiffuse      = true;   // F1: off = the flat "Indoor fill" diffuse
-        float    diffuseStrength = 1.0f;   // F1: artist lift (1 = physical). The room is dark, so this may be raised
+        bool     useDiffuse      = true;   // off = the flat "Indoor fill" diffuse (was an F1 comparison switch)
+        float    diffuseStrength = 1.0f;   // artist lift (1 = physical). The room is dark, so this may be raised
         bool     uploadedDirection = true, uploadedReflections = true;   // F2 switches as last sent to the GPU
         bool     capturing       = false;  // while capturing, lit shaders get NO IBL (each capture must not include the previous one)
         bool     captured  = false;
         bool     recapture = false;
         XMFLOAT3 pos{};
-        // debug view
-        bool  showBall    = false;
-        bool  ballRaw     = false;   // show the photo before the bake (to compare)
-        float ballRadius  = 0.15f;   // meters
-        float ballRough   = 0.0f;    // roughness to show (0 = mirror)
-        std::shared_ptr<VertexShader> ballVS;
-        std::shared_ptr<PixelShader>  ballPS;
-        std::unique_ptr<MeshBuffer>   ballMesh;
-        bool ballTried = false;
     } s;
 
     bool ReadFile(const char* path, std::vector<char>& out)
@@ -369,49 +351,6 @@ namespace
         GetContext()->UpdateSubresource(s.boxTex, 0, nullptr, data, sizeof(data), 0);
         s.boxDirty = false;
     }
-
-    // UV sphere of radius 1 (scaled by the world matrix)
-    bool CreateBall()
-    {
-        if (s.ballTried) return s.ballMesh && s.ballVS && s.ballPS;
-        s.ballTried = true;
-        s.ballVS = std::make_shared<VertexShader>();
-        s.ballPS = std::make_shared<PixelShader>();
-        if (FAILED(s.ballVS->Load("Assets/Shader/VS_ProbeBall.cso")) || FAILED(s.ballPS->Load("Assets/Shader/PS_ProbeBall.cso")))
-        {
-            s.ballVS.reset(); s.ballPS.reset();
-            return false;
-        }
-        std::vector<BallVertex> vtx;
-        std::vector<unsigned int> idx;
-        for (int r = 0; r <= BALL_RINGS; ++r)
-        {
-            const float phi = XM_PI * r / BALL_RINGS;           // 0 = top .. pi = bottom
-            for (int c = 0; c <= BALL_SEGS; ++c)
-            {
-                const float th = XM_2PI * c / BALL_SEGS;
-                XMFLOAT3 n(sinf(phi) * cosf(th), cosf(phi), sinf(phi) * sinf(th));
-                vtx.push_back({ n, n });
-            }
-        }
-        const int row = BALL_SEGS + 1;
-        for (int r = 0; r < BALL_RINGS; ++r)
-            for (int c = 0; c < BALL_SEGS; ++c)
-            {
-                const unsigned a = r * row + c, b = a + row;
-                idx.insert(idx.end(), { a, b, a + 1, a + 1, b, b + 1 });
-            }
-        MeshBuffer::Description desc = {};
-        desc.pVtx = vtx.data();
-        desc.vtxSize = sizeof(BallVertex);
-        desc.vtxCount = (UINT)vtx.size();
-        desc.pIdx = idx.data();
-        desc.idxSize = sizeof(unsigned int);
-        desc.idxCount = (UINT)idx.size();
-        desc.topology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-        s.ballMesh = std::make_unique<MeshBuffer>(desc);
-        return true;
-    }
 }
 
 namespace ReflectionProbe
@@ -536,57 +475,7 @@ namespace ReflectionProbe
         SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
     }
 
-    void DrawDebugBall(CameraBase* camera)
-    {
-        if (!s.showBall || !s.captured || !camera || !CreateBall()) return;
-        struct { XMFLOAT4X4 world, view, proj; } vsCB;
-        XMStoreFloat4x4(&vsCB.world, XMMatrixTranspose(XMMatrixScaling(s.ballRadius, s.ballRadius, s.ballRadius) *
-                                                       XMMatrixTranslation(s.pos.x, s.pos.y, s.pos.z)));
-        vsCB.view = camera->GetView();
-        vsCB.proj = camera->GetProj();
-        const XMFLOAT3 eye = camera->GetPos();
-        // raw photo: its plain mips stand in for "blur"; baked: the mip of this roughness
-        const float lod = s.ballRaw ? s.ballRough * (float)(s.mipCount - 1) : s.ballRough * (float)(PREFILTER_MIPS - 1);
-        XMFLOAT4 psCB(eye.x, eye.y, eye.z, lod);
-
-        s.ballVS->WriteBuffer(0, &vsCB);
-        s.ballPS->WriteBuffer(0, &psCB);
-        SetBlendMode(BLEND_NONE);
-        SetDepthTest(DEPTH_ENABLE_WRITE_TEST);
-        s.ballVS->Bind();
-        s.ballPS->Bind();
-        ID3D11DeviceContext* ctx = GetContext();
-        ID3D11ShaderResourceView* cube = s.ballRaw ? s.srv : s.preSRV;
-        ctx->PSSetShaderResources(0, 1, &cube);
-        ctx->PSSetSamplers(1, 1, &s.iblSampler);
-        s.ballMesh->Draw();
-        ID3D11ShaderResourceView* none[1] = { nullptr };
-        ctx->PSSetShaderResources(0, 1, none);
-    }
-
-    bool Controls()
-    {
-        if (!ImGui::CollapsingHeader("Reflection probe (IBL)")) return false;
-        ImGui::Text(s.captured ? "Captured at (%.2f, %.2f, %.2f), %u px" : "Not captured yet",
-                    s.pos.x, s.pos.y, s.pos.z, FACE_SIZE);
-        if (ImGui::Button("Recapture")) s.recapture = true;
-        ImGui::Checkbox("Use IBL in lighting", &s.useInLighting);	// off = the old flat room color (compare)
-        if (ImGui::Checkbox("Box projection", &s.boxProjection)) s.boxDirty = true;	// off = look the reflection up from the probe as-is
-        ImGui::Checkbox("Show room box", &s.showBox);
-        if (ImGui::Checkbox("Diffuse IBL (wood / stone)", &s.useDiffuse)) s.boxDirty = true;	// off = the flat Indoor fill
-        if (ImGui::SliderFloat("Diffuse IBL strength", &s.diffuseStrength, 0.0f, 8.0f, "%.2f")) s.boxDirty = true;	// 1 = physical; raise if the room reads too dark
-        ImGui::Checkbox("Show probe ball", &s.showBall);
-        const float BALL_MIN = 0.05f, BALL_MAX = 0.6f;
-        ImGui::SliderFloat("Ball radius", &s.ballRadius, BALL_MIN, BALL_MAX, "%.2f m");
-        ImGui::SliderFloat("Ball roughness", &s.ballRough, 0.0f, 1.0f, "%.2f");	// 0 = mirror, 1 = fully rough
-        ImGui::Checkbox("Ball: raw photo (before blur bake)", &s.ballRaw);
-        if (s.lutBaked)
-        {
-            ImGui::Text("BRDF LUT (x = viewing angle, y = roughness)");
-            ImGui::Image((ImTextureID)(intptr_t)s.lutSRV, ImVec2(LUT_PREVIEW_PX, LUT_PREVIEW_PX));
-        }
-        return true;
-    }
+    bool& ShowRoomBox() { return s.showBox; }
 
     void Uninit()
     {
@@ -609,7 +498,6 @@ namespace ReflectionProbe
         SafeRelease(s.boxSRV);
         SafeRelease(s.boxTex);
         s.hasBox = false; s.hasSH = false; s.boxDirty = true;
-        s.ballMesh.reset(); s.ballVS.reset(); s.ballPS.reset();
-        s.captured = false; s.lutBaked = false; s.ballTried = false;
+        s.captured = false; s.lutBaked = false;
     }
 }

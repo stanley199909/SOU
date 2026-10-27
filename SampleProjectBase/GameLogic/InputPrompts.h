@@ -29,7 +29,6 @@ enum class AxisPrompt
 	Aim,			// 金床で狙う(刃の長手に沿って): マウス移動 / 左スティック上下
 	HandVertical,	// 手を上下(水の中で揺する): マウス上下 / 左スティック上下
 	HandHorizontal,	// 手を左右(刃を砥石の上で滑らせる): マウス左右 / 左スティック左右
-	TiltVertical,	// 刃を傾ける(研ぎの角度): マウス上下 / 右スティック上下
 };
 
 // 案内の1項目が指す物 = ボタンの動作(Action) か 2軸の操作(AxisPrompt)。どちらからでも暗黙に作れる。
@@ -54,8 +53,8 @@ namespace InputPrompts
 	const char* PointerIcon(AxisPrompt a);	// その操作の「本体」の絵(マウス本体 / 左か右のスティック)。動かして見せる教学に使う
 	const char* ShortName(Action a);// 一番短い呼び名(物の上の丸に入れる1文字: 「E」/「A」)
 
-	// 文の中の {Use} {Interact} {Grab} {Bellows} {Pedal} {GrindPress} {Flip} {Look} {Move} {Hand} {Tilt} を、今の機器の呼び名へ置き換える。
-	//   {Hand} = 手で動かす物(マウス / 左スティック)、{Tilt} = 回す物(マウス / 右スティック)
+	// 文の中の {Use} {Interact} {Grab} {Bellows} {Pedal} {GrindPress} {Flip} {Look} {Move} {Hand} を、今の機器の呼び名へ置き換える。
+	//   {Hand} = 手で動かす物(マウス / 左スティック)
 	// 印の無い文はそのまま返す。返す文字列は次に同じ文を同じ機器で頼まれるまで有効(中で覚えておく)。
 	const char* Format(const char* text);
 }

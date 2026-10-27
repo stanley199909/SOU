@@ -590,6 +590,9 @@
     <ClCompile Include="Scenes\SceneParticleLab.cpp">
       <Filter>ソース ファイル\App\Scene</Filter>
     </ClCompile>
+    <ClCompile Include="Engine\Display.cpp">
+      <Filter>ソース ファイル\Engine</Filter>
+    </ClCompile>
     <ClCompile Include="Engine\Audio.cpp">
       <Filter>ソース ファイル\Engine</Filter>
     </ClCompile>
@@ -598,6 +601,9 @@
     </ClCompile>
     <ClInclude Include="Scenes\SceneParticleLab.h">
       <Filter>ヘッダー ファイル\App\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="Engine\Display.h">
+      <Filter>ヘッダー ファイル\Engine</Filter>
     </ClInclude>
     <ClInclude Include="Engine\Audio.h">
       <Filter>ヘッダー ファイル\Engine</Filter>
@@ -648,12 +654,6 @@
       <Filter>リソース ファイル\VertexShader</Filter>
     </FxCompile>
     <FxCompile Include="Shaders\PS_Outline.hlsl">
-      <Filter>リソース ファイル\PixelShader</Filter>
-    </FxCompile>
-    <FxCompile Include="Shaders\VS_ProbeBall.hlsl">
-      <Filter>リソース ファイル\VertexShader</Filter>
-    </FxCompile>
-    <FxCompile Include="Shaders\PS_ProbeBall.hlsl">
       <Filter>リソース ファイル\PixelShader</Filter>
     </FxCompile>
     <FxCompile Include="Shaders\VS_Fullscreen.hlsl">

@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "lesson": "slash",
+  "canvas": {
+    "width": 512,
+    "height": 512
+  },
+  "playback": "step",
+  "loop": true,
+  "coordinate_system": "top-left origin; x right; y down; pixels; tilt radians clockwise",
+  "transform_order": "rotate pose around pivot, then apply dx/dy; base never transformed",
+  "compositing": {
+    "mode": "source-over",
+    "clearance_pixels": 0
+  },
+  "frames": [
+    {
+      "base": "lesson_slash_base.png",
+      "pose": "lesson_slash_pose1.png",
+      "duration_seconds": 1.2,
+      "dx": 0,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        256,
+        256
+      ]
+    },
+    {
+      "base": "lesson_slash_base.png",
+      "pose": "lesson_slash_pose2.png",
+      "duration_seconds": 0.12,
+      "dx": 0,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        256,
+        256
+      ]
+    },
+    {
+      "base": "lesson_slash_base2.png",
+      "pose": "lesson_slash_pose3.png",
+      "duration_seconds": 1.2,
+      "dx": 0,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        256,
+        256
+      ]
+    }
+  ]
+}

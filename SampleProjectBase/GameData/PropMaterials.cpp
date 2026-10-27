@@ -5,7 +5,7 @@ namespace
 	// 素材パック(Unreal 用)の法線 / ORM。Tools/pbr_prescale.py で 1024 に縮めた _1k 版を使う(原寸は計 268MB = git にも内蔵 GPU にも重い)。
 	//   ORM = R: AO(環境光の遮蔽)/ G: 粗さ / B: 金属度。画像がある物は粗さ・金属度を画素ごとに読む
 	//     = 鎚の頭(鉄)と柄(木)、金床と台が1枚の画像でも、場所ごとに正しく分かれる。下の定数は画像が無い時の代わり。
-	//   法線は Unreal 用 = DirectX 式(緑が下向き)。F1「Prop materials」で逆にして見比べられる。
+	//   法線は Unreal 用 = DirectX 式(緑が下向き)。編集シーンの「Prop materials」で逆にして見比べられる。
 	#define PACK "Assets/MM_Blacksmith_Pack/"
 	#define ANVIL_N  PACK "Anvil/Textures/T_Anvil_Normal_1k.png"
 	#define ANVIL_O  PACK "Anvil/Textures/T_Anvil_ORM_1k.png"

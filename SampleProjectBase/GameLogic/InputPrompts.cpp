@@ -115,7 +115,6 @@ namespace
 		{ AxisPrompt::Aim,            { KBM_DIR "mouse_move" },       MOUSE_NAME, KBM_DIR "mouse" },
 		{ AxisPrompt::HandVertical,   { KBM_DIR "mouse_vertical" },   MOUSE_NAME, KBM_DIR "mouse" },
 		{ AxisPrompt::HandHorizontal, { KBM_DIR "mouse_horizontal" }, MOUSE_NAME, KBM_DIR "mouse" },
-		{ AxisPrompt::TiltVertical,   { KBM_DIR "mouse_vertical" },   MOUSE_NAME, KBM_DIR "mouse" },
 	};
 	const AxisInfo AXIS_PAD[] =
 	{
@@ -124,7 +123,6 @@ namespace
 		{ AxisPrompt::Aim,            { PAD_DIR "xbox_stick_l_vertical" },   LSTICK, PAD_DIR "xbox_stick_l" },
 		{ AxisPrompt::HandVertical,   { PAD_DIR "xbox_stick_l_vertical" },   LSTICK, PAD_DIR "xbox_stick_l" },
 		{ AxisPrompt::HandHorizontal, { PAD_DIR "xbox_stick_l_horizontal" }, LSTICK, PAD_DIR "xbox_stick_l" },
-		{ AxisPrompt::TiltVertical,   { PAD_DIR "xbox_stick_r_vertical" },   RSTICK, PAD_DIR "xbox_stick_r" },
 	};
 	const AxisInfo& Axis(AxisPrompt a)
 	{
@@ -149,7 +147,6 @@ namespace
 		{ "{Look}",     AxisPrompt::Look },
 		{ "{Move}",     AxisPrompt::Move },
 		{ "{Hand}",     AxisPrompt::HandVertical },	// 呼び名だけ使う(マウス / 左スティック)
-		{ "{Tilt}",     AxisPrompt::TiltVertical },	// 呼び名だけ使う(マウス / 右スティック)
 	};
 
 	// 動作の呼び名: 1つ目のキー + 残りを括弧で(例 ペダル = 「右クリック(Space)」)。手柄は1つ目のボタンだけ

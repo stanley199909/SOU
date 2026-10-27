@@ -56,6 +56,8 @@ FORGE - Credits / クレジット
   鎧を着た藁人形 (Armored_Straw_Dummy.obj/.fbx) / 剣の柄 (Medieval_Sword_Hilt.obj/.fbx。FBX は assimp で読めず OBJ を使用) /
   刀光の画像 (Sword_Trail.png, 今は未使用: 刀光は PS_Trail が式で描く) / 「一刀両断」の筆文字 (Ichitou_Ryoudan.png, 画像生成ツールで生成)
   加工: なし (モデルの貼图は既存の小屋の素材を三平面投影で貼る)
+- 操作の案内の図 (Assets/UI/Lessons/v2/lesson_*.png): ChatGPT の画像生成で作成し、程序で背景を抜いて縮小
+  2026-10-27 第4批を追加: 焼き戻し (lesson_temper_*) / 試し切り (lesson_slash_*)。依頼の仕様は REQUEST_batch4_temper_slash.md
 - 羊皮紙の画像 (Assets/Ui/parchment*.png 等): ネットで見つけた画像を ChatGPT で加工
   ※ 元画像の作者・ライセンスが不明。外部に配布・公開する前に、CC0 の素材か一から生成した物に差し替えること。
 

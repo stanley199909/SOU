@@ -174,7 +174,7 @@ ForgingSim::StrikeOutcome ForgingSim::ApplyStrike(int ci, int cj, float lenCoord
     //   the strike for the score; the work done must not depend on the grade).
     const float MIN_STRIKES = 1.0f;   // guard against a zero/negative slider value
     const float work = (float)NL / fmaxf(strikesPerFace, MIN_STRIKES);
-    if (m_shape[m_side].Apply(lenCoord, work, strikeSpread) == WorkField::Result::AlreadyDone)
+    if (m_shape[m_side].Apply(lenCoord, work, strikeSpread, WorkField::Spill::ToNearest) == WorkField::Result::AlreadyDone)
         return StrikeOutcome::AlreadyDone;
     return StrikeOutcome::Shaped;
 }
@@ -202,14 +202,15 @@ bool ForgingSim::BothSidesDone() const
 ForgingSim::GrindOutcome ForgingSim::ApplyGrind(int side, float lenCoord, float dt)
 {
     // Fixed rate: one bevel = NL cell-units of work over grindSecondsPerSide seconds.
-    // Only the segment under the wheel gains (each segment = 1/NSEG of the bevel, so one
-    // segment takes grindSecondsPerSide / NSEG seconds of valid grinding).
+    // The work is taken around the contact point (Gaussian, grindSpread), the same way a
+    // hammer strike shapes the metal: only where the wheel touches gains, so the player has
+    // to slide the blade along. (2026-10-26: the old whole-segment fill finished 1/5 of the
+    // blade after 1.6 s at any one spot.) Spill::None: work landing on finished cells is lost
+    // (the wheel grinds air there), so holding still stops gaining -- slide on (2026-10-26).
+    // The F4 grind cell row shows whether every cell, ends included, can be reached.
     const float MIN_SECONDS = 1.0f;   // guard against a zero/negative slider value
     const float work = (float)NL * dt / fmaxf(grindSecondsPerSide, MIN_SECONDS);
-    int seg = (int)(lenCoord / (float)CELLS_PER_SEG);
-    if (seg < 0) seg = 0;
-    if (seg > NSEG - 1) seg = NSEG - 1;
-    if (m_edge[side ? 1 : 0].ApplySegment(seg, NSEG, work) == WorkField::Result::AlreadyDone)
+    if (m_edge[side ? 1 : 0].Apply(lenCoord, work, grindSpread, WorkField::Spill::None) == WorkField::Result::AlreadyDone)
         return GrindOutcome::AlreadySharp;   // grinding a finished edge only wastes metal
     return GrindOutcome::Sharpened;
 }

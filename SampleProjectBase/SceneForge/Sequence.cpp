@@ -236,7 +236,7 @@ void SceneForge::BeginSeqBeat()
 	// 鉄の開始姿勢 = 今描いている姿勢(最初の拍は上書き前の WeaponWorld = 置いてある所 or 手の中)
 	XMStoreFloat4x4(&m_seqFromIron, m_seqIronOverride ? XMLoadFloat4x4(&m_seqIronWorld) : WeaponWorld());
 
-	m_seqBeatDur = b.seconds * (1.0f + frand(-m_seqTimeJitter, m_seqTimeJitter));
+	m_seqBeatDur = b.seconds * m_seqTimeScale * (1.0f + frand(-m_seqTimeJitter, m_seqTimeJitter));
 	m_seqArcK    = m_seqArcLift * (1.0f + frand(-m_seqArcJitter, m_seqArcJitter));
 	// 前の拍の終わりに挟んでいて、この拍も腰へ戻さない → 火钳は鉄に付いたまま動く
 	m_seqAttached = m_seqPrevGrip && b.tongs != SeqTongs::Hip;

@@ -13,16 +13,33 @@
 #include "PostProcess.h"
 #include "DebugUI.h"
 #include "Audio.h"
+#include "Display.h"
+#include "CameraBase.h"
 
 //--- グローバル変数
 std::shared_ptr<SceneRoot> g_pScene;
 std::shared_ptr<PostProcess> g_pPost;
+
+//--- 画面の大きさが変わった(設定の画面モード/解像度。Display::ApplyPending)。画面の大きさの物を全部作り直す。
+//    バックバッファを握っている物(画面の RT)を先に放さないと ResizeBuffers が失敗する。
+static void ResizeScreen(UINT width, UINT height)
+{
+	auto rtv = g_pScene->GetObj<RenderTarget>("RTV");
+	GetContext()->OMSetRenderTargets(0, nullptr, nullptr);	// 描画先として繋がったままのバックバッファも放す
+	if (rtv) rtv->ReleaseScreen();
+	GetSwapChain()->ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH);
+	if (rtv) rtv->CreateFromScreen();
+	g_pPost->Resize(width, height);	// 場面の描画先と深度は次の PostProcess::Begin が内部解像度で作り直す
+	if (CameraBase* cam = g_pScene->GetObj<CameraBase>("Camera"))
+		cam->SetAspect((float)width / (float)height);	// 16:10 の画面(無枠で全画面)でも歪まない
+}
 
 HRESULT Init(HWND hWnd, UINT width, UINT height)
 {
 	HRESULT hr;
 	hr = InitDirectX(hWnd, width, height, false);
 	if (FAILED(hr)) { return hr; }
+	Display::Init(hWnd);	// 画面モードの切り替え(設定画面)。DXGI 自身の Alt+Enter は止める
 	Geometory::Init();
 	Sprite::Init();
 	InitInput();
@@ -55,6 +72,7 @@ HRESULT Init(HWND hWnd, UINT width, UINT height)
 
 void Uninit()
 {
+	Display::Shutdown();	// 排他的な全画面から抜けてからスワップチェーンを壊す(DXGI の決まり)
 	DebugUI::Dispose();
 	GpuProfiler::Uninit();
 	g_pPost->Uninit();
@@ -71,10 +89,11 @@ void Uninit()
 
 void Update(HWND hWnd, float tick)
 {
+	UINT newW, newH;
+	if (Display::ApplyPending(newW, newH)) ResizeScreen(newW, newH);	// 設定で変えた画面モード/解像度(フレームの頭でだけ切り替える)
 	UpdateInput();
 	Gamepad::Update(tick);
 	InputPrompts::Update();	// 最後に触った機器(キーボード・マウス / 手柄)= 操作案内の絵を切り替える
-	if (IsKeyTrigger(VK_F1)) DebugUI::Toggle();	// F1でデバッグUIの表示切替
 	g_pScene->_update(tick);
 	Haptics::Update(tick);	// このフレームに頼まれた震動を混ぜて手柄へ送る(ゲームの更新の後)
 	g_pPost->Update(tick);
@@ -93,12 +112,7 @@ void Draw()
 
 	// UIは最後に画面へ直接描画(ポストプロセスの影響を受けない)
 	DebugUI::NewFrame();
-	if (DebugUI::IsVisible())
-	{
-		DebugUI::DrawPerformance();
-		g_pPost->DrawUI();
-	}
-	g_pScene->DrawUI();		// ゲームHUDは常に表示(内部でデバッグ用パネルのみ切替)
+	g_pScene->DrawUI();		// ゲームHUDは常に表示(設計者用パネル F2〜F5 はシーンの中で切替)
 	{ GpuProfiler::Scope t((const char*)u8"画面の UI"); DebugUI::Render(); }
 	GpuProfiler::EndFrame();	// 画面へ出す(垂直同期で待つ)前で締める=待ち時間は GPU の仕事に含めない
 

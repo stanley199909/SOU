@@ -21,7 +21,7 @@ namespace
     // Cut-face vertices: closer to the cut plane than this (metres) belong to the cap.
     const float CAP_EPS = 1e-3f;
     const float MIN_DEBRIS_MASS = 0.2f;   // kg: a thin sliver still gets a sensible mass
-    const int   DISC_SEGMENTS = 24;       // F1 debug circle
+    const int   DISC_SEGMENTS = 24;       // F4 debug circle
 
     // A closed box: 6 faces x 2 triangles, wound so cross(b - a, c - a) points outward
     // (the D3D front face). Each face has its own 4 vertices (sharp edges).

@@ -228,6 +228,7 @@
     <ClCompile Include="SceneForge\Sequence.cpp" />
     <ClCompile Include="Scenes\SceneParticleLab.cpp" />
     <ClCompile Include="Engine\Audio.cpp" />
+    <ClCompile Include="Engine\Display.cpp" />
     <ClCompile Include="Engine\DebugUI.cpp" />
     <ClCompile Include="imgui\imgui.cpp" />
     <ClCompile Include="imgui\imgui_draw.cpp" />
@@ -301,6 +302,7 @@
     <ClInclude Include="SceneForge\SceneForge_Internal.h" />
     <ClInclude Include="Scenes\SceneParticleLab.h" />
     <ClInclude Include="Engine\Audio.h" />
+    <ClInclude Include="Engine\Display.h" />
     <ClInclude Include="Engine\DebugUI.h" />
     <ClInclude Include="imgui\imgui.h" />
     <ClInclude Include="imgui\imgui_internal.h" />
@@ -421,14 +423,6 @@
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Vertex</ShaderType>
     </FxCompile>
     <FxCompile Include="Shaders\PS_Outline.hlsl">
-      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
-      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
-    </FxCompile>
-    <FxCompile Include="Shaders\VS_ProbeBall.hlsl">
-      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Vertex</ShaderType>
-      <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Vertex</ShaderType>
-    </FxCompile>
-    <FxCompile Include="Shaders\PS_ProbeBall.hlsl">
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Pixel</ShaderType>
       <ShaderType Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Pixel</ShaderType>
     </FxCompile>

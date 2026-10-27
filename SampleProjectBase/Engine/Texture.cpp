@@ -187,6 +187,13 @@ HRESULT RenderTarget::CreateFromScreen()
 	}
 	return hr;
 }
+void RenderTarget::ReleaseScreen()
+{
+	// ResizeBuffers fails while anything still holds the back buffer: drop the view and the texture.
+	SAFE_RELEASE(m_pRTV);
+	SAFE_RELEASE(m_pSRV);
+	SAFE_RELEASE(m_pTex);
+}
 ID3D11RenderTargetView* RenderTarget::GetView() const
 {
 	return m_pRTV;

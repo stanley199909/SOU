@@ -20,6 +20,8 @@ public:
         float maxLife;
         float size;
         int   gen;     // burn sparks: 0 = first spark (will fork), 1 = a branch (dies normally)
+        float dull;    // grinding sparks: 0 = fresh metal (bright, long) .. 1 = already ground (dark red, short). 0 for every other spark
+        float trail;   // grinding sparks: seconds of motion blur drawn behind the spark (streak = speed x trail). 0 = the size-based streak of the other sparks
     };
 
     // Spawn a burst of sparks at a strike point. count = number, power/scale set energy.
@@ -35,6 +37,13 @@ public:
 
     void SpawnSparksDir(const DirectX::XMFLOAT3& origin, const DirectX::XMFLOAT3& dir, float spread,
                         int count, float speedMin, float speedMax);
+
+    // Grinding wheel sparks: like SpawnSparksDir, but tiny, fast and short-lived hot dust, drawn as thin
+    // motion-blurred lines (Tune grind*). Real grinding sparks are a dense, narrow fan of fine bright lines.
+    // dull 0..1: how little metal is left to take off there (grinding on a finished edge throws few,
+    // short, dark-red sparks; fresh metal throws long bright ones -- the player reads the edge from them).
+    void SpawnGrindSparks(const DirectX::XMFLOAT3& origin, const DirectX::XMFLOAT3& dir, float spread,
+                          int count, float speedMin, float speedMax, float dull);
 
     // Emit embers this frame from an emitter box (centre + XZ radius) at `rate`
     // per second with upward speed `rise`. Fractional counts carry between frames.
@@ -82,6 +91,10 @@ public:
         float sparkUpBonusMin = 1.0f, sparkUpBonusMax = 3.0f; // extra straight-up kick
         float sparkLifeMin  = 0.5f, sparkLifeMax = 1.1f;    // seconds alive
         float sparkSizeMin  = 0.16f, sparkSizeMax = 0.30f;  // streak size
+        // -- grinding sparks (SpawnGrindSparks): fine hot dust, much smaller than hammer scale flakes --
+        float grindLifeMin  = 0.20f, grindLifeMax = 0.45f;  // seconds alive
+        float grindSizeMin  = 0.025f, grindSizeMax = 0.045f; // streak width scale (the line itself is thinner, PS_Spark)
+        float grindTrail    = 0.035f;                        // motion blur (s): streak length = speed x this
         // -- spark motion (Update) --
         float sparkGravity      = 9.8f;   // downward accel
         float sparkRestitution  = 0.3f;   // vertical energy kept per ground bounce
@@ -121,6 +134,8 @@ public:
     Tune tune;
 
 private:
+    // Random direction inside a cone around unit `d` (half-angle `spread`), times `speed`.
+    static DirectX::XMVECTOR ConeVelocity(DirectX::FXMVECTOR d, float spread, float speed);
     std::vector<Particle> m_sparks;
     std::vector<Particle> m_embers;
     std::vector<Particle> m_steam;

@@ -272,7 +272,7 @@ XMMATRIX SceneForge::WeaponSpin() const
 	}
 }
 
-//--- 刃の回転部分 = 翻面(自局所の裏返し) × 向き付け(F1で合わせたRPY) × 工位の揃え(長軸をカメラの左右へ)。
+//--- 刃の回転部分 = 翻面(自局所の裏返し) × 向き付け(m_wpYaw/Pitch/Roll) × 工位の揃え(長軸をカメラの左右へ)。
 //    WeaponWorld と法線の変換が同じ回転を使う=見た目と陰影が必ず一致する。
 XMMATRIX SceneForge::WeaponRot() const
 {
@@ -379,7 +379,7 @@ float SceneForge::BladeDepthBelowCentre() const
 }
 
 //--- 刃を置く点。工位の作業点に、その工位の「動き」を足す:
-//    金床  : F1 の微調整 m_wpOff
+//    金床  : 微調整 m_wpOff
 //    砥石  : 刃を長軸方向に滑らせ、今研いでいる位置(m_grindU)を砥石の接点に持って来る + 押し当てで少し沈む
 //    水槽  : 淬火で刃を立てて(少し持ち上げ)水の中へ沈め、上下に揺する(m_quenchTurn / m_plunge / m_agitate)
 XMFLOAT3 SceneForge::WorkAnchor()
@@ -469,7 +469,7 @@ void SceneForge::BuildWeaponMorph()
 	// 法線も本体と同じ回転(翻面 * 向き付け * 工位の揃え)で回す。世界変換と規約を揃える。
 	XMMATRIX rot   = WeaponRot();
 
-	// タイトル等(非プレイ)は全体を一様に m_forgeProg で見せる(F1スライダのプレビュー)。
+	// タイトル等(非プレイ)は全体を一様に m_forgeProg で見せる(プレビュー)。
 	const bool  playing = (m_state == GAME_PLAY);
 	const int   segAim  = (playing && m_aimValid) ? AimSeg() : -1;	// 準心が鉄の上に無ければ高亮なし
 	const float pulse   = 0.5f + 0.5f * sinf(m_time * 8.0f);
@@ -502,6 +502,9 @@ void SceneForge::BuildWeaponMorph()
 	const int wa = (ta >= 0) ? 3 - la - ta : -1;
 	const float* fmn = &m_wpFinMin.x;	// 完成形の箱(研ぐのは完成した刃なので、幅は完成形で正規化)
 	const float* fmx = &m_wpFinMax.x;
+	// 刃先の欠け(PS_Wp)用: 長手セルごとの今の幅(モーフ後の頂点の幅の座標の最小/最大)。ループで集め、後で正規化に使う
+	float cellLo[NL], cellHi[NL];
+	for (int c = 0; c < NL; ++c) { cellLo[c] = FLT_MAX; cellHi[c] = -FLT_MAX; }
 
 	for (int i = 0; i < m_wpN; ++i)
 	{
@@ -510,7 +513,6 @@ void SceneForge::BuildWeaponMorph()
 		int   thisSeg;
 		float pFront, pBack;	// この頂点位置での表(面0)/裏(面1)それぞれの進捗
 		float vFront, vBack;	// 同じく、氧化皮の剥がれ具合(未完成の区域は厚い皮が残る=どこが未完成か鉄を見て分かる)
-		float sFront = 0.0f, sBack = 0.0f;	// この頂点位置での表/裏の刃の研ぎ具合(見た目用。区域を隣とブレンド)
 		float flash = 0.0f;					// 打撃の跡の光(0..1)
 		float tEdge = 0.0f;					// 焼き戻しの刃先の色(このセル)
 		if (playing)
@@ -542,14 +544,6 @@ void SceneForge::BuildWeaponMorph()
 				const float sg = fmaxf(m_impactFlashSpread, MIN_FLASH_SPREAD);
 				flash = flashLife * expf(-(d * d) / (2.0f * sg * sg));
 			}
-
-			// 研ぎの見た目: 研ぎ上がるまでは SHARP_HOLD_MAX で頭打ち(刃先に暗い所が残る)、研ぎ上がった瞬間に 1(=一気に明るく)。
-			//   鍛造の「最後の黒皮が落ちる」と同じ考え方=仕上がった所が見て分かる(ユーザー要望 2026-10-07)。研ぎも長手セル単位。
-			auto sharpVis = [&](int side, int c) {
-				return m_forging.EdgeCellDoneOf(side, c) ? 1.0f : m_forging.EdgeCellProgOf(side, c) * SHARP_HOLD_MAX;
-			};
-			sFront = sharpVis(0, ca) + (sharpVis(0, cb) - sharpVis(0, ca)) * ct;
-			sBack  = sharpVis(1, ca) + (sharpVis(1, cb) - sharpVis(1, ca)) * ct;
 			tEdge  = m_temperCell[ca] + (m_temperCell[cb] - m_temperCell[ca]) * ct;	// 焼き戻しの刃先の色(長手セルを隣とブレンド)
 			thisSeg = (int)AimSystem::SegCoordLocal(a0, m_wpMin, m_wpMax, NSEG); if (thisSeg >= NSEG) thisSeg = NSEG - 1;	// P の調試高亮用
 		}
@@ -560,7 +554,6 @@ void SceneForge::BuildWeaponMorph()
 		const float pOutline = (pFront + pBack) * 0.5f;
 		float pFace = pOutline;
 		float vFace = (vFront + vBack) * 0.5f;	// 氧化皮用(面の重みは下で pFace と同じ物を使う)
-		float sharp = (sFront + sBack) * 0.5f;	// 刃の研ぎ(その頂点が属する面の刃。下で面の重みを付ける)
 		if (ta >= 0)
 		{
 			// 頂点の厚み座標を stage0 の中心面基準で -1..+1 に正規化 → +側の面に属する重み。
@@ -574,9 +567,6 @@ void SceneForge::BuildWeaponMorph()
 			const float vPlus  = plusIsFront ? vFront : vBack;
 			const float vMinus = plusIsFront ? vBack  : vFront;
 			vFace = vMinus + (vPlus - vMinus) * wPlus;
-			const float sPlus  = plusIsFront ? sFront : sBack;	// 研ぐ面 = 刃の表/裏(各面の刃は別々に研ぐ)
-			const float sMinus = plusIsFront ? sBack  : sFront;
-			sharp = sMinus + (sPlus - sMinus) * wPlus;
 		}
 
 		XMVECTOR posO, nrmO, posF, nrmF;
@@ -586,19 +576,22 @@ void SceneForge::BuildWeaponMorph()
 		XMFLOAT3 lp; XMStoreFloat3(&lp, posO);
 		if (ta >= 0) { XMFLOAT3 lf; XMStoreFloat3(&lf, posF); (&lp.x)[ta] = (&lf.x)[ta]; }
 
-		// ★研ぎの形: 刃先(幅の端)に近い頂点ほど、鋭さに応じて厚みを中心面へ寄せる=刃が薄く立つ。
-		//   edgeW = 幅の正規化座標(0=中心,1=端)が EDGE_BAND_START を越えた分(SmoothStep)。
-		float edge = 0.0f;
-		if (wa >= 0 && sharp > 0.0f)
+		// ★研ぐ前の刃先の欠け(PS_Wp が画素ごとに切り欠く)に使う座標。頂点を動かすと刃先の頂点が粗くて大きな波にしか
+		//   ならなかった(2026-10-26)ので、形は画素で作り、頂点は座標だけを渡す(頂点の間は線形補間=画素ごとに正しい位置)。
+		//   x = 長手の位置(セル 0..NL。研ぎの進みのセルと同じ規約) / y = 幅の正規化座標(符号付き。±1 = 両側の刃先)
+		XMFLOAT2 edge(AimSystem::SegCoordLocal(a0, m_wpMin, m_wpMax, NL), 0.0f);
+		if (wa >= 0)
 		{
-			const float wc = (fmn[wa] + fmx[wa]) * 0.5f;
-			const float wh = (fmx[wa] - fmn[wa]) * 0.5f;
-			const float wn = (wh > 1e-6f) ? fabsf((&lp.x)[wa] - wc) / wh : 0.0f;
-			const float edgeW = Lerp::SmoothStep((wn - EDGE_BAND_START) / (1.0f - EDGE_BAND_START));
-			edge = sharp * edgeW;
-			const float tc = (mn[ta] + mx[ta]) * 0.5f;		// 厚みの中心面
-			(&lp.x)[ta] = tc + ((&lp.x)[ta] - tc) * (1.0f - EDGE_THIN * edge);
+			// ここでは幅の生の座標だけ入れ、全頂点を見た後で「その長手セルの今の幅」で -1..1 に直す(ループの後)。
+			//   2026-10-26: 箱(粗い鉄と完成形を進みで混ぜた物)で測ると、鍛造の途中の本当の幅とずれ、刃の中まで
+			//   刃先と見なして切り欠いた(中に穴=刃の裏側の暗い面が見え、翻す時に黒い線になった)。
+			edge.y = (&lp.x)[wa];
+			const int cell = (int)fminf(fmaxf(edge.x, 0.0f), (float)(NL - 1));
+			cellLo[cell] = fminf(cellLo[cell], edge.y);
+			cellHi[cell] = fmaxf(cellHi[cell], edge.y);
 		}
+		m_wpVtx[i].edge = edge;
+
 		// 焼き戻しの色: 刃の中央(背)ほど先に進み、両側の刃先が一番遅れる(差別焼き戻し)。刃先の値 = そのセルの m_temperCell。
 		//   wn = 幅の正規化座標(0 = 中央 / 1 = 刃先)。刃先の色がまだ 0 の所は色なし。
 		float temper = tEdge;
@@ -610,7 +603,6 @@ void SceneForge::BuildWeaponMorph()
 			temper = tEdge * (1.0f + TEMPER_SPINE_LEAD * (1.0f - wn));
 		}
 		m_wpVtx[i].temper = fminf(temper, 1.0f);
-		m_wpVtx[i].sharp = edge;	// PS へ: 研ぎ面の見た目(磨いた明るい鋼)に使う
 		m_wpVtx[i].work  = vFace;	// PS へ: この頂点の面の氧化皮の剥がれ具合(刃先/側面は両面を混ぜた値。完成まで厚い皮が残る)
 
 		XMVECTOR pp = XMVector3TransformCoord(XMLoadFloat3(&lp), world);
@@ -639,6 +631,21 @@ void SceneForge::BuildWeaponMorph()
 		col.w = m_forging.Heat();			// PSへ温度スカラーを渡す(冷→熱のブレンドに使う)
 		m_wpVtx[i].col = col;
 	}
+
+	// 刃先の欠けの幅の座標を、その長手セルの今の幅で -1..1 に直す(±1 = 今の形の両側の刃先)。
+	//   セルごとに測る = 鍛造の途中の形にも、細くなる切っ先にも合う
+	if (wa >= 0)
+	{
+		const float MIN_HALF_WIDTH = 1e-6f;
+		for (int i = 0; i < m_wpN; ++i)
+		{
+			XMFLOAT2& e = m_wpVtx[i].edge;
+			const int cell = (int)fminf(fmaxf(e.x, 0.0f), (float)(NL - 1));
+			const float wc = (cellLo[cell] + cellHi[cell]) * 0.5f;
+			const float wh = (cellHi[cell] - cellLo[cell]) * 0.5f;
+			e.y = (wh > MIN_HALF_WIDTH) ? fminf(fmaxf((e.y - wc) / wh, -1.0f), 1.0f) : 0.0f;
+		}
+	}
 }
 
 //--- 武器を描画(PBR の鋼 + 熱の発光。光と材質は他の物と同じ所から読む)。
@@ -657,17 +664,36 @@ void SceneForge::DrawWeapon()
 	m_wpMesh->Write(m_wpVtx.data());
 
 	// PS_Wp の cbuffer WpParam と同じ並び(順番を変えたら両方直す)。
-	//   光 = シーンと同じ(LitRender::Lights)/ 粗さ・金属度 = 材質表 "Weapon" / 熱の発光・黒皮 = 刀身だけの調整値(F1)
+	//   光 = シーンと同じ(LitRender::Lights)/ 粗さ・金属度 = 材質表 "Weapon" / 熱の発光・黒皮 = 刀身だけの調整値(forge_tuning.txt)
 	struct WpParams
 	{
 		SceneLightParams light;
 		XMFLOAT4 material;	// x 粗さ, y 金属度
 		XMFLOAT4 hot;		// x 熱い間も残す反射の割合, y 発光の地の明るさ, z 発射率の下限, w 発光の明るさ
 		XMFLOAT4 scale;		// x 繰り返し, y 境目の柔らかさ, z 濃さ, w 熱い時の光
-		XMFLOAT4 scale2;	// x 叩く前から剥がれている割合, y 反射を描く(F1 診断), z 発光を描く(F1 診断), w 法線マップ有り
+		XMFLOAT4 scale2;	// x 叩く前から剥がれている割合, y 反射を描く(診断), z 発光を描く(診断), w 法線マップ有り
 		XMFLOAT4 temperKey[TEMPER_KEYS];	// 焼き戻しの色の表(xyz = 色, w = 位置)。表は C++ が持つ=色見本(HUD)と刃が同じ色になる
 		XMFLOAT4 temperFilm;				// x 膜が「はっきり付いた」とみなす位置
+		XMFLOAT4 jag;						// 研ぐ前の刃先の欠け: x 深さ(刃の半分の幅に対する割合。0 = 出さない), y 細かさ(セル1つあたりの山の数)
+		XMFLOAT4 jagCell[ForgingSim::NL / 4];	// 長手セルごとの欠けの残り 0..1(= 1 − 両面の研ぎの平均)。4つずつ詰める
 	} wp{};
+	static_assert(ForgingSim::NL % 4 == 0, "jagCell packs 4 length cells per float4");
+	// 欠けは「叩いた所から」付く(2026-10-26 ユーザー: 鍛造が済んだ瞬間に全体へ出るのは、研ぎの為に作った様で順序が逆)。
+	//   叩くと金属が刃先の方へ押し出され、縁が不揃いに荒れる → 長手セルの鍛造の進みだけ欠けが深くなり、研いだ分だけ消える。
+	const bool jagOn = (m_state == GAME_PLAY);
+	wp.jag = { jagOn ? m_edgeJagAmp : 0.0f, m_edgeJagFreq, 0.0f, 0.0f };
+	// 砥石の上では「今研いでいる面」の進みだけで決める(2026-10-26 ユーザー: 片面が済んだ事が見て分からないと UI に頼るしかない)。
+	//   研ぐ面は下(砥石側)で見えない → 刃先の欠けを「今の面の残り」の印にする(物理の厳密さより読みやすさ)。
+	//   砥石以外(運んでいる・他の工位)では両面の平均。
+	const bool atGrind = (m_workAt == Station::Grindstone);
+	const int  grindSide = atGrind ? GrindSide() : 0;
+	for (int c = 0; c < ForgingSim::NL; ++c)
+	{
+		const float ground = atGrind ? m_forging.EdgeCellProgOf(grindSide, c)
+		                             : (m_forging.EdgeCellProgOf(0, c) + m_forging.EdgeCellProgOf(1, c)) * 0.5f;
+		const float hammered = fmaxf(m_forging.CellProgOf(0, c), m_forging.CellProgOf(1, c));	// どちらの面を叩いても縁は荒れる
+		(&wp.jagCell[c / 4].x)[c % 4] = hammered * (1.0f - ground);
+	}
 	for (int k = 0; k < TEMPER_KEYS; ++k)
 		wp.temperKey[k] = { TEMPER_COLOR_TABLE[k][1], TEMPER_COLOR_TABLE[k][2], TEMPER_COLOR_TABLE[k][3], TEMPER_COLOR_TABLE[k][0] };
 	wp.temperFilm = { TEMPER_FILM_FULL, 0.0f, 0.0f, 0.0f };
@@ -677,7 +703,7 @@ void SceneForge::DrawWeapon()
 	// z = 磨いてある(焼入れの後=焼き戻しの色を見る為に鍛冶が刃を磨く)。暗い鍛造肌のままでは色が見えなかった(2026-10-19)
 	wp.material = { mat.roughness, mat.metallic, (m_state == GAME_PLAY && StepReached(StepName::Temper)) ? 1.0f : 0.0f, 0.0f };
 	wp.hot      = { m_wpHotReflect, m_wpHotTint, m_wpHotEmisMin, m_wpHotGain };
-	const bool hasNormal = m_wpNormalTex && m_wpNormalTex->GetResource() && LitRender::NormalMapsEnabled();	// F1「Normal maps」は道具と共通
+	const bool hasNormal = m_wpNormalTex && m_wpNormalTex->GetResource() && LitRender::NormalMapsEnabled();	// 編集シーンの「Normal maps」は道具と共通
 	// マスクが読めない時は黒皮を出さない(灰色の既定テクスチャで全面が皮に覆われない様に)
 	const float scaleOpacity = (m_wpScaleMask && m_wpScaleMask->GetResource()) ? m_scaleOpacity : 0.0f;
 	wp.scale    = { m_scaleTiling, m_scaleSoft, scaleOpacity, m_scaleGlow };
@@ -756,7 +782,7 @@ void SceneForge::DrawHammer3D()
 
 //--- 打撃の火花の出る所 = ハンマーの頭の真下の、鉄の上面。
 //    水平位置は描かれているハンマーの「頭」から求める(照準点やオフセットから推測しない=タイトルとゲームで同じ規則)。
-//    旧: モデル箱の一番低い面 → 打った瞬間は柄の端の方が低く、火花が柄の端(頭の横 0.3m)から出ていた(2026-10-08 F1 十字で確認)。
+//    旧: モデル箱の一番低い面 → 打った瞬間は柄の端の方が低く、火花が柄の端(頭の横 0.3m)から出ていた(2026-10-08 デバッグの十字で確認)。
 XMFLOAT3 SceneForge::HammerStrikePoint()
 {
 	Model* hammer = GetObj<Model>("MdlHammer");
@@ -835,7 +861,7 @@ XMMATRIX SceneForge::HammerWorld(Model* hammer, bool withRecoil)
 	// 打撃直後は上向き速度が最大(=接触の反作用が最も強い)→ rp=1、上昇するにつれ減衰→頂点で0。
 	// これで縦の跳ね(m_hammerLift 側)と、後退＋上翻り(ここ)が同じ物理タイミングで起きる。
 	float rp = 0.0f;
-	float vLaunch = m_hammer.LaunchSpeed();		// 打撃直後の初速 v0 = J/m
+	float vLaunch = m_hammer.ReboundSpeed();		// 最後に鉄から跳ね返った速さ(= 当たった速さ × 反発係数)
 	if (withRecoil && vLaunch > 0.0001f && m_hammer.Velocity() > 0.0f)
 	{
 		rp = m_hammer.Velocity() / vLaunch;		// 0..1 に正規化(速度で駆動)

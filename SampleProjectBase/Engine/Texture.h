@@ -43,6 +43,7 @@ public:
 	void Clear(const float* color);
 	HRESULT Create(DXGI_FORMAT format, UINT width, UINT height);
 	HRESULT CreateFromScreen();
+	void ReleaseScreen();	// let go of the back buffer (before IDXGISwapChain::ResizeBuffers), then CreateFromScreen again
 	ID3D11RenderTargetView* GetView() const;
 
 protected:

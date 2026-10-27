@@ -43,7 +43,7 @@ public:
 	void  SetMoveSpeed(float s) { m_moveSpeed = s; }
 	float GetMoveSpeed() const { return m_moveSpeed; }
 	float  GetRadius() const { return m_radius; }	// 足元の円の半径(衝突の可視化が読む)
-	float* RadiusPtr() { return &m_radius; }		// F1スライダ用(直接いじる)
+	float* RadiusPtr() { return &m_radius; }		// 調整用(直接いじる)
 
 private:
 	void Move(float tick);											// WASD 入力どおりに位置を進める(衝突は見ない)

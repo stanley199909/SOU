@@ -43,6 +43,7 @@ namespace Audio
 	void PlayLoop(SoundId id, float volume = 1.0f);	// 無限ループ再生(BGM/タイトル)
 	void Stop(SoundId id);							// ループ停止
 	void SetLoop(SoundId id, float volume, float pitch);	// 鳴っているループの音量/音程を止めずに変える(物理に追従させる)
+	void SetVolumes(float master, float bgm, float se);	// 設定画面の音量 0..1(全体 / BGM / 効果音)。鳴っているループにもすぐ効く
 	void ToggleBgmMute();							// BGMだけミュート切替(SEは鳴る)。録画用
 
 	//--- 3D定位(3D positional audio)。XAudio2 付属の X3DAudio で、声源と聞き手の位置から左右の比率と距離の減衰を計算する。

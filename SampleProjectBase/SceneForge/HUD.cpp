@@ -671,8 +671,10 @@ void SceneForge::DrawTitleUI()
 	// 開始プロンプトは緩やかに明滅させて「操作可能」を伝える
 	if (m_modeSelectOpen)
 	{
-		static const char* LABELS[(int)ModeItem::Count] = { (const char*)u8"チュートリアル", (const char*)u8"通常モード", (const char*)u8"ゲームを終了する" };
-		static const char* DESCS[(int)ModeItem::Count]  = { (const char*)u8"はじめての方へ。工程を一つずつ選んで、操作を順に覚えます", (const char*)u8"案内は最小限。自分の目と耳で鍛冶を進めます",
+		static const char* LABELS[(int)ModeItem::Count] = { (const char*)u8"チュートリアル", (const char*)u8"ガイド付き", (const char*)u8"通常モード", (const char*)u8"ゲームを終了する" };
+		static const char* DESCS[(int)ModeItem::Count]  = { (const char*)u8"はじめての方へ。工程を一つずつ選んで、操作を順に覚えます",
+		                                                    (const char*)u8"はじめて遊ぶ方へ。最初から最後まで、遊びながら操作を教えます",
+		                                                    (const char*)u8"案内は最小限。自分の目と耳で鍛冶を進めます",
 		                                                    (const char*)u8"ゲームを閉じます" };
 		const float PANEL_CENTER_Y = 0.70f;
 		const int clicked = DrawChoicePanel((const char*)u8"モードを選ぶ", LABELS, (int)ModeItem::Count, m_modeSel,
@@ -714,7 +716,6 @@ void SceneForge::DrawPlayUI()
 	// 工程リスト(左)と、走動中に次に向かう点の目印(3D の上)
 	DrawStepTracker();
 	DrawObjectiveMarker();
-	if (m_tutorial && AtStation(Station::Grindstone) && !m_clearDecided) DrawGrindAngleMeter();
 
 	// 案内文(宏観チュートリアル=「今何をするか」)。工程と状況で変わる(UpdateGuide)。
 	//   基本の文言は配方(GameData/WeaponRecipe)が持つ=換武器で自動的に差し替わる。
@@ -777,26 +778,6 @@ void SceneForge::DrawPlayUI()
 		DrawSubtitle(m_popupText, POPUP_Y, jp->FontSize * POPUP_SCALE, jp, c);	// 主人公の独白 = 字幕の見た目(游明朝)
 	}
 
-	// スコアと形状一致度(左上)+一致度バー。プレイ中の情報を「今やること」に絞る為、F1(デバッグ)の時だけ出す。
-	//   成果は結果画面(DrawResultUI)で見せる。
-	if (DebugUI::IsVisible())
-	{
-		ImDrawList* dl = ImGui::GetForegroundDrawList();
-		char sb[48];
-		sprintf_s(sb, sizeof(sb), "SCORE  %d", m_score);
-		dl->AddText(ImVec2(40, 40), IM_COL32(255, 235, 200, 255), sb);
-		sprintf_s(sb, sizeof(sb), "SHAPE MATCH  %d%%", (int)(m_match * 100));
-		dl->AddText(ImVec2(40, 60), IM_COL32(150, 220, 255, 255), sb);
-
-		// 一致度バー(上部中央)
-		ImVec2 disp = ImGui::GetIO().DisplaySize;
-		float bx0 = disp.x * 0.30f, bx1 = disp.x * 0.70f, by = 30.0f, bh = 14.0f;
-		dl->AddRectFilled(ImVec2(bx0, by), ImVec2(bx1, by + bh), IM_COL32(30, 30, 34, 220), 3.0f);
-		dl->AddRectFilled(ImVec2(bx0, by), ImVec2(bx0 + (bx1 - bx0) * m_match, by + bh),
-			IM_COL32(90, 200, 255, 255), 3.0f);
-		dl->AddRect(ImVec2(bx0, by), ImVec2(bx1, by + bh), IM_COL32(200, 200, 200, 120), 3.0f);
-	}
-
 	// KCD式: 「叩く場所」は指示しない。誤打時だけ主人公の独白(m_popupText)で知らせる。
 	//   デバッグ時のみ Pキーで瞄準区域の可視化ON(状態表示)。
 	if (m_showAimHi)
@@ -833,7 +814,6 @@ void SceneForge::DrawPlayUI()
 		{ Action::Pedal,          (const char*)u8"連打：ペダル" },
 		{ Action::GrindPress,         (const char*)u8"長押し：刃を当てる" },
 		{ AxisPrompt::HandHorizontal, (const char*)u8"左右：滑らせる" },
-		{ AxisPrompt::TiltVertical,   (const char*)u8"上下：刃の角度" },
 		{ Action::Flip,           (const char*)u8"長押し：裏返す" },
 		{ Action::Grab,           (const char*)u8"掴んで運ぶ" },
 		{ Action::Interact,       (const char*)u8"離れる" },
@@ -930,21 +910,35 @@ void SceneForge::DrawStepTracker()
 	const ImU32 BAR_EDGE_COL   = IM_COL32(60, 42, 28, 200);	// 溝の輪郭(インクの線)
 	const ImU32 BAR_IDLE_COL   = INK_PENDING;					// 今は下を向いている面の進み(普通のインク。旧: 薄れたインクで見えにくかった)
 	const float BAR_EDGE_W     = 1.0f;							// 輪郭の太さ(px)
-	struct SubBar { const char* name; float prog; bool active; int segDone = -1; };	// segDone = 仕上がった区域の数(研ぎ: 棒を格子に分ける)。-1 = 1本の棒
+	const ImU32 SEG_DONE_COL   = IM_COL32(52, 128, 52, 255);	// 済んだ区域の格子(緑のインク。今の面の朱/他の面の墨と見分けが付く)
+	// 鍛造/研ぎ: 刃の区域(NSEG)ごとに1格子 = その区域の進み(0..満)。どこが足りないか一目で分かる(2026-10-26 ユーザー要望:
+	//   旧は「全体の進み」を左から順に埋めていた=格子の位置と刃の場所が対応しなかった)。焼入れ: 1本の棒。
+	//   格子の左右は画面上の刃の左右に合わせる(SegLowEndOnRight)。済んでいない区域は満タンに見せない(SEG_UNFINISHED_MAX)。
+	struct SubBar { const char* name; float prog; bool active; bool segmented = false; float seg[ForgingSim::NSEG] = {}; };
 	SubBar subs[ForgingSim::NSIDES];
 	int nSub = 0;
 	const StepName nowType = CurrentStep().type;
+	const float SEG_UNFINISHED_MAX = 0.9f;	// 区域の平均が 99% でも済んでいなければ、格子は 9 割まで(満タン=済 を保証)
+	auto segBar = [&](const char* name, bool active, int side, bool grind) {
+		SubBar b{ name, 0.0f, active, true };
+		for (int s = 0; s < ForgingSim::NSEG; ++s)
+		{
+			const bool  done = grind ? m_forging.SharpDoneOf(side, s)  : m_forging.SegDoneOf(side, s);
+			const float prog = grind ? m_forging.SharpRatioOf(side, s) : m_forging.SegProgOf(side, s);
+			b.seg[s] = done ? 1.0f : fminf(prog, SEG_UNFINISHED_MAX);
+		}
+		return b;
+	};
 	if (nowType == StepName::Forge)
 	{
-		subs[nSub++] = { (const char*)u8"表", m_forging.SideProgress(0), m_forging.Side() == 0 };
-		subs[nSub++] = { (const char*)u8"裏", m_forging.SideProgress(1), m_forging.Side() == 1 };
+		subs[nSub++] = segBar((const char*)u8"表", m_forging.Side() == 0, 0, false);
+		subs[nSub++] = segBar((const char*)u8"裏", m_forging.Side() == 1, 1, false);
 	}
 	else if (nowType == StepName::Grind)
 	{
 		// 両側の刃(Fキー長押しで裏返して研ぐ面を変える)。今研いでいる面を濃く
-		auto segsDone = [&](int side) { int n = 0; for (int s = 0; s < ForgingSim::NSEG; ++s) n += m_forging.SharpDoneOf(side, s) ? 1 : 0; return n; };
-		subs[nSub++] = { (const char*)u8"表", m_forging.SharpProgress(0), GrindSide() == 0, segsDone(0) };
-		subs[nSub++] = { (const char*)u8"裏", m_forging.SharpProgress(1), GrindSide() == 1, segsDone(1) };
+		subs[nSub++] = segBar((const char*)u8"表", GrindSide() == 0, 0, true);
+		subs[nSub++] = segBar((const char*)u8"裏", GrindSide() == 1, 1, true);
 	}
 	else if (nowType == StepName::Quench)
 		subs[nSub++] = { (const char*)u8"冷", QuenchProgress(), true };	// 冷え切った(焼きが入った)割合
@@ -1052,26 +1046,28 @@ void SceneForge::DrawStepTracker()
 			}
 			float bx0 = sp.x + spx + disp.y * BAR_GAP_RATIO, bx1 = bx0 + disp.x * BAR_W_RATIO;
 			float bh  = disp.y * BAR_H_RATIO, by = sp.y + (spx - bh) * 0.5f;
-			if (subs[k].segDone < 0)	// 1本の棒(鍛造/焼入れ)
+			if (!subs[k].segmented)	// 1本の棒(焼入れ)
 			{
 				dl->AddRectFilled(ImVec2(bx0, by), ImVec2(bx1, by + bh), BAR_BG_COL);
 				dl->AddRectFilled(ImVec2(bx0, by), ImVec2(bx0 + (bx1 - bx0) * subs[k].prog, by + bh), sc);
 				dl->AddRect(ImVec2(bx0, by), ImVec2(bx1, by + bh), BAR_EDGE_COL, 0.0f, 0, BAR_EDGE_W);
 				continue;
 			}
-			// 区域の数の格子(研ぎ): 仕上がった区域の数だけ左から埋まる。次の格子だけ、残りの区域の進みを途中まで見せる(止まって見えない様に)。
-			//   格子は「何個済んだか」だけで、刃のどこが残っているかは示さない(どこを研ぐかは刃の見た目で分かる=微観の指示を出さない)
+			// 区域ごとの格子(鍛造/研ぎ): 格子 c = 画面で左から c 番目の区域。その区域の進みだけ埋まる。
 			const int   NCELL = ForgingSim::NSEG;
 			const float CELL_GAP_RATIO = 0.18f;	// 格子の間の隙間(格子1つの幅に対する比)
 			const float cw  = (bx1 - bx0) / NCELL;
 			const float gap = cw * CELL_GAP_RATIO;
-			const float partial = fminf(fmaxf(subs[k].prog * NCELL - subs[k].segDone, 0.0f), 1.0f);	// 残りの区域の進みの合計(1格子分まで)
+			const bool  mirrored = SegLowEndOnRight();	// 区域 0(刃の長手の小さい端)が画面の右にある → 格子を左右反転
 			for (int c = 0; c < NCELL; ++c)
 			{
 				const float x0 = bx0 + cw * c + gap * 0.5f, x1 = bx0 + cw * (c + 1) - gap * 0.5f;
-				const float fill = (c < subs[k].segDone) ? 1.0f : (c == subs[k].segDone ? partial : 0.0f);
+				const float fill = subs[k].seg[mirrored ? NCELL - 1 - c : c];
+				// 済んだ区域は緑(2026-10-26 ユーザー要望: 「ここはもう加工しなくてよい」と一目で分かる様に)。
+				//   済んでいない区域は 9 割で止めてあるので、fill が 1 = 済。
+				const ImU32 fillCol = (fill >= 1.0f) ? SEG_DONE_COL : sc;
 				dl->AddRectFilled(ImVec2(x0, by), ImVec2(x1, by + bh), BAR_BG_COL);
-				if (fill > 0.0f) dl->AddRectFilled(ImVec2(x0, by), ImVec2(x0 + (x1 - x0) * fill, by + bh), sc);
+				if (fill > 0.0f) dl->AddRectFilled(ImVec2(x0, by), ImVec2(x0 + (x1 - x0) * fill, by + bh), fillCol);
 				dl->AddRect(ImVec2(x0, by), ImVec2(x1, by + bh), BAR_EDGE_COL, 0.0f, 0, BAR_EDGE_W);
 			}
 		}
@@ -1330,6 +1326,27 @@ float SceneForge::StationHighlight(const std::string& propKey) const
 	return m_hiAlpha * pulse;
 }
 
+//--- 工程リストの区域の格子を画面の刃と同じ左右に並べる為: 区域 0 の端(刃のローカル長軸の最小)が、反対の端より画面の右にあるか。
+//    刃の両端をビュー空間へ運び、透視の画面上の横位置 x/z で比べる(CPU 側は転置しない行列 GetView(false))。
+//    刃が無い・端がカメラの後ろにある時は false(既定の並び)。
+bool SceneForge::SegLowEndOnRight()
+{
+	CameraBase* cam = GetObj<CameraBase>("Camera");
+	if (!m_wpOk || !cam) return false;
+	const int la = AimSystem::LongAxis(m_wpMin, m_wpMax);
+	XMFLOAT3 lo((m_wpMin.x + m_wpMax.x) * 0.5f, (m_wpMin.y + m_wpMax.y) * 0.5f, (m_wpMin.z + m_wpMax.z) * 0.5f), hi = lo;
+	(&lo.x)[la] = (&m_wpMin.x)[la];
+	(&hi.x)[la] = (&m_wpMax.x)[la];
+	XMFLOAT4X4 v4 = cam->GetView(false);
+	const XMMATRIX toView = WeaponWorld() * XMLoadFloat4x4(&v4);
+	XMFLOAT3 a, b;
+	XMStoreFloat3(&a, XMVector3TransformCoord(XMLoadFloat3(&lo), toView));
+	XMStoreFloat3(&b, XMVector3TransformCoord(XMLoadFloat3(&hi), toView));
+	const float NEAR_Z = 0.05f;	// これより手前(カメラ側)は比べない
+	if (a.z <= NEAR_Z || b.z <= NEAR_Z) return false;
+	return a.x / a.z > b.x / b.z;
+}
+
 //--- 目印(オブジェクティブマーカー)。行き先が画面内なら真上に▼、画面外(後ろ含む)なら画面端に矢印。
 //    「E」提示が出ている間は目印を薄くする(同じ物に2つ重ねない)。
 //    CPU 側の投影は転置しない行列(GetView(false)/GetProj(false))=DrawInteractPrompt と同じ規約。
@@ -1584,7 +1601,7 @@ int SceneForge::DrawChoicePanel(const char* head, const char* const* labels, int
 //====================================================================
 //  設計者用パネル F2 = ライティング確認
 //  光源を1つずつ消して「この明るさ/色はどの光から来ているか」を確かめる道具。
-//  imgui の調整窓(F1)ではなく、ゲームと同じ羊皮紙+日本語で、項目を絞って描く。
+//  imgui の標準の窓ではなく、ゲームと同じ羊皮紙+日本語で、項目を絞って描く。
 //  光の強さ(調整値)は変えない=見比べる為だけの切り替え(保存しない)。
 //====================================================================
 void SceneForge::DrawLightPanel()
@@ -1636,12 +1653,12 @@ void SceneForge::DrawLightPanel()
 	const float row    = disp.y * ROW_RATIO;
 	const float panelW = disp.x * PANEL_W_RATIO;
 	const float headH  = disp.y * (HEAD_RATIO + HINT_RATIO) + row * 0.5f;
-	// 光の強さのつまみ(調整値そのものを変える = 保存できる)。値は CottageRender::Data() = F1 と同じ所
+	// 光の強さのつまみ(調整値そのものを変える = 保存できる)。値は CottageRender::Data() = 編集シーンのパネルと同じ所
 	CottageRender::Settings& light = CottageRender::Data();
 	// 値の見せ方: 数値 / 時計(time01 → 6:00 起点の時刻) / 分(秒で持つ値を分で見せる)
 	enum class Show { Number, Clock, Minutes };
 	struct Slider { const char* label; float* value; float minValue, maxValue; Show show; };
-	const float SUN_MAX = 64.0f, FIRE_MAX = 64.0f;	// つまみの右端(F1 の上限 128 の半分 = 細かく合わせやすい)
+	const float SUN_MAX = 64.0f, FIRE_MAX = 64.0f;	// つまみの右端(編集シーンの上限 128 の半分 = 細かく合わせやすい)
 	const float BEAM_DENSITY_MAX = 0.3f;			// 光の筋の濃さの右端(1m の空気が散らす割合。0.3 = 煙たい鍛冶場)
 	const float DAY_SEC_MIN = 30.0f, DAY_SEC_MAX = 1200.0f;	// 一日の長さ(秒): 30秒(早送り)〜20分
 	const float SEC_PER_MIN = 60.0f;
@@ -1761,7 +1778,7 @@ void SceneForge::DrawLightPanel()
 	}
 	{
 		const bool hover = rowHit(y);
-		if (hover && click) m_lightPanelSaved = CottageRender::Save();	// Assets/cottage_materials.txt(F1 の「Save cottage look」と同じ)
+		if (hover && click) m_lightPanelSaved = CottageRender::Save();	// Assets/cottage_materials.txt(編集シーンの「Save cottage look」と同じ)
 		const char* text = m_lightPanelSaved ? (const char*)u8"保存しました" : (const char*)u8"この明るさを保存";
 		dl->AddText(f, ipx, ImVec2(lx, y + (row - ipx) * 0.5f), hover ? INK_SEL : INK_ITEM, text);
 		y += row;
@@ -1909,11 +1926,22 @@ void SceneForge::DrawOptionsMenu()
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
 	ImDrawList* dl = ImGui::GetForegroundDrawList();
 	const ImU32 DIM_COL       = IM_COL32(0, 0, 0, 150);
-	const float PANEL_W_RATIO = 0.36f, CORNER_RATIO = 0.085f;	// 一時停止メニューより少し広い(値の列がある)
-	const float HEAD_RATIO = 0.040f, ITEM_RATIO = 0.032f, ROW_RATIO = 0.075f, HEAD_GAP = 1.3f;
+	const float PANEL_W_RATIO = 0.42f, CORNER_RATIO = 0.085f;	// 一時停止メニューより少し広い(値の列がある)
+	const float HEAD_RATIO = 0.040f, ITEM_RATIO = 0.028f, ROW_RATIO = 0.052f, HEAD_GAP = 1.3f;	// 行は 9 個(2026-10-26 画面/音量を追加)= 画面に収まる行の高さ
+	// 分類の見出し(2026-10-26 ユーザー: 画面と音が混ざって分かりにくい)。見出しは選べない=上下の移動は項目だけ
+	const float SECTION_RATIO = 0.022f;		// 見出しの文字の高さ(画面高さ比)
+	const float SECTION_ROW   = 0.040f;		// 見出し1つ分の高さ(画面高さ比)
+	struct Section { OptionItem first; const char* name; };
+	const Section SECTIONS[] = {
+		{ OptionItem::DisplayMode, (const char*)u8"画面" },
+		{ OptionItem::VolMaster,   (const char*)u8"音" },
+		{ OptionItem::LessonSpeed, (const char*)u8"操作" },
+	};
+	const ImU32 INK_SECTION = IM_COL32(120, 70, 40, 230);	// 見出し(項目より淡い茶)
+	const ImU32 INK_RULE    = IM_COL32( 60, 42, 28,  60);	// 見出しの下の細い線
 	const float INSET_TOP = 0.95f, INSET_BOTTOM = 0.75f, INSET_SIDE = 0.75f;
 	const float ARROW_RATIO = 0.011f;		// ◀ ▶ の大きさ(画面高さ比)
-	const float VALUE_W_RATIO = 0.075f;		// ◀ と ▶ の間(値の欄)の幅(画面幅比)
+	const float VALUE_W_RATIO = 0.115f;		// ◀ と ▶ の間(値の欄)の幅(画面幅比)。「フルスクリーン」が矢印に重ならない幅(2026-10-26)
 	const float PREVIEW_GAP = 0.13f;		// パネルの右端から見本の中心まで(画面幅比)
 	const float PREVIEW_SCALE = 1.2f;		// 見本の大きさ(案内の図に対する倍率)
 	const ImU32 INK_HEAD = IM_COL32( 60,  38,  22, 255);
@@ -1924,7 +1952,8 @@ void SceneForge::DrawOptionsMenu()
 	dl->AddRectFilled(ImVec2(0, 0), disp, DIM_COL);
 	const float corner = disp.y * CORNER_RATIO, row = disp.y * ROW_RATIO;
 	const int   n = (int)OptionItem::Count;
-	const float pw = disp.x * PANEL_W_RATIO, ph = corner * INSET_TOP + row * HEAD_GAP + row * n + corner * INSET_BOTTOM;
+	const float secRow = disp.y * SECTION_ROW;
+	const float pw = disp.x * PANEL_W_RATIO, ph = corner * INSET_TOP + row * HEAD_GAP + row * n + secRow * _countof(SECTIONS) + corner * INSET_BOTTOM;
 	const ImVec2 pa((disp.x - pw) * 0.5f, (disp.y - ph) * 0.5f), pb(pa.x + pw, pa.y + ph);
 	DrawParchment(dl, m_uiFrame.get(), pa, pb, corner);
 
@@ -1947,6 +1976,15 @@ void SceneForge::DrawOptionsMenu()
 	auto hit = [&](ImVec2 a, ImVec2 b) { return mouse.x >= a.x && mouse.x <= b.x && mouse.y >= a.y && mouse.y <= b.y; };
 	for (int i = 0; i < n; ++i, cy += row)
 	{
+		for (const Section& sec : SECTIONS)	// この項目から新しい分類が始まる → 見出し + 細い線
+		{
+			if ((int)sec.first != i) continue;
+			const float spx = disp.y * SECTION_RATIO;
+			dl->AddText(DebugUI::FontJPFor(spx), spx, ImVec2(xL, cy), INK_SECTION, sec.name);
+			const float ly = cy + spx * 1.25f;
+			dl->AddLine(ImVec2(xL, ly), ImVec2(xR, ly), INK_RULE, 1.0f);
+			cy += secRow;
+		}
 		const ImVec2 ra(xL, cy - (row - ipx) * 0.5f), rb(xR, ra.y + row);
 		if (hit(ra, rb) && (mouseMoved || click)) m_optionsSel = i;
 		const bool isSel = (i == m_optionsSel);
@@ -1983,6 +2021,26 @@ void SceneForge::DrawOptionsMenu()
 		{
 			strcpy_s(val, sizeof(val), m_qualityIdx == 0 ? (const char*)u8"標準" : (const char*)u8"高画質");
 			steppedRow((const char*)u8"画質", val, m_qualityIdx, (int)_countof(QUALITY_STEPS));
+		}
+		else if (i == (int)OptionItem::DisplayMode)
+		{
+			const char* MODE_NAMES[] = { (const char*)u8"ウィンドウ", (const char*)u8"ボーダーレス", (const char*)u8"フルスクリーン" };
+			static_assert(_countof(MODE_NAMES) == (size_t)Display::Mode::Count, "one name per display mode");
+			steppedRow((const char*)u8"画面モード", MODE_NAMES[m_displayMode], m_displayMode, (int)Display::Mode::Count);
+		}
+		else if (i == (int)OptionItem::Resolution)	// 3つの画面モードで同じ一覧(Display)
+		{
+			const Display::Size s = Display::SizeAt(m_displaySizeIdx);
+			sprintf_s(val, sizeof(val), "%ux%u", s.w, s.h);
+			steppedRow((const char*)u8"解像度", val, m_displaySizeIdx, DisplaySizeCount());
+		}
+		else if (i == (int)OptionItem::VolMaster || i == (int)OptionItem::VolBgm || i == (int)OptionItem::VolSe)
+		{
+			const int idx = (i == (int)OptionItem::VolMaster) ? m_volMasterIdx : (i == (int)OptionItem::VolBgm) ? m_volBgmIdx : m_volSeIdx;
+			const char* name = (i == (int)OptionItem::VolMaster) ? (const char*)u8"音量（全体）"
+			                 : (i == (int)OptionItem::VolBgm)    ? (const char*)u8"音量（BGM）" : (const char*)u8"音量（効果音）";
+			sprintf_s(val, sizeof(val), "%d%%", (int)(VolumeOf(idx) * PERCENT + 0.5f));
+			steppedRow(name, val, idx, VOLUME_STEP_COUNT);
 		}
 		else
 		{
@@ -2133,38 +2191,10 @@ void SceneForge::DrawPlaytestTimer()
 	dl->AddRect(ImVec2(x0, y), ImVec2(x1, y + bh), INK_HEAD, 0.0f, 0, LINE_W);
 }
 
-//--- 研ぎの角度計(チュートリアルだけ): 0..GRIND_ANGLE_MAX の横棒。緑 = 研げる角度(効率 > 0)、白い印 = 今の角度。
-void SceneForge::DrawGrindAngleMeter()
-{
-	ImVec2 disp = ImGui::GetIO().DisplaySize;
-	ImDrawList* dl = ImGui::GetForegroundDrawList();
-	// 縦の小さな角度計(2026-10-12 ユーザー: 横長で画面の真ん中にあって邪魔だった)。
-	//   縦 = マウスの上下と同じ向き(上 = 立てる / 下 = 寝かせる)。操作の案内(画面中央の下)の右に置き、刃と砥石の上には掛からない。
-	const float X_RATIO     = 0.62f;	// 棒の中心(画面幅比)= 案内のキーの絵の右
-	const float Y0_RATIO    = 0.24f;	// 棒の上端(画面高さ比)。操作の案内(キーの絵と一言)の上に置く=重ならない(2026-10-19)
-	const float Y1_RATIO    = 0.38f;	// 棒の下端(画面高さ比)。砥石の上の刃の線より上
-	const float W_RATIO     = 0.010f;	// 棒の太さ(画面高さ比)
-	const float LABEL_RATIO = 0.020f;	// 「角度」の文字の高さ
-	const float MARK_OVER   = 0.8f;		// 印が棒からはみ出す量(棒の太さ比)
-	const float MARK_W      = 3.0f;		// 印の太さ(px)
-	const float cx = disp.x * X_RATIO, y0 = disp.y * Y0_RATIO, y1 = disp.y * Y1_RATIO, hw = disp.y * W_RATIO * 0.5f;
-	auto angleY = [&](float a) { return y1 - (y1 - y0) * fminf(fmaxf(a / GRIND_ANGLE_MAX, 0.0f), 1.0f); };	// 0(寝かせる)= 下 / 最大 = 上
-	dl->AddRectFilled(ImVec2(cx - hw, y0), ImVec2(cx + hw, y1), IM_COL32(20, 16, 12, 200), hw);
-	const ImU32 green = IM_COL32(90, 180, 90, 230);
-	dl->AddRectFilled(ImVec2(cx - hw, angleY(GRIND_IDEAL_ANGLE + GRIND_ANGLE_TOL)), ImVec2(cx + hw, angleY(GRIND_IDEAL_ANGLE - GRIND_ANGLE_TOL)), green, hw);
-	const float my = angleY(fabsf(m_grindAngle));
-	dl->AddLine(ImVec2(cx - hw * (1.0f + MARK_OVER), my), ImVec2(cx + hw * (1.0f + MARK_OVER), my), IM_COL32(255, 255, 255, 255), MARK_W);
-	const float lpx = disp.y * LABEL_RATIO;
-	ImFont* f = DebugUI::FontJPFor(lpx);
-	const char* label = (const char*)u8"角度";
-	const ImVec2 sz = f->CalcTextSizeA(lpx, FLT_MAX, 0.0f, label);
-	dl->AddText(f, lpx, ImVec2(cx - sz.x * 0.5f, y0 - lpx * 1.4f), IM_COL32(255, 236, 196, 240), label);
-}
-
 void SceneForge::DrawUI()
 {
 	// 配置/材質/炭火/カメラの編集はすべて SCENE_STAGE_EDITOR に移設。
-	// ゲーム側は焼き込み済みの値で表示するだけ(F1はクリーン)。
+	// ゲーム側は焼き込み済みの値で表示するだけ(調整パネルはクリーン)。
 
 	switch (m_state)
 	{
@@ -2193,355 +2223,282 @@ void SceneForge::DrawUI()
 	 && ((m_state == GAME_PLAY && m_introPhase == IntroPhase::None && !m_clearDecided) || m_state == GAME_RESULT))
 		DrawPlaytestTimer();
 
-	// F1中: 調整パネルは「1つの窓 + 折叠見出し(CollapsingHeader)」にまとめる。
-	//   別々の Begin() 窓を5つ開くと画面を覆って見づらいので、1窓に集約し、既定は全部畳んだ状態。
-	//   見出しを開いた区画だけ展開 = 画面を殆ど遮らずに調整できる(imgui の定石)。
-	//   区画: Weapon(工件姿勢) / Camera(視点と追従) / Hammer(鎚姿勢と反冲) / Aim / Walk。
-	if (DebugUI::IsVisible())
-	{
-		// 初回のみ左上に配置(以後はユーザーが動かせる)。幅は狭め=画面を占有しない。
-		ImGui::SetNextWindowPos(ImVec2(8, 8), ImGuiCond_FirstUseEver);
-		ImGui::SetNextWindowSize(ImVec2(340, 560), ImGuiCond_FirstUseEver);
-		ImGui::Begin("Forge Tuning (F1)");
-	CottageRender::Controls();
-	LitRender::Controls();	// 道具の材質(法線/ORM の見比べ)
-	if (ReflectionProbe::Controls())	// 反射プローブ(IBL): 撮り直し・鏡の球で撮れた画像を確かめる
-	{
-		ImGui::SliderFloat("Probe height above anvil", &m_probeLift, 0.0f, 1.5f, "%.2f m");	// 変えたら Recapture
-		ImGui::SliderFloat("Room box inset", &m_probeBoxInset, 0.0f, 1.0f, "%.2f m");		// 橙の箱を壁の内面へ(撮り直し不要)
-	}
-	if (ImGui::CollapsingHeader("Forge light (flicker)"))	// 炉の火の光: 揺らぎ・位置の揺れ・ふいご(保存しない調整用。良い値は header の既定へ)
-	{
-		ImGui::SliderFloat("Flicker amount", &m_fireFlickerAmount, 0.0f, 0.8f, "%.2f");		// 明るさの揺れの深さ(±割合)
-		ImGui::SliderFloat("Flicker speed",  &m_fireFlickerSpeed,  0.2f, 3.0f, "%.2f");		// 揺れの速さの倍率
-		ImGui::SliderFloat("Flame jitter (m)", &m_fireJitter,      0.0f, 0.3f, "%.3f");		// 火の位置の揺れ幅 = 明暗・ハイライトが動く量
-		ImGui::SliderFloat("Bellows boost",  &m_fireBellowsBoost,  1.0f, 3.0f, "%.2f");		// ふいごで部屋が明るくなる倍率
-	}
-
-		// --- 起動時スナップショットへ一発リセット(F8キーと同じ)。滅茶苦茶にしても戻せる保険。 ---
-		if (ImGui::Button("Reset ALL to startup  (F8)")) RestoreTuning();
-		ImGui::SameLine();
-		if (ImGui::Button("Save tuning")) SaveTuning();	// 手動保存(退出時にも自動保存)
-		// 衝突の可視化は折り畳みの中に隠さず最上段に置く(開いてすぐ見つかる様に)。F1を閉じても表示は残る。
-		ImGui::Checkbox("Show collision", &m_showCollision);
-		ImGui::SameLine();
-		ImGui::Checkbox("Show grass map", &m_showGrassMap);	// 草の踏み跡の貼图(真上から正射影)を小窓に表示
-		ImGui::SameLine();
-		ImGui::Checkbox("Playtest timer", &m_showPlaytestTimer);	// 工程ごとの所要時間(右下)。F1 を閉じても残る
-		ImGui::SameLine();
-		ImGui::Checkbox("Show interact", &m_showInteract);	// 互動範囲の箱(灰=範囲外/緑=範囲内/黄=E が出ている)+白=目線。F1 を閉じても残る
-		// 太陽の影の範囲(水色の正方形)。線の外は影の計算をしない=全部日向。屋内 20m / 屋外 48m で切り替わる
-		ImGui::Checkbox("Show shadow range", &m_showShadowRange);
-		ImGui::SameLine();
-		ImGui::Text("(%s %.0fm)", ShadowCameraIndoors() ? "indoor" : "outdoor", SunStage::Data().width);
-		// 戸口の敷居の Z-fighting(屋外の地面 yard と家の地基の上面が 1.4cm で重なる)の確認と調整
-		ImGui::Checkbox("Yard depth bias", &m_yardDepthBias);
-		ImGui::SameLine();
-		ImGui::Checkbox("Hide yard ground", &m_hideYard);
-		ImGui::SameLine();
-		const float YARD_BIAS_SLIDER_W = 120.0f;	// スライダの幅(px)。同じ行に収める
-		const int   YARD_BIAS_SLIDER_MAX = 4000;
-		ImGui::SetNextItemWidth(YARD_BIAS_SLIDER_W);
-		ImGui::SliderInt("Yard bias units", &m_yardBiasUnits, 0, YARD_BIAS_SLIDER_MAX);
-		// 【デバッグ】工程へ直接飛ぶ(前の工程は済ませた状態で、その工位から)。名前は英語の状態キー(F1 の字体に日本語が無い)
-		if (m_state == GAME_PLAY && m_recipe)
-		{
-			const int n = (int)m_recipe->steps.size();
-			if (m_debugJumpIdx >= n) m_debugJumpIdx = n - 1;
-			char cur[32]; sprintf_s(cur, "%d: %s", m_debugJumpIdx + 1, StepKey(m_recipe->steps[m_debugJumpIdx].type));
-			ImGui::SetNextItemWidth(140.0f);
-			if (ImGui::BeginCombo("##jumpstep", cur))
-			{
-				for (int i = 0; i < n; ++i)
-				{
-					char item[32]; sprintf_s(item, "%d: %s", i + 1, StepKey(m_recipe->steps[i].type));
-					if (ImGui::Selectable(item, i == m_debugJumpIdx)) m_debugJumpIdx = i;
-				}
-				ImGui::EndCombo();
-			}
-			ImGui::SameLine();
-			if (ImGui::Button("Jump to step")) StartAtStep(m_debugJumpIdx, true);
-
-			// 区域ごとの進捗(鍛造の形 / 研ぎの刃)。済んでいない区域は赤=「どこが残っているか」を確かめる(99% で止まる調査用)
-			const ImVec4 DONE_COL(0.6f, 0.9f, 0.6f, 1.0f), TODO_COL(1.0f, 0.45f, 0.4f, 1.0f);
-			const char* FACE_NAME[ForgingSim::NSIDES] = { "front", "back " };
-			for (int side = 0; side < ForgingSim::NSIDES; ++side)
-			{
-				ImGui::Text("forge %s:", FACE_NAME[side]);
-				for (int s = 0; s < ForgingSim::NSEG; ++s)
-				{
-					ImGui::SameLine();
-					ImGui::TextColored(m_forging.SegDoneOf(side, s) ? DONE_COL : TODO_COL, "%3.0f", m_forging.SegProgOf(side, s) * 100.0f);
-				}
-			}
-			// 長手セルごとの進捗(打撃が実際に書く値)。左=ローカル長手 0 側。今ハンマーの頭がどのセル位置か(head)も出す=端に届くかの確認
-			ImGui::Text("head at cell %.2f / %d", StrikeLenCoord(), ForgingSim::NL);
-			for (int side = 0; side < ForgingSim::NSIDES; ++side)
-			{
-				ImGui::Text("cells %s:", FACE_NAME[side]);
-				for (int i = 0; i < ForgingSim::NL; ++i)
-				{
-					ImGui::SameLine(0.0f, 2.0f);
-					ImGui::TextColored(m_forging.CellDoneOf(side, i) ? DONE_COL : TODO_COL, "%2.0f", fminf(m_forging.CellProgOf(side, i) * 100.0f, 99.0f));	// 2桁に収める(済=緑)
-				}
-			}
-			for (int side = 0; side < ForgingSim::NSIDES; ++side)
-			{
-				ImGui::Text("grind %s:", FACE_NAME[side]);
-				for (int s = 0; s < ForgingSim::NSEG; ++s)
-				{
-					ImGui::SameLine();
-					ImGui::TextColored(m_forging.SharpDoneOf(side, s) ? DONE_COL : TODO_COL, "%3.0f", m_forging.SharpRatioOf(side, s) * 100.0f);
-				}
-			}
-			// 診断: 研ぎを進めずに「区域が仕上がった」演出だけを出す(光と音が見える/聞こえるかを、判定と切り離して確かめる)
-			if (ImGui::Button("Test grind segment glint (random segment, wheel side)"))
-			{
-				const int seg = (int)frand(0.0f, (float)ForgingSim::NSEG) % ForgingSim::NSEG;
-				SpawnGlint(seg, frand(0.0f, 1.0f), GRIND_SEG_FLASH_SEC, 1.0f, true);
-				Audio::Play(Audio::SE_SEG_DONE, GRIND_SEG_SE_VOLUME);
-			}
-			// 焼き戻しの色(刃先の位置 0..1)。スライダで全セルを同じ色にする=色の並びを待たずに確かめられる(0 = 色なし)
-			float preview = TemperAvg();
-			if (ImGui::SliderFloat("Temper (all cells)", &preview, 0.0f, 1.0f, "%.2f"))
-				for (float& t : m_temperCell) t = preview;
-			ImGui::SameLine(); ImGui::Text("score %.2f  slide %.2f", TemperScore(), m_temperU);
-		}
-		ImGui::Separator();
-
-		// --- Weapon: 工件モデルを砧面に合わせる(FBXが読めた時だけ) ---
-		if (m_wpOk && ImGui::CollapsingHeader("Weapon"))
-		{
-			ImGui::Text("stages loaded: %d,  verts: %d", (int)m_wpStage.size(), m_wpN);
-			ImGui::SliderFloat("Forge progress", &m_forgeProg, 0.0f, 1.0f, "%.2f");
-			ImGui::TextDisabled("-- Orientation --");
-			ImGui::SliderFloat("Yaw",   &m_wpYaw,   -3.1416f, 3.1416f, "%.3f");
-			ImGui::SliderFloat("Pitch", &m_wpPitch, -3.1416f, 3.1416f, "%.3f");
-			ImGui::SliderFloat("Roll",  &m_wpRoll,  -3.1416f, 3.1416f, "%.3f");
-			ImGui::TextDisabled("-- Scale / Position --");
-			ImGui::SliderFloat("Scale##wp", &m_wpScale, 0.2f, 3.0f, "%.2f");	// ##wp=同窓の"Scale"衝突回避
-			ImGui::SliderFloat("Off X", &m_wpOff[0], -1.0f, 1.0f, "%.3f");
-			ImGui::SliderFloat("Off Y", &m_wpOff[1], -1.0f, 1.0f, "%.3f");
-			ImGui::SliderFloat("Off Z", &m_wpOff[2], -1.0f, 1.0f, "%.3f");
-			ImGui::TextDisabled("-- Hot steel (form must read while glowing) --");
-			ImGui::SliderFloat("Reflection while hot", &m_wpHotReflect, 0.0f, 1.0f, "%.2f");	// 1=物理どおり(反射+発光)。0=旧の「熱いと反射を消す」
-			ImGui::SliderFloat("Hot gain",  &m_wpHotGain,  0.3f, 6.0f, "%.2f");	// 高=通体が光る
-			ImGui::SliderFloat("Hot texture", &m_wpHotTint,   0.0f, 1.0f, "%.2f");	// 低=光っていても鋼の濃淡が見える
-			ImGui::SliderFloat("Hot bumps",   &m_wpHotEmisMin, 0.0f, 1.0f, "%.2f");	// 低=法線マップの凹凸が光に出る
-			ImGui::Checkbox("Blade: reflection", &m_wpShowReflect); ImGui::SameLine();	// 診断: 白く見える原因が反射か発光かを切り分ける
-			ImGui::Checkbox("Blade: glow", &m_wpShowGlow);	// 発光全体の明るさ(白飛び防止)
-			ImGui::TextDisabled("-- Forge scale (black oxide, knocked off by hammering) --");
-			ImGui::SliderFloat("Scale tiling",  &m_scaleTiling,  1.0f, 40.0f, "%.1f");	// 大=細かい皮
-			ImGui::SliderFloat("Scale soft",    &m_scaleSoft,    0.01f, 0.3f, "%.2f");	// 剥がれ際のぼかし
-			ImGui::SliderFloat("Scale opacity", &m_scaleOpacity, 0.0f, 1.0f, "%.2f");	// 黒皮の濃さ
-			ImGui::SliderFloat("Scale glow",    &m_scaleGlow,    0.0f, 1.0f, "%.2f");	// 熱い時の皮の鈍い光
-			ImGui::SliderFloat("Scale start bare", &m_scaleStart, 0.0f, 0.8f, "%.2f");	// 叩く前から地金が見える量(大=斑)
-			ImGui::SliderFloat("Scale hold",       &m_scaleHoldMax, 0.3f, 1.0f, "%.2f");	// 未完成の区域に残す皮(小=多く残る)
-		}
-
-		// --- Camera: 視点・画角・追従・打撃の揺れ ---
-		if (ImGui::CollapsingHeader("Camera"))
-		{
-			ImGui::TextDisabled("-- View (3/4 forge) --");
-			ImGui::SliderFloat3("Cam Pos",  m_camPos,  -5.0f, 6.0f, "%.2f");
-			ImGui::SliderFloat3("Cam Look", m_camLook, -5.0f, 6.0f, "%.2f");
-			{
-				float fovDeg = m_camFov * 57.29578f;			// rad→deg で見せる
-				if (ImGui::SliderFloat("Cam FOV", &fovDeg, 25.0f, 70.0f, "%.0f deg"))
-					m_camFov = fovDeg * 0.01745329f;			// deg→rad へ戻す
-			}
-			ImGui::TextDisabled("-- Follow (aim along blade) --");
-			ImGui::SliderFloat("Rail (aim)",  &m_aimRail,     0.0f, 1.0f, "%.2f");	// 手前0..奥1(手動確認用)
-			ImGui::SliderFloat("Follow Z",    &m_camFollowZ,  0.0f, 1.0f, "%.2f");	// カメラ本体のZ追従割合
-			ImGui::SliderFloat("Pan gain",    &m_camPanGain,  0.0f, 2.0f, "%.2f");	// 追従量の倍率
-			ImGui::SliderFloat("Cam lerp",    &m_camLerpRate, 0.5f, 12.0f, "%.1f");	// 3段切替の速さ(小=重い)
-			ImGui::TextDisabled("-- Impact shake --");
-			ImGui::SliderFloat("Cam shake",   &CAM_SHAKE_AMP,  0.0f, 0.2f, "%.3f");	// 打撃のカメラ揺れ
-			ImGui::TextDisabled("-- Handheld feel (organic) --");
-			ImGui::SliderFloat("Breath amp",  &m_camBreathAmp,   0.0f, 0.08f, "%.3f");	// 呼吸の振幅
-			ImGui::SliderFloat("Breath speed",&m_camBreathSpeed, 0.1f, 2.0f,  "%.2f");	// 呼吸の速さ
-			ImGui::SliderFloat("Tremor amp",  &m_camTremorAmp,   0.0f, 0.01f, "%.4f");	// 蓄力満時の微顫(既定OFF。極小で試す)
-			ImGui::SliderFloat("Tremor speed",&m_camTremorSpeed, 8.0f, 40.0f, "%.0f");	// 微顫の速さ
-			ImGui::SliderFloat("Tremor ramp", &m_camTremorRamp,  1.0f, 6.0f,  "%.1f");	// 立ち上がりの遅さ(大=満蓄直前で効く)
-			ImGui::SliderFloat("Look noise",  &m_camLookNoise,   0.0f, 1.0f,  "%.2f");	// 注視点への伝達
-		}
-
-		// --- Flip: 翻面の手感と運鏡 ---
-		if (ImGui::CollapsingHeader("Flip"))
-		{
-			ImGui::TextDisabled("-- Turning feel --");
-			ImGui::SliderFloat("Half-turn sec",  &m_flipTurnSec,  0.3f, 2.0f, "%.2f");	// F を押し続けて裏返るまでの秒(大=重い)
-			ImGui::TextDisabled("-- Camera choreography --");
-			ImGui::SliderFloat("Tongs lean",  &m_tongsLean,  0.0f, 0.6f, "%.2f");	// 火钳へ体を寄せる割合
-			ImGui::SliderFloat("Grip dolly",  &m_gripDolly,  0.0f, 0.7f, "%.2f");	// 夹む時に刃へ寄る割合
-			ImGui::SliderFloat("Grip return", &m_gripLambda, 1.0f, 15.0f, "%.1f");	// 元の視点へ戻る速さ
-			ImGui::TextDisabled("-- Hammer set down --");
-			ImGui::SliderFloat3("Stow offset", m_hammerStowOff, -1.5f, 1.5f, "%.2f");	// 置いた位置(構えからのずれ)
-			ImGui::SliderFloat("Stow tilt",   &m_hammerStowTilt, -3.1416f, 3.1416f, "%.2f");	// 寝かせる角度
-		}
-
-		// --- Stations: 炉/砥石/水槽の工位カメラと刃の置き位置、砥石の手感 ---
-		if (ImGui::CollapsingHeader("Stations"))
-		{
-			ImGui::TextDisabled("-- Station camera (hearth / grindstone / trough) --");
-			ImGui::SliderFloat("Cam distance", &m_stationCamDist,   0.3f, 3.0f, "%.2f");	// 作業点から手前へ
-			ImGui::SliderFloat("Cam height",   &m_stationCamHeight, 0.0f, 2.0f, "%.2f");	// 作業点からの目の高さ
-			ImGui::SliderFloat("Look lift",    &m_stationLookLift, -0.5f, 0.5f, "%.2f");	// 注視点の高さ補正
-			ImGui::TextDisabled("-- Blade placement --");
-			ImGui::SliderFloat("Hearth lift",  &m_hearthLift,  -0.3f, 0.3f, "%.3f");	// 炭床の上の高さ(差し込んだ切っ先の高さ)
-			ImGui::SliderAngle("Hearth angle", &m_hearthYaw,    0.0f, 80.0f);			// 炭床の長辺から奥へ振る角(平らに寝かせたまま)
-			ImGui::SliderFloat("Hearth tip side",  &m_hearthTipSide,  -0.8f, 0.8f, "%.2f");	// 先端の位置: 炭床の中心から長辺方向
-			ImGui::SliderFloat("Hearth tip depth", &m_hearthTipDepth, -0.5f, 0.5f, "%.2f");	// 先端の位置: 炭床の中心から奥へ
-			ImGui::SliderFloat("Grind gap",    &m_grindLift,   -0.05f, 0.05f, "%.3f");	// 刃の最低点と砥石上端の隙間(高さ自体は自動)
-			ImGui::SliderFloat("Trough hover", &m_troughHover,  0.0f, 1.0f, "%.3f");	// 水面の上に構える高さ
-			// 炉/水槽の正面(視点の側)。自動判定が外れた時だけ ON(次に工位へ入った時から反映)
-			ImGui::Checkbox("Hearth front flip", &m_hearthFrontFlip); ImGui::SameLine();
-			ImGui::Checkbox("Trough front flip", &m_troughFrontFlip);
-			if (ImGui::SliderAngle("Grind view", &m_grindViewYaw, -180.0f, 180.0f)	// 砥石の固定視点の向き(0/180=輪の両側)
-			    && m_station == Station::Grindstone && !m_walkMode)
-				m_stationViewDir = GrindViewDir();	// 研磨中ならその場で反映
-			ImGui::TextDisabled("-- Grindstone feel --");
-			ImGui::SliderFloat("Pedal impulse", &m_wheel.pedalImpulse, 0.5f, 6.0f,  "%.2f");	// 1回踏んだ時の加速
-			ImGui::SliderFloat("Wheel max",     &m_wheel.maxSpeed,     2.0f, 30.0f, "%.1f");	// 最高回転
-			ImGui::SliderFloat("Wheel friction",&m_wheel.friction,     0.05f, 2.0f, "%.2f");	// 空転の減速
-			ImGui::SliderFloat("Blade drag",    &m_wheel.bladeDrag,    0.0f, 3.0f,  "%.2f");	// 押し当ての減速
-			ImGui::SliderFloat("Slide sens",    &m_grindSens,          0.0002f, 0.005f, "%.4f");	// マウス→刃の滑り
-			ImGui::Text("Wheel speed %.2f   Blade U %.2f", m_wheel.Speed01(), m_grindU);
-			ImGui::Text("Bevel angle %.0f deg (ideal %.0f)  efficiency %.2f  side %s", XMConvertToDegrees(m_grindAngle),
-			            XMConvertToDegrees(GRIND_IDEAL_ANGLE), GrindAngleEfficiency(), GrindSide() == 0 ? "front" : "back");	// 研ぎ角の確認(F1 だけ)
-		}
-
-		// --- Hammer: 鎚モデルの姿勢と反冲 ---
-		if (ImGui::CollapsingHeader("Hammer"))
-		{
-			ImGui::TextDisabled("-- Position / Rotation / Scale --");
-			ImGui::SliderFloat("Rest lift",   &m_hammer.restLift,   0.0f, 1.2f, "%.3f");	// 待機の高さ(下げる=低く構える)
-			ImGui::SliderFloat("Scale##hammer", &m_hammerScale,     0.005f, 0.06f, "%.4f");	// ##hammer=同窓の"Scale"衝突回避
-			ImGui::SliderFloat3("Rot(rad)",   m_hammerRot,          -3.1416f, 3.1416f, "%.3f");
-			ImGui::SliderFloat3("Offset",     m_hammerOff,          -0.5f, 0.5f, "%.3f");	// Y=高さ微調整
-			ImGui::TextDisabled("-- Spring-damper (recoil physics) --");
-			ImGui::SliderFloat("Stiffness k", &m_hammer.stiffness,  20.0f, 600.0f, "%.0f");	// 刚度=硬さ/速さ
-			ImGui::SliderFloat("Damping c",   &m_hammer.damping,    0.0f, 40.0f, "%.2f");	// 阻尼=収まり(小=よく跳ねる)
-			ImGui::SliderFloat("Mass m",      &m_hammer.mass,       0.2f, 4.0f, "%.2f");	// 質量=重さ/鈍さ
-			ImGui::SliderFloat("Impulse J",   &m_hammer.impulse,    0.0f, 8.0f, "%.2f");	// 打撃の上向き冲量(初速=J/m)
-			ImGui::SliderFloat("Recoil back", &HAMMER_RECOIL_BACK,  0.0f, 1.0f, "%.3f");	// 手前へ後退(見た目)
-			ImGui::SliderFloat("Recoil tilt", &HAMMER_RECOIL_TILT,  0.0f, 2.0f, "%.3f");	// 錘頭の上翻り(見た目)
-			ImGui::SliderFloat("Charge raise",&m_hammer.chargeRaise,0.0f, 1.5f, "%.3f");	// 蓄力で上がる量
-		}
-
-		// --- Aim & Feel: 照準の重さ / 鎚が照準へ追いつく速さ ---
-		if (ImGui::CollapsingHeader("Aim & Feel"))
-		{
-			ImGui::SliderFloat("Aim sens",     &m_aimSens,      0.0006f, 0.0050f, "%.4f");	// 低=重い
-			ImGui::SliderFloat("Hammer follow",&m_hammerFollow, 3.0f, 24.0f, "%.1f");		// 低=遅れて重い
-			ImGui::SliderFloat("Strikes per face", &m_forging.strikesPerFace, 4.0f, 40.0f, "%.0f");
-			ImGui::SliderFloat("Grind sec per side", &m_forging.grindSecondsPerSide, 3.0f, 60.0f, "%.0f s");	// 片側の刃を研ぎ上げるのに要る有効な研ぎ時間
-			ImGui::SliderFloat("Strike spread",&m_forging.strikeSpread, 0.5f, 4.0f, "%.2f cells");	// 一打の成形が長手に広がる幅(小=打った所だけ/大=旧の区域に近い)
-			ImGui::SliderFloat("Impact flash time",   &m_impactFlashTime,   0.05f, 1.0f, "%.2f s");	// 打った所が光っている時間
-			ImGui::SliderFloat("Impact flash heat",   &m_impactFlashHeat,   0.0f,  0.6f, "%.2f");	// 光る所の見かけの温度の上乗せ
-			ImGui::SliderFloat("Impact flash spread", &m_impactFlashSpread, 0.3f,  3.0f, "%.2f cells");
-		}
-
-		// --- Walk / Player: 一人称の走動 ---
-		if (ImGui::CollapsingHeader("Walk / Player"))
-		{
-			ImGui::Text(m_walkMode ? "mode: WALK (press E to enter station)"
-			                       : "mode: STATION (forging)");
-			ImGui::SliderFloat("Walk speed",  &m_walkSpeed,    0.5f,  8.0f,   "%.2f");	// 移動速度(単位/秒)
-			ImGui::SliderFloat("Station move speed", &m_transSpeed,  0.5f, 6.0f, "%.2f");	// 工位への移動アニメの速さ(1..2秒に収まる)
-			ImGui::SliderFloat("Exit step back",     &m_exitStepBack, 0.0f, 2.0f, "%.2f");	// 退出時に金床から下がる距離
-			ImGui::SliderFloat("Interact look pad",  &m_lookPad,      0.0f, 0.5f, "%.2f");	// 視線判定の箱の膨らみ(大=狙いやすい)
-			ImGui::Text("interact focus: %s", m_focus >= 0 ? INTERACTABLES[m_focus].propKey : "-");
-			ImGui::Text("grab focus: %s", m_grabFocus >= 0 ? INTERACTABLES[m_grabFocus].propKey : "-");
-			ImGui::SliderFloat("Mouse sens",  &m_walkSens,     0.0006f, 0.0050f, "%.4f");	// 視角感度(低=重い)
-			ImGui::SliderFloat("Pitch limit", &m_walkPitchLim, 0.3f,  1.55f,  "%.2f");	// 上下の振り切り制限(rad)
-			ImGui::SliderFloat("Eye height",  &m_walkEyeH,     0.8f,  2.2f,   "%.2f");	// 目線の高さ
-		}
-
-		// --- Collision: 走動の衝突(玩家の円 × 道具の凸包) ---
-		if (ImGui::CollapsingHeader("Collision"))
-		{
-			ImGui::SliderFloat("Player radius", m_player.RadiusPtr(), 0.1f, 0.6f, "%.2f");	// 足元の円(大=道具から遠くで止まる)
-			ImGui::SliderFloat("Wall slice low",  &m_wallSliceLowHeight, 0.05f, 1.0f, "%.2f");	// 一番低い切り口(床から)。ここから背丈まで刻みごとに切る
-			ImGui::SliderFloat("Wall slice step", &m_wallSliceStep,      0.05f, 1.0f, "%.2f");	// 切り口の間隔
-			ImGui::Text("colliders: %d hulls / %d wall segments", (int)m_collision.hulls.size(), (int)m_collision.segments.size());
-			ImGui::Text("door: %s", m_door.IsOpen() ? "open" : "closed");
-			ImGui::SliderFloat("Door open angle", &m_door.openAngle, 0.5f, 2.2f, "%.2f");	// 開いた時の角度(rad)
-			ImGui::SliderFloat("Door swing time", &m_door.swingTime, 0.3f, 3.0f, "%.2f");	// 開閉にかかる秒(大=重い扉)
-			ImGui::TextDisabled("cyan = hull / orange = wall / red = touching / yellow = player");
-		}
-
-		// --- Carry: 鉄の運搬(火钳で掴んで歩く)。見た目の位置合わせ ---
-		if (ImGui::CollapsingHeader("Carry"))
-		{
-			ImGui::Text(m_carrying ? "holding the iron" : "hands free (tongs on the left hip)");
-			ImGui::TextDisabled("-- held iron (first-person viewmodel, camera-relative) --");
-			ImGui::SliderFloat3("Grip point (R/U/F)", m_gripOff, -1.0f, 1.5f, "%.2f");	// 火钳が鉄を挟む点(カメラから 右/上/前)
-			ImGui::SliderFloat("Iron yaw (right)",  &m_carryYaw,   -1.5f, 1.5f, "%.2f");	// 鉄を視線から右へ振る角
-			ImGui::SliderFloat("Iron pitch (up)",   &m_carryPitch, -1.0f, 1.0f, "%.2f");	// 鉄を上へ起こす角
-			ImGui::SliderFloat("Grip along iron",   &m_gripAlong,   0.0f, 1.0f, "%.2f");	// 挟む位置(手前の端から何割)
-			ImGui::SliderFloat3("Tongs base (R/U/F)", m_tongsBase, -1.5f, 1.0f, "%.2f");	// 火钳の柄の根元(画面の下の外)
-			ImGui::SliderFloat("Sway follow", &m_vmSwayLambda, 2.0f, 40.0f, "%.1f");	// 視点を振った時の追従の速さ(小=重く遅れる)
-			ImGui::TextDisabled("-- wall-clipping avoidance (purple ray in Show collision) --");
-			ImGui::Text("pull now %.2f m   raise now %.0f deg", m_carryPull, XMConvertToDegrees(m_carryRaise));
-			ImGui::SliderFloat("Avoid max pull", &m_carryAvoidMaxPull, 0.0f, 0.8f, "%.2f");	// まず手元へ引き寄せる量の上限(m)
-			ImGui::SliderAngle("Avoid max raise", &m_carryAvoidMaxRaise, 0.0f, 85.0f);		// 起こす角の上限
-			ImGui::SliderFloat("Avoid margin",    &m_carryAvoidMargin,  0.0f, 0.4f, "%.2f");	// 道具/壁の手前に空ける隙間
-			ImGui::SliderFloat("Avoid follow",    &m_carryAvoidLambda,  1.0f, 30.0f, "%.1f");	// 起こす/戻す速さ
-			ImGui::TextDisabled("-- sequence feel (grip / put-down animation) --");
-			ImGui::SliderFloat("Hand lag",     &m_seqHandLag,    0.0f, 0.5f, "%.2f");	// 目が先、手が遅れる割合(フォロースルー/オーバーラップ)
-			ImGui::SliderFloat("Arc lift",     &m_seqArcLift,    0.0f, 0.8f, "%.2f");	// 運ぶ時の弧の高さ(水平距離に対する比。アーク)
-			ImGui::SliderFloat("Time jitter",  &m_seqTimeJitter, 0.0f, 0.3f, "%.2f");	// 拍の長さのばらつき ±
-			ImGui::SliderFloat("Arc jitter",   &m_seqArcJitter,  0.0f, 0.8f, "%.2f");	// 弧の高さのばらつき ±
-			ImGui::TextDisabled("-- walking while carrying --");
-			ImGui::SliderFloat("Carry walk speed x", &m_carrySpeedMul, 0.2f, 1.0f, "%.2f");	// 運んでいる時の速さの倍率
-			ImGui::SliderFloat("Bob up/down",        &m_bobAmp,        0.0f, 0.06f, "%.3f");	// 上下の揺れ幅
-			ImGui::SliderFloat("Bob side",           &m_bobSideAmp,    0.0f, 0.04f, "%.3f");	// 左右の揺れ幅
-			ImGui::SliderFloat("Bob steps per meter",&m_bobPerMeter,   0.5f, 4.0f,  "%.2f");	// 1m で何歩=揺れの細かさ
-			ImGui::SliderFloat("Tongs scale",   &m_tongsScale,   0.3f, 3.0f, "%.2f");	// 台上の火钳に対する大きさ
-			ImGui::TextDisabled("-- hammer on the right hip (when not at the anvil) --");
-			ImGui::SliderFloat3("Hammer belt (R/H/F)", m_hammerHipOff, -1.0f, 1.5f, "%.2f");	// 腰帯の輪: 体から 右/床からの高さ/前
-			ImGui::SliderFloat("Hammer belt yaw",      &m_hammerHipYaw, -3.15f, 3.15f, "%.2f");	// 垂れた柄の軸まわりの向き
-			ImGui::SliderFloat3("Hip (L/height/F)", m_hipOff, -0.5f, 1.6f, "%.2f");	// 腰の火钳(体から 左/床からの高さ/前)
-		}
-
-		// --- Title: 標題カメラの取景(タイトル画面で開いて動かすと即反映。Save tuning で保存) ---
-		if (ImGui::CollapsingHeader("Title"))
-		{
-			ImGui::TextDisabled(m_state == GAME_TITLE ? "(on the title screen: changes show live)"
-			                                          : "(go back to the title screen to see it)");
-			// 走動中などで「この画がいい」と思った所で押す=今のカメラの位置と注視点をそのまま標題カメラにする。
-			//   (F1 を開くと入力は止まるので、開いた瞬間の画がそのまま取れる。Save tuning で保存)
-			if (ImGui::Button("Use current view as title camera"))
-				if (CameraBase* cam = GetObj<CameraBase>("Camera"))
-				{
-					XMFLOAT3 cp = cam->GetPos(), cl = cam->GetLook();
-					m_titleCamPos[0]  = cp.x; m_titleCamPos[1]  = cp.y; m_titleCamPos[2]  = cp.z;
-					m_titleCamLook[0] = cl.x; m_titleCamLook[1] = cl.y; m_titleCamLook[2] = cl.z;
-				}
-			ImGui::SliderFloat3("Title cam pos",  m_titleCamPos,  -8.0f, 8.0f, "%.2f");	// 標題カメラの位置
-			ImGui::SliderFloat3("Title cam look", m_titleCamLook, -8.0f, 8.0f, "%.2f");	// 注視点
-			// SPACE 後に金床へ移る秒数。上限 5 秒: 運鏡中も鉄は冷めるので、長すぎると START_HEAT(0.85)が
-			// 燃える温度(0.80)を下回り、最初の「加熱」工程が即完了しなくなる(0.85-0.80=0.05 / 冷却 0.008/秒 ≒ 6秒)。
-			ImGui::SliderFloat("Intro time", &m_titleIntroTime, 0.5f, 5.0f, "%.1f");
-			ImGui::SliderFloat("Logo fade time", &m_logoFadeTime, 0.2f, 3.0f, "%.1f");	// SPACE 後にロゴが消える秒数(カメラはその後)
-		}
-
-		// --- Grass: インタラクティブ草(玩家を避けて倒れ、離れると戻る) ---
-		if (ImGui::CollapsingHeader("Grass"))
-		{
-			ImGui::SliderFloat("Stamp radius",  &m_grassStampRadius,       0.2f, 2.0f, "%.2f");	// 足元で押し分ける円(world)
-			ImGui::SliderFloat("Lean",          &m_grassLean,              0.0f, 1.5f, "%.2f");	// 横へ倒れる量(草丈比)
-			ImGui::SliderFloat("Press down",    &m_grassPress,             0.0f, 1.0f, "%.2f");	// 足元で沈む量(草丈比)
-			ImGui::SliderFloat("Recover time",  &m_grassMap.recoverTime,   0.1f, 5.0f, "%.2f");	// 戻る速さ(秒。大=ゆっくり戻る)
-			ImGui::Text("map: %s", m_grassMap.IsReady() ? "ready" : "NOT READY (no StOutdoorGround / shader)");
-		}
-		TestCutControls();	// 試し切り(藁人形の置き場所・斬撃・断片の物理。TestCut.cpp)
-
-		ImGui::End();
-	}
-	DrawGrassMapPreview();	// 草の踏み跡の貼图(F1 のチェックで ON。F1 を閉じて歩きながらも見られる)
+	if (m_toolsPanelOpen) DrawToolsPanel();	// F4: 検査ツール(見える化・工程へ飛ぶ・進み具合)
+	if (m_feelPanelOpen)  DrawFeelPanel();	// F5: 手感の調整(試遊の後に触る数値)
+	DrawGrassMapPreview();	// 草の踏み跡の貼图(F4 のチェックで ON。F4 を閉じて歩きながらも見られる)
 
 	m_fade.Draw();	// 最後に全画面の黒幕(前景層)を重ねる=遷移の淡入淡出
 }
 
+
+//====================================================================================
+//  設計者用パネル F4(検査ツール)/ F5(手感の調整)
+//  2026-10-25: 何でも入っていた F1 の調整窓(imgui の折り畳み見出しの山)を廃止し、1キー=1つの仕事に分けた。
+//  F2/F3 と同じ羊皮紙+日本語の見た目。ただしスライダ・コンボを使う為、中身は imgui の部品(=自前で当たり判定を書かない)。
+//  見えない値は forge_tuning.txt に残る(滑条を消しても値は消えない。SaveTuning/LoadTuning/TuningRefs は別)。
+//====================================================================================
+static const float TOOL_TOP_RATIO    = 0.08f;	// パネル上端(画面高さ比)
+static const float TOOL_MAX_H_RATIO  = 0.84f;	// これより長い中身はパネル内でスクロール
+static const float TOOL_CORNER_RATIO = 0.06f;	// 羊皮紙の隅の大きさ(F2/F3 と同じ)
+static const float TOOL_INSET        = 0.85f;	// 文字を隅の飾りから離す量(隅の大きさ比)
+static const float TOOL_HEAD_RATIO   = 0.032f;	// 見出しの文字の高さ(画面高さ比)
+static const float TOOL_HINT_RATIO   = 0.019f;	// 操作の一言
+static const float TOOL_ITEM_RATIO   = 0.020f;	// 部品の文字
+static const float TOOL_SIDE_MARGIN  = 0.02f;	// 画面の端からの余白(画面幅比)
+static const float TOOLS_W_RATIO     = 0.30f;	// F4 の幅(画面幅比)。左に出す(F2 は右)
+static const float FEEL_W_RATIO      = 0.30f;	// F5 の幅。右に出す
+// 墨の色(F3 の処理の重さパネルと同じ)
+static const ImVec4 TOOL_INK      (60 / 255.0f, 42 / 255.0f, 28 / 255.0f, 0.95f);
+static const ImVec4 TOOL_INK_HINT (60 / 255.0f, 42 / 255.0f, 28 / 255.0f, 0.55f);
+static const ImVec4 TOOL_INK_HOT  (150 / 255.0f, 32 / 255.0f, 18 / 255.0f, 1.0f);	// 朱: つまみ・チェック
+static const ImVec4 TOOL_INK_DONE (40 / 255.0f, 110 / 255.0f, 40 / 255.0f, 1.0f);	// 区域が済んだ=緑の墨
+static const int TOOL_NUM_COLORS = 19;	// BeginToolWindow で積む部品の色の数(EndToolWindow で同じ数を戻す)
+static ImVec4 ToolInk(float a) { return ImVec4(TOOL_INK.x, TOOL_INK.y, TOOL_INK.z, a); }
+
+void SceneForge::BeginToolWindow(const char* id, const char* title, const char* hint, float leftRatio, float widthRatio)
+{
+	const ImVec2 disp = ImGui::GetIO().DisplaySize;
+	const float corner = disp.y * TOOL_CORNER_RATIO;
+	const float width  = disp.x * widthRatio;
+	ImGui::SetNextWindowPos(ImVec2(disp.x * leftRatio, disp.y * TOOL_TOP_RATIO), ImGuiCond_Always);
+	ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0.0f), ImVec2(width, disp.y * TOOL_MAX_H_RATIO));
+
+	// 部品の色を墨と朱に(この窓の間だけ。編集シーンの imgui 窓は元の配色のまま)
+	const ImVec4 CLEAR(0.0f, 0.0f, 0.0f, 0.0f);
+	const ImGuiCol cols[] = { ImGuiCol_Text, ImGuiCol_TextDisabled, ImGuiCol_FrameBg, ImGuiCol_FrameBgHovered, ImGuiCol_FrameBgActive,
+	                          ImGuiCol_SliderGrab, ImGuiCol_SliderGrabActive, ImGuiCol_CheckMark,
+	                          ImGuiCol_Button, ImGuiCol_ButtonHovered, ImGuiCol_ButtonActive,
+	                          ImGuiCol_Header, ImGuiCol_HeaderHovered, ImGuiCol_HeaderActive,
+	                          ImGuiCol_Separator, ImGuiCol_PopupBg, ImGuiCol_ScrollbarBg, ImGuiCol_ScrollbarGrab, ImGuiCol_Border };
+	const ImVec4 vals[] = { TOOL_INK, TOOL_INK_HINT, ToolInk(0.10f), ToolInk(0.18f), ToolInk(0.26f),
+	                        ToolInk(0.70f), TOOL_INK_HOT, TOOL_INK_HOT,
+	                        ToolInk(0.12f), ToolInk(0.22f), ToolInk(0.32f),
+	                        ToolInk(0.18f), ToolInk(0.26f), ToolInk(0.34f),
+	                        ToolInk(0.30f), ImVec4(0.93f, 0.87f, 0.74f, 0.98f), CLEAR, ToolInk(0.30f), CLEAR };
+	static_assert(_countof(cols) == _countof(vals), "tool panel colors: one value per slot");
+	static_assert(_countof(cols) == TOOL_NUM_COLORS, "EndToolWindow pops TOOL_NUM_COLORS colors");
+	for (int i = 0; i < (int)_countof(cols); ++i) ImGui::PushStyleColor(cols[i], vals[i]);
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(corner * TOOL_INSET, corner * TOOL_INSET));
+
+	const ImGuiWindowFlags FLAGS = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove
+	                             | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoSavedSettings
+	                             | ImGuiWindowFlags_AlwaysAutoResize;
+	ImGui::Begin(id, nullptr, FLAGS);
+
+	// 下地の羊皮紙(窓の描画リストの最初=部品の下)。窓の切り抜きの外(余白)まで描く
+	const ImVec2 pa = ImGui::GetWindowPos();
+	const ImVec2 pb(pa.x + ImGui::GetWindowSize().x, pa.y + ImGui::GetWindowSize().y);
+	ImDrawList* dl = ImGui::GetWindowDrawList();
+	dl->PushClipRect(pa, pb, false);
+	DrawParchment(dl, m_uiFrame.get(), pa, pb, corner);
+	dl->PopClipRect();
+
+	// 見出しと一言(F2/F3 と同じ大きさ)。部品の文字は描く大きさに近い実寸の日本語フォント
+	const float headPx = disp.y * TOOL_HEAD_RATIO, hintPx = disp.y * TOOL_HINT_RATIO, itemPx = disp.y * TOOL_ITEM_RATIO;
+	ImFont* head = DebugUI::FontJPFor(headPx);
+	ImGui::PushFont(head);
+	ImGui::SetWindowFontScale(headPx / head->FontSize);
+	ImGui::TextUnformatted(title);
+	ImGui::PopFont();
+	ImFont* item = DebugUI::FontJPFor(itemPx);
+	ImGui::PushFont(item);
+	ImGui::SetWindowFontScale(hintPx / item->FontSize);
+	ImGui::TextDisabled("%s", hint);
+	ImGui::SetWindowFontScale(itemPx / item->FontSize);	// 以後の部品はこの大きさ(PopFont は EndToolWindow)
+}
+
+void SceneForge::EndToolWindow()
+{
+	ImGui::PopFont();
+	ImGui::End();
+	ImGui::PopStyleVar();
+	ImGui::PopStyleColor(TOOL_NUM_COLORS);
+}
+
+//--- F4 = 検査ツール: 見えない物を見る・工程へ飛ぶ・進み具合を確かめる。スライダはほぼ置かない(数値の調整は F5)
+void SceneForge::DrawToolsPanel()
+{
+	BeginToolWindow("##toolsF4", (const char*)u8"検査ツール", (const char*)u8"F4 で閉じる・チェックは閉じても残る",
+	                TOOL_SIDE_MARGIN, TOOLS_W_RATIO);
+
+	// --- 見える化(壁越しの X 線表示。F4 を閉じて歩きながらも見られる) ---
+	ImGui::SeparatorText((const char*)u8"見える化");
+	ImGui::Checkbox((const char*)u8"衝突の形", &m_showCollision);	// 水色=凸包 / 橙=壁 / 赤=接触中 / 黄=玩家
+	ImGui::SameLine();
+	ImGui::Checkbox((const char*)u8"操作できる範囲（E）", &m_showInteract);	// 灰=範囲外 / 緑=範囲内 / 黄=E が出ている + 白=目線
+	ImGui::Checkbox((const char*)u8"道具の箱（金床・鉄）", &m_showPropBoxes);	// 緑=金床の AABB / 黄=鉄条の箱
+	ImGui::SameLine();
+	ImGui::Checkbox((const char*)u8"草の踏み跡", &m_showGrassMap);	// 真上から見た踏み跡の貼图を小窓で
+	ImGui::Checkbox((const char*)u8"影の範囲", &m_showShadowRange);	// 水色の正方形。線の外は影の計算をしない
+	ImGui::SameLine();
+	ImGui::TextDisabled((const char*)u8"（%s %.0fm）", ShadowCameraIndoors() ? (const char*)u8"屋内" : (const char*)u8"屋外", SunStage::Data().width);
+	ImGui::Checkbox((const char*)u8"切り株の断面（試し切り）", &m_showCutDebug);	// 断片が乗っている切り株の断面(橙の円)
+	ImGui::Checkbox((const char*)u8"反射の部屋の箱", &ReflectionProbe::ShowRoomBox());	// 橙の箱 = 映り込みを壁へ投影する部屋(壁の内面に合っているか)
+	ImGui::Checkbox((const char*)u8"試遊の計時（右下）", &m_showPlaytestTimer);	// 工程ごとの所要時間。調整値と一緒に保存
+	bool vsync = GetVSyncEnabled();
+	if (ImGui::Checkbox((const char*)u8"垂直同期（GPU の負荷を抑える）", &vsync)) SetVSyncEnabled(vsync);
+
+	// --- 戸口の敷居のチラつき(屋外の地面と家の地基が 1.4cm で重なる)の確認 ---
+	ImGui::SeparatorText((const char*)u8"戸口のチラつき");
+	ImGui::Checkbox((const char*)u8"地面の深度バイアス", &m_yardDepthBias);
+	ImGui::SameLine();
+	ImGui::Checkbox((const char*)u8"地面を隠す", &m_hideYard);
+	const int YARD_BIAS_SLIDER_MAX = 4000;
+	ImGui::SliderInt((const char*)u8"バイアス（単位）", &m_yardBiasUnits, 0, YARD_BIAS_SLIDER_MAX);
+
+	// --- 工程へ飛ぶ・区域の進み(済んでいない区域は朱=「99% で止まる」の調査用) ---
+	if (m_state == GAME_PLAY && m_recipe)
+	{
+		ImGui::SeparatorText((const char*)u8"工程");
+		const int n = (int)m_recipe->steps.size();
+		if (m_debugJumpIdx >= n) m_debugJumpIdx = n - 1;
+		char cur[32]; sprintf_s(cur, "%d: %s", m_debugJumpIdx + 1, StepKey(m_recipe->steps[m_debugJumpIdx].type));	// 名前は英語の状態キー
+		const float JUMP_COMBO_W_RATIO = 0.5f;	// コンボの幅(パネルの中身の幅比)
+		ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * JUMP_COMBO_W_RATIO);
+		if (ImGui::BeginCombo("##jumpstep", cur))
+		{
+			for (int i = 0; i < n; ++i)
+			{
+				char item[32]; sprintf_s(item, "%d: %s", i + 1, StepKey(m_recipe->steps[i].type));
+				if (ImGui::Selectable(item, i == m_debugJumpIdx)) m_debugJumpIdx = i;
+			}
+			ImGui::EndCombo();
+		}
+		ImGui::SameLine();
+		if (ImGui::Button((const char*)u8"この工程へ飛ぶ")) StartAtStep(m_debugJumpIdx, true);
+
+		const char* FACE_NAME[ForgingSim::NSIDES] = { (const char*)u8"表", (const char*)u8"裏" };
+		for (int side = 0; side < ForgingSim::NSIDES; ++side)
+		{
+			ImGui::Text((const char*)u8"鍛造 %s:", FACE_NAME[side]);
+			for (int s = 0; s < ForgingSim::NSEG; ++s)
+			{
+				ImGui::SameLine();
+				ImGui::TextColored(m_forging.SegDoneOf(side, s) ? TOOL_INK_DONE : TOOL_INK_HOT, "%3.0f", m_forging.SegProgOf(side, s) * 100.0f);
+			}
+		}
+		// 長手セルごとの進み(打撃が実際に書く値)。左=ローカル長手 0 側。ハンマーの頭が今どのセル位置か=端に届くかの確認
+		ImGui::Text((const char*)u8"ハンマーの頭: セル %.2f / %d", StrikeLenCoord(), ForgingSim::NL);
+		const float CELL_GAP = 2.0f;	// セルの数字の間(px)
+		for (int side = 0; side < ForgingSim::NSIDES; ++side)
+		{
+			ImGui::Text((const char*)u8"セル %s:", FACE_NAME[side]);
+			for (int i = 0; i < ForgingSim::NL; ++i)
+			{
+				ImGui::SameLine(0.0f, CELL_GAP);
+				ImGui::TextColored(m_forging.CellDoneOf(side, i) ? TOOL_INK_DONE : TOOL_INK_HOT, "%2.0f", fminf(m_forging.CellProgOf(side, i) * 100.0f, 99.0f));	// 2桁に収める(済=緑)
+			}
+		}
+		for (int side = 0; side < ForgingSim::NSIDES; ++side)
+		{
+			ImGui::Text((const char*)u8"研ぎ %s:", FACE_NAME[side]);
+			for (int s = 0; s < ForgingSim::NSEG; ++s)
+			{
+				ImGui::SameLine();
+				ImGui::TextColored(m_forging.SharpDoneOf(side, s) ? TOOL_INK_DONE : TOOL_INK_HOT, "%3.0f", m_forging.SharpRatioOf(side, s) * 100.0f);
+			}
+		}
+		// 研ぎの長手セルごとの進み(砥石が実際に削る値)。砥石が今どのセル位置か(wheel)も出す=刀尖/刀根の端まで届くかの確認
+		ImGui::Text((const char*)u8"砥石の位置: セル %.2f / %d", GrindLenCoord(), ForgingSim::NL);
+		for (int side = 0; side < ForgingSim::NSIDES; ++side)
+		{
+			ImGui::Text((const char*)u8"研ぎセル %s:", FACE_NAME[side]);
+			for (int i = 0; i < ForgingSim::NL; ++i)
+			{
+				ImGui::SameLine(0.0f, CELL_GAP);
+				ImGui::TextColored(m_forging.EdgeCellDoneOf(side, i) ? TOOL_INK_DONE : TOOL_INK_HOT, "%2.0f", fminf(m_forging.EdgeCellProgOf(side, i) * 100.0f, 99.0f));	// 2桁に収める(済=緑)
+			}
+		}
+		// 研ぎを進めずに「区域が仕上がった」演出だけを出す(光と音を、判定と切り離して確かめる)
+		if (ImGui::Button((const char*)u8"研ぎの光と音を試す"))
+		{
+			const int seg = (int)frand(0.0f, (float)ForgingSim::NSEG) % ForgingSim::NSEG;
+			SpawnGlint(seg, frand(0.0f, 1.0f), GRIND_SEG_FLASH_SEC, 1.0f, true);
+			Audio::Play(Audio::SE_SEG_DONE, GRIND_SEG_SE_VOLUME);
+		}
+		// 焼き戻しの色(刃先の位置 0..1)。全セルを同じ色にする=色の並びを待たずに確かめられる(0 = 色なし)
+		float preview = TemperAvg();
+		if (ImGui::SliderFloat((const char*)u8"焼き戻しの色（全体）", &preview, 0.0f, 1.0f, "%.2f"))
+			for (float& t : m_temperCell) t = preview;
+		ImGui::TextDisabled((const char*)u8"評価 %.2f  刃の位置 %.2f", TemperScore(), m_temperU);
+	}
+
+	// --- 試し切り・タイトルの取景(一発のボタンだけ) ---
+	ImGui::SeparatorText((const char*)u8"置き場所");
+	if (ImGui::Button((const char*)u8"わら人形を目の前に置く")) PlaceCutTargetInFront();
+	ImGui::SameLine();
+	if (ImGui::Button((const char*)u8"わら人形を戻す")) ResetTestCut();
+	if (!m_cutModelError.empty())  ImGui::TextWrapped("dummy: %s", m_cutModelError.c_str());	// モデルが読めない時だけ
+	if (!m_hiltModelError.empty()) ImGui::TextWrapped("hilt: %s", m_hiltModelError.c_str());
+	// 「この画がいい」と思った所で押す=今のカメラの位置と注視点をタイトルのカメラにする(終了時に保存)
+	if (ImGui::Button((const char*)u8"今の視点をタイトルのカメラにする"))
+		if (CameraBase* cam = GetObj<CameraBase>("Camera"))
+		{
+			XMFLOAT3 cp = cam->GetPos(), cl = cam->GetLook();
+			m_titleCamPos[0]  = cp.x; m_titleCamPos[1]  = cp.y; m_titleCamPos[2]  = cp.z;
+			m_titleCamLook[0] = cl.x; m_titleCamLook[1] = cl.y; m_titleCamLook[2] = cl.z;
+		}
+
+	EndToolWindow();
+}
+
+//--- F5 = 手感の調整: 試遊の後に実際に触る数値だけ。それ以外の値は forge_tuning.txt / header の既定に残る
+void SceneForge::DrawFeelPanel()
+{
+	const float left = 1.0f - TOOL_SIDE_MARGIN - FEEL_W_RATIO;	// 右寄せ
+	BeginToolWindow("##feelF5", (const char*)u8"手感の調整", (const char*)u8"F5 で閉じる・終了時に自動で保存", left, FEEL_W_RATIO);
+
+	if (ImGui::Button((const char*)u8"今すぐ保存")) SaveTuning();
+	ImGui::SameLine();
+	if (ImGui::Button((const char*)u8"起動時の値に戻す（F8）")) RestoreTuning();
+
+	// --- 鍛造 ---
+	ImGui::SeparatorText((const char*)u8"鍛造");
+	ImGui::SliderFloat((const char*)u8"1面の打数", &m_forging.strikesPerFace, 4.0f, 40.0f, "%.0f");
+	ImGui::SliderFloat((const char*)u8"照準の感度", &m_aimSens, 0.0006f, 0.0050f, "%.4f");	// 低=重い
+	ImGui::SliderFloat((const char*)u8"打つ時の画面の揺れ", &CAM_SHAKE_AMP, 0.0f, 0.2f, "%.3f");
+
+	// --- ハンマー(ばね-ダンパ = 打った後の跳ね返り) ---
+	ImGui::SeparatorText((const char*)u8"ハンマー（ばね-ダンパ）");
+	ImGui::SliderFloat((const char*)u8"硬さ k", &m_hammer.stiffness, 20.0f, 600.0f, "%.0f");	// 剛性=速さ
+	ImGui::SliderFloat((const char*)u8"減衰 c", &m_hammer.damping,   0.0f,  40.0f, "%.2f");	// 小=よく跳ねる
+	ImGui::SliderFloat((const char*)u8"質量 m", &m_hammer.mass,      0.2f,  4.0f,  "%.2f");	// 重さ/鈍さ
+	ImGui::SliderFloat((const char*)u8"振り下ろし（離した速さ）", &m_hammer.swingSpeedMin,  0.0f, 8.0f,  "%.1f m/s");	// 溜め無しで離した時の下向きの速さ
+	ImGui::SliderFloat((const char*)u8"振り下ろし（溜めの分）",   &m_hammer.swingSpeedGain, 0.0f, 8.0f,  "%.1f m/s");	// 溜め切った時に足される速さ
+	ImGui::SliderFloat((const char*)u8"振り下ろし（加速度）",     &m_hammer.swingAccel,     0.0f, 40.0f, "%.0f m/s2");	// 腕の押し + 重力
+	ImGui::SliderFloat((const char*)u8"反発係数（熱い鉄）",   &m_hammer.restitutionHot,   0.0f, 1.0f, "%.2f");	// 跳ね返る速さ / 当たった速さ
+	ImGui::SliderFloat((const char*)u8"反発係数（冷たい鉄）", &m_hammer.restitutionCold,  0.0f, 1.0f, "%.2f");
+	ImGui::SliderFloat((const char*)u8"反発係数（金床）",     &m_hammer.restitutionAnvil, 0.0f, 1.0f, "%.2f");
+
+	// --- 裏返し(F を押し続ける間の拍) ---
+	ImGui::SeparatorText((const char*)u8"裏返し（秒）");
+	ImGui::SliderFloat((const char*)u8"火ばさみを取る", &m_flipTongsOutTime, 0.2f, 3.0f, "%.2f");
+	ImGui::SliderFloat((const char*)u8"刃を掴む",       &m_flipGripTime,     0.1f, 2.0f, "%.2f");
+	ImGui::SliderFloat((const char*)u8"裏返す",         &m_flipTurnSec,      0.3f, 2.0f, "%.2f");
+	ImGui::SliderFloat((const char*)u8"火ばさみを戻す", &m_flipPutBackTime,  0.2f, 3.0f, "%.2f");
+
+	// --- 動き(掴む/置く動作・工位への移動・歩く) ---
+	ImGui::SeparatorText((const char*)u8"動き");
+	ImGui::SliderFloat((const char*)u8"動作の時間（倍率・小=速い）", &m_seqTimeScale, 0.3f, 1.5f, "%.2f");	// 拍どうしの比は表のまま
+	ImGui::SliderFloat((const char*)u8"工位への移動の速さ", &m_transSpeed,   0.5f, 6.0f, "%.2f");
+	ImGui::SliderFloat((const char*)u8"移動の最短（秒）",   &m_transMinTime, 0.1f, 2.0f, "%.2f");
+	ImGui::SliderFloat((const char*)u8"移動の最長（秒）",   &m_transMaxTime, 0.3f, 4.0f, "%.2f");
+	ImGui::SliderFloat((const char*)u8"歩く速さ",           &m_walkSpeed,    0.5f, 8.0f, "%.2f");
+
+	// --- 研ぎ ---
+	ImGui::SeparatorText((const char*)u8"研ぎ");
+	ImGui::SliderFloat((const char*)u8"片側を研ぐ時間（秒）", &m_forging.grindSecondsPerSide, 3.0f, 60.0f, "%.0f");
+	ImGui::SliderFloat((const char*)u8"研げる範囲（セル）", &m_forging.grindSpread, 0.3f, 4.0f, "%.2f");	// 砥石が当たった所から長手に広がる幅(小=当てた所だけ)
+	ImGui::SliderFloat((const char*)u8"1回踏んだ加速", &m_wheel.pedalImpulse, 0.5f, 6.0f,  "%.2f");
+	ImGui::SliderFloat((const char*)u8"最高回転",      &m_wheel.maxSpeed,     2.0f, 30.0f, "%.1f");
+	ImGui::SliderFloat((const char*)u8"空転の減速",    &m_wheel.friction,     0.05f, 2.0f, "%.2f");
+	ImGui::SliderFloat((const char*)u8"刃のギザギザ（深さ）",  &m_edgeJagAmp,  0.0f, 0.4f, "%.2f");	// 研ぐ前の刃先の欠けの深さ(刃の半分の幅に対する割合)
+	ImGui::SliderFloat((const char*)u8"刃のギザギザ（細かさ）", &m_edgeJagFreq, 0.5f, 20.0f, "%.1f");	// 長手セル1つあたりの山の数(画素で切るので細かくできる)
+
+	// --- 試し切り ---
+	ImGui::SeparatorText((const char*)u8"試し切り");
+	ImGui::SliderFloat((const char*)u8"切る強さ", &m_cutStrikeDamage, 0.1f, 3.0f, "%.2f");	// × 出来 × 集中 = 1太刀の強さ
+	ImGui::TextDisabled((const char*)u8"出来の倍率 %.2f", GradeScore());
+
+	EndToolWindow();
+}

@@ -52,26 +52,53 @@ void Particles::EmitEmbers(const XMFLOAT3& centre, float areaX, float areaZ,
     }
 }
 
-void Particles::SpawnSparksDir(const XMFLOAT3& origin, const XMFLOAT3& dir, float spread,
-    int count, float speedMin, float speedMax)
+XMVECTOR Particles::ConeVelocity(FXMVECTOR d, float spread, float speed)
 {
-    // Two unit vectors perpendicular to dir, to tilt each spark randomly inside the cone.
-    const XMVECTOR d  = XMVector3Normalize(XMLoadFloat3(&dir));
-    const float NEARLY_VERTICAL = 0.9f;   // |dir.y| above this: world up is too close to dir to build a basis from
+    // Two unit vectors perpendicular to d, to tilt the spark randomly inside the cone.
+    const float NEARLY_VERTICAL = 0.9f;   // |d.y| above this: world up is too close to d to build a basis from
     const XMVECTOR up = (fabsf(XMVectorGetY(d)) > NEARLY_VERTICAL) ? XMVectorSet(1, 0, 0, 0) : XMVectorSet(0, 1, 0, 0);
     const XMVECTOR p1 = XMVector3Normalize(XMVector3Cross(d, up));
     const XMVECTOR p2 = XMVector3Cross(d, p1);
+    const float a = rnd(0.0f, XM_2PI), tilt = rnd(0.0f, spread);
+    return (d * cosf(tilt) + (p1 * cosf(a) + p2 * sinf(a)) * sinf(tilt)) * speed;
+}
+
+void Particles::SpawnSparksDir(const XMFLOAT3& origin, const XMFLOAT3& dir, float spread,
+    int count, float speedMin, float speedMax)
+{
+    const XMVECTOR d = XMVector3Normalize(XMLoadFloat3(&dir));
     for (int i = 0; i < count; ++i)
     {
         if ((int)m_sparks.size() >= MAX_SPARKS) break;
-        const float a = rnd(0.0f, 6.2832f), tilt = rnd(0.0f, spread);
-        const XMVECTOR v = (d * cosf(tilt) + (p1 * cosf(a) + p2 * sinf(a)) * sinf(tilt)) * rnd(speedMin, speedMax);
         Particle s = {};
         s.pos = origin;
-        XMStoreFloat3(&s.vel, v);
+        XMStoreFloat3(&s.vel, ConeVelocity(d, spread, rnd(speedMin, speedMax)));
         s.maxLife = rnd(tune.sparkLifeMin, tune.sparkLifeMax);
         s.life    = s.maxLife;
         s.size    = rnd(tune.sparkSizeMin, tune.sparkSizeMax);
+        m_sparks.push_back(s);
+    }
+}
+
+void Particles::SpawnGrindSparks(const XMFLOAT3& origin, const XMFLOAT3& dir, float spread,
+    int count, float speedMin, float speedMax, float dull)
+{
+    const float DULL_LIFE_MUL  = 0.35f;   // a dull spark lives this share of a fresh one (dies close to the wheel)
+    const float DULL_SPEED_MUL = 0.6f;    // and flies this share as fast
+    const float lifeMul  = 1.0f + (DULL_LIFE_MUL  - 1.0f) * dull;
+    const float speedMul = 1.0f + (DULL_SPEED_MUL - 1.0f) * dull;
+    const XMVECTOR d = XMVector3Normalize(XMLoadFloat3(&dir));
+    for (int i = 0; i < count; ++i)
+    {
+        if ((int)m_sparks.size() >= MAX_SPARKS) break;
+        Particle s = {};
+        s.pos = origin;
+        XMStoreFloat3(&s.vel, ConeVelocity(d, spread, rnd(speedMin, speedMax) * speedMul));
+        s.maxLife = rnd(tune.grindLifeMin, tune.grindLifeMax) * lifeMul;
+        s.life    = s.maxLife;
+        s.size    = rnd(tune.grindSizeMin, tune.grindSizeMax);
+        s.dull    = dull;
+        s.trail   = tune.grindTrail;
         m_sparks.push_back(s);
     }
 }

@@ -82,7 +82,7 @@ namespace
     const char* const STRAW_TEX = "Assets/Cottage_Materials/wood_planks_base.jpg";   // tinted toward straw by the material table
     #undef COTTAGE_TEX
 
-    const float PLACE_DISTANCE = 1.6f;    // F1 "Place in front of me": metres ahead of the player
+    const float PLACE_DISTANCE = 1.6f;    // F4 "Place in front of me": metres ahead of the player
 
     // Layout of the box stand-in (and the expected heights of the model): parts STACKED along y,
     // never overlapping (2026-10-20 F5: nested parts made two caps on the same plane = z-fighting),
@@ -442,7 +442,7 @@ void SceneForge::UpdateTestCut(float tick)
         m_cutTarget.Build(CUT_PARTS, NUM_CUT_PARTS, &m_cutModelParts);
         m_cutNeedsBuild = false;
     }
-    m_cutTarget.SetPlacement(XMFLOAT3(m_cutPosXZ[0], m_walkFloorY, m_cutPosXZ[1]), m_cutYaw);   // follows the F1 sliders
+    m_cutTarget.SetPlacement(XMFLOAT3(m_cutPosXZ[0], m_walkFloorY, m_cutPosXZ[1]), m_cutYaw);   // follows F4 "place in front of me"
     m_cutTarget.Update(tick * TestCutTimeScale());
     if (m_cutSlowmo > 0.0f) m_cutSlowmo -= tick;
 }
@@ -452,7 +452,7 @@ void SceneForge::UpdateTestCut(float tick)
 //====================================================================
 //--- Tempering is done and the blade is still in the tongs: fit the hilt behind a fade. From then on
 //    the sword is held in the hand (no more heating = no more tongs, user 2026-10-22). Called by
-//    TestCutStep on entry; does nothing when the sword is already in the hand (F1 jump / lesson start).
+//    TestCutStep on entry; does nothing when the sword is already in the hand (F4 jump / lesson start).
 void SceneForge::FitHilt()
 {
     if (!m_carrying || m_workAt == Station::TestCut) return;
@@ -1106,7 +1106,8 @@ void SceneForge::DrawTestCut()
     if (m_showCutDebug) m_cutTarget.DrawDebug(cam);
 
     // The hilt: fitted when the blade reached the dummy (m_workAt == TestCut), wherever the blade is.
-    if (!cam || !m_wpOk || m_workAt != Station::TestCut || m_carrying) return;
+    // Not on the result screen: the blade is not drawn there either (it would lie across the view).
+    if (!cam || !m_wpOk || m_workAt != Station::TestCut || m_carrying || m_state == GAME_RESULT) return;
     if (!m_hiltMetal) BuildHilt();
     // the hilt's axes from the blade's own world matrix: tang end, toward the tip, along the edge
     const int sign = SwordTipSign();
@@ -1129,41 +1130,14 @@ void SceneForge::DrawTestCut()
 }
 
 //====================================================================
-//  F1
+//  F4 "Place in front of me": move the dummy ahead of the player, facing them
 //====================================================================
-void SceneForge::TestCutControls()
+void SceneForge::PlaceCutTargetInFront()
 {
-    if (!ImGui::CollapsingHeader("Test cut")) return;
-    if (ImGui::Button("Place in front of me"))
-    {
-        const XMFLOAT3 foot = m_player.GetPosition();
-        const float yaw = m_player.GetYaw();
-        m_cutPosXZ[0] = foot.x + sinf(yaw) * PLACE_DISTANCE;
-        m_cutPosXZ[1] = foot.z + cosf(yaw) * PLACE_DISTANCE;
-        m_cutYaw = yaw + XM_PI;   // facing the player
-        ResetTestCut();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Reset dummy")) ResetTestCut();
-    ImGui::Text("model: %d / %d parts from %s", m_cutModelFound, NUM_CUT_PARTS, m_cutModelFound > 0 ? "the model" : "boxes");
-    if (!m_cutModelError.empty())  ImGui::TextWrapped("dummy: %s", m_cutModelError.c_str());
-    if (!m_hiltModelError.empty()) ImGui::TextWrapped("hilt: %s", m_hiltModelError.c_str());
-    ImGui::SliderFloat2("Position XZ", m_cutPosXZ, -20.0f, 20.0f, "%.2f");
-    ImGui::SliderAngle("Yaw", &m_cutYaw, -180.0f, 180.0f);
-    ImGui::SliderFloat("Stand distance (m)", &m_cutStandDist, 0.6f, 2.0f, "%.2f");
-    ImGui::SliderFloat("Reach (m)", &m_cutReach, 0.5f, 5.0f, "%.2f");
-    ImGui::SliderAngle("Strike tilt", &m_cutSlashTilt, 0.0f, 90.0f);
-    ImGui::TextDisabled("-- strength (x grade %.2f) --", GradeScore());
-    ImGui::SliderFloat("Strike damage", &m_cutStrikeDamage, 0.1f, 3.0f, "%.2f");
-    ImGui::SliderFloat("Sever min share", &m_cutTarget.severMinShare, 0.05f, 0.5f, "%.2f");
-    ImGui::Text("hits %d  severed %s", m_cutHits, m_cutSevered ? "yes" : "no");
-    ImGui::TextDisabled("-- falling pieces --");
-    ImGui::SliderFloat("Push speed (m/s)", &m_cutTarget.pushSpeed, 0.0f, 6.0f, "%.2f");
-    ImGui::SliderFloat("Separate speed (m/s)", &m_cutTarget.sepSpeed, 0.0f, 3.0f, "%.2f");
-    ImGui::SliderFloat("Restitution", &m_cutTarget.physics.restitution, 0.0f, 0.9f, "%.2f");
-    ImGui::SliderFloat("Friction", &m_cutTarget.physics.friction, 0.0f, 1.5f, "%.2f");
-    ImGui::SliderFloat("Spin drag", &m_cutTarget.physics.angularDamp, 0.0f, 3.0f, "%.2f");
-    ImGui::SliderFloat("Density (kg/m3)", &m_cutTarget.density, 50.0f, 1500.0f, "%.0f");
-    ImGui::Checkbox("Show stump faces (orange)", &m_showCutDebug);
-    ImGui::Text("fallen pieces: %d", m_cutTarget.DebrisCount());
+    const XMFLOAT3 foot = m_player.GetPosition();
+    const float yaw = m_player.GetYaw();
+    m_cutPosXZ[0] = foot.x + sinf(yaw) * PLACE_DISTANCE;
+    m_cutPosXZ[1] = foot.z + cosf(yaw) * PLACE_DISTANCE;
+    m_cutYaw = yaw + XM_PI;   // facing the player
+    ResetTestCut();
 }

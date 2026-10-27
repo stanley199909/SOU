@@ -325,7 +325,7 @@ void SceneForge::DrawScenery()
 		GpuProfiler::Scope t(!m_capturingProbe ? (const char*)u8"　・屋外（木・草・石）" : nullptr);
 		Model* om = GetObj<Model>(op->key.c_str());
 		const bool yard = (op->key == "StOutdoorGround");
-		if (yard && m_hideYard) continue;	// F1「Hide yard ground」(Z-fighting の原因確認用)
+		if (yard && m_hideYard) continue;	// F4「地面を隠す」(Z-fighting の原因確認用)
 		if (yard) SetYardRaster(true);		// 地面だけ深度バイアス(戸口の敷居=家の地基の上面と 1.4cm で重なる)
 		// 草だけ VS_Grass(玩家を避けて倒れる)。出力は VS_Wall と同じなので PS/材質はそのまま。
 		const bool grass = IsGrass(op->key) && m_grassMap.IsReady();
@@ -434,7 +434,7 @@ void SceneForge::SetYardRaster(bool on)
 		if (s_prev) { ctx->RSSetState(s_prev); s_prev->Release(); s_prev = nullptr; }
 		return;
 	}
-	if (!m_yardDepthBias) return;	// F1 で OFF = 何も変えない(原因の確認用)
+	if (!m_yardDepthBias) return;	// F4 で OFF = 何も変えない(原因の確認用)
 	ctx->RSGetState(&s_prev);
 	if (!s_prev) return;
 	if (!s_bias || s_biasUnits != m_yardBiasUnits)
@@ -450,7 +450,7 @@ void SceneForge::SetYardRaster(bool on)
 	if (s_bias) ctx->RSSetState(s_bias);
 }
 
-//--- F1「Show shadow range」: 影の地図が掛かる正方形(太陽から見た正方形)を、太陽の向きに沿って床の高さへ落として描く。
+//--- F4「影の範囲」: 影の地図が掛かる正方形(太陽から見た正方形)を、太陽の向きに沿って床の高さへ落として描く。
 //    この線の外側は「影の計算をしない=全部日向」。屋外 48m / 屋内 20m が切り替わるのも見える。
 void SceneForge::DrawShadowRange()
 {

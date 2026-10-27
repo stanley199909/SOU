@@ -22,11 +22,7 @@ public:
 	static void NewFrame();		// ImGuiフレーム開始
 	static void Render();		// ImGuiフレーム確定＆描画
 
-	static void DrawPerformance();	// FPSなどの共通パネル
-
-	// デバッグUI(Performance/Scene選択など)の表示切り替え。F1で使用
-	static bool IsVisible();
-	static void Toggle();
+	// ※旧 F1(Performance/Scene 選択/調整窓)は 2026-10-25 に廃止。設計者用の画面は SceneForge の F2〜F5。
 
 	// ゲームHUD用の追加フォント(Init で読み込む)。読み込めなければ nullptr=既定フォントで代替。
 	//   Title = Cinzel-Black(中世ローマ体・見出し)、Body = EB Garamond(英文本文)。

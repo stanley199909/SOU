@@ -5,7 +5,8 @@ hoff 0.06000 0.00000 0.00000
 stiffness 316.00000
 damping 12.59000
 mass 1.00000
-impulse 2.20000
+hammerswing 2.00000 3.00000 12.00000
+restitution 0.35000 0.55000 0.60000
 recoilback 0.60000
 recoiltilt 1.30000
 chargeraise 0.55000
@@ -47,7 +48,7 @@ gripdolly 0.30000
 griplambda 5.00000
 stowoff 0.45000 -0.55000 -0.25000
 stowtilt 1.20000
-transspeed 2.00000
+transspeed 3.00000
 exitstep 0.60000
 lookpad 0.12000
 stationcam 1.00000 0.75000 0.00000
@@ -55,7 +56,7 @@ bladelift 0.05500 0.00000 0.30000
 wheel 2.20000 10.00000 0.45000 0.90000
 grindsens 0.001200
 forgestrikes 8.00000
-grindwork 8.00000
+grindwork 15.00000
 strikespread 1.50000
 impactflash 0.35000 0.25000 1.00000
 grindview 0.00000
@@ -69,3 +70,10 @@ hotsteel2 2.53000 1.00000 0.15000 0.35000
 forgescale 10.00000 0.08000 0.90000 0.25000 0.35000 0.70000
 cuttarget 6.88294 -16.85144 4.11891
 cutphys 0.20000 0.70000 1.60000 0.40000
+fliptimes 1.20000 0.50000 1.00000
+seqspeed 0.60000
+transtime 0.60000 1.20000
+walkspeed 4.00000
+cutdamage 1.10000
+grindspread 1.00000
+edgejag 0.29000 8.00000

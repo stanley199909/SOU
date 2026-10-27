@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "lesson": "temper",
+  "canvas": {
+    "width": 512,
+    "height": 512
+  },
+  "playback": "step",
+  "loop": true,
+  "coordinate_system": "top-left origin; x right; y down; pixels; tilt radians clockwise",
+  "transform_order": "rotate pose around pivot, then apply dx/dy; base never transformed",
+  "compositing": {
+    "mode": "source-over",
+    "clearance_pixels": 0
+  },
+  "frames": [
+    {
+      "base": "lesson_temper_base.png",
+      "pose": "lesson_temper_pose1.png",
+      "duration_seconds": 0.6,
+      "dx": -50,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        256,
+        256
+      ]
+    },
+    {
+      "base": "lesson_temper_base.png",
+      "pose": "lesson_temper_pose2.png",
+      "duration_seconds": 0.6,
+      "dx": 50,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        256,
+        256
+      ]
+    },
+    {
+      "base": "lesson_temper_base.png",
+      "pose": "lesson_temper_pose3.png",
+      "duration_seconds": 0.6,
+      "dx": -50,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        256,
+        256
+      ]
+    },
+    {
+      "base": "lesson_temper_base.png",
+      "pose": "lesson_temper_pose4.png",
+      "duration_seconds": 1.4,
+      "dx": 0,
+      "dy": 0,
+      "tilt": 0,
+      "pivot": [
+        256,
+        256
+      ]
+    }
+  ]
+}

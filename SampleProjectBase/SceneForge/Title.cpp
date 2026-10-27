@@ -2,7 +2,7 @@
 // This file carries a UTF-8 BOM so the Japanese comments compile correctly under MSVC.
 //
 // ・舞台: 金床の上に熱い鉄。鎚が一定間隔で振りかぶって打つ(火花 + 金床音)。将来ここに矮人が立つ。
-// ・カメラ: 固定の標題カメラ(m_titleCamPos/Look。F1「Title」で取景し forge_tuning.txt に保存)。
+// ・カメラ: 固定の標題カメラ(m_titleCamPos/Look。F4 のボタンで取景し forge_tuning.txt に保存)。
 // ・SPACE: UpdateTitle(SceneForge.cpp) がゲームを開始し、標題カメラ→金床の工位へ導入運鏡。
 //          運鏡は走動⇔工位と同じ仕組み(ModeTrans::Enter)を、長さだけ m_titleIntroTime にして再利用。
 #include "SceneForge/SceneForge.h"
@@ -81,7 +81,7 @@ void SceneForge::ApplyTitleCamera()
 }
 
 //--- 鎚が「振りかぶる → 打つ → 跳ね返る」を繰り返す。ゲーム中と同じ弾簧-阻尼の物理(HammerPhysics)を使う:
-//    間隔の終わり TITLE_WINDUP 秒だけ Hold で持ち上げ(ゲームの蓄力と同じ)、Strike で振り下ろし、
+//    間隔の終わり TITLE_WINDUP 秒だけ Hold で持ち上げ(ゲームの蓄力と同じ)、Release で振り下ろし(届いたら火花と音)、
 //    その後はバネが自然に跳ね返して静止高へ戻す。
 void SceneForge::UpdateTitleHammer(float tick)
 {
@@ -93,13 +93,18 @@ void SceneForge::UpdateTitleHammer(float tick)
 	if (m_autoTimer >= TITLE_INTERVAL)
 	{
 		m_autoTimer = 0.0f;
-		m_hammer.Strike();
-		Strike();				// 火花
-		Audio::PlayAt(m_hammerAlt ? Audio::SE_ANVIL2 : Audio::SE_ANVIL1, m_aimWorld, TITLE_STRIKE_VOLUME);
-		m_hammerAlt = !m_hammerAlt;
+		m_hammer.Release(1.0f);	// 振りかぶり切って振り下ろす(届いた瞬間に火花と音。下の ConsumeContact)
 	}
 	else if (m_autoTimer >= windStart)
 		m_hammer.Hold((m_autoTimer - windStart) / TITLE_WINDUP);	// 0→1 で振りかぶる
 	else
-		m_hammer.Update(tick);	// 打った後の跳ね返り→静止
+		m_hammer.Update(tick);	// 振り下ろし → 鉄に届く → 跳ね返り → 静止
+	float impactSpeed = 0.0f;
+	if (m_hammer.ConsumeContact(impactSpeed))	// 鉄に届いた = ゲームの打撃と同じ流れ(熱い鉄なので受け止められて弾み少なめ)
+	{
+		m_hammer.Rebound(m_hammer.restitutionHot);
+		Strike();				// 火花
+		Audio::PlayAt(m_hammerAlt ? Audio::SE_ANVIL2 : Audio::SE_ANVIL1, m_aimWorld, TITLE_STRIKE_VOLUME);
+		m_hammerAlt = !m_hammerAlt;
+	}
 }

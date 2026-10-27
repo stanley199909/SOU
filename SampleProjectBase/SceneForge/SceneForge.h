@@ -23,10 +23,11 @@
 #include "InteractionMap.h"	// 真上から正射影で見た「最近押された所」の貼图(草の倒れ等)
 #include "InputPrompts.h"	// GameLogic: 操作案内の絵と呼び名(今使っている機器=キーボード・マウス/手柄 に合わせる)
 #include "Haptics.h"		// GameLogic: 手柄の震動(一発/持続を混ぜて送る)
-#include "DebugUI.h"		// F1 調整窓の表示状態(ToolUiOpen)
+#include "DebugUI.h"		// HUD の日本語フォント(FontJPFor)
 #include "SunCycle.h"		// GameLogic: 太陽の時刻(小屋の周りを回る太陽)
 #include "SceneForge/CutTarget.h"	// 試し切りの藁人形(切断+落ちる断片)
 #include "Defines.h"		// 画質(内部解像度の倍率 RenderScale)
+#include "Display.h"		// 画面モード/解像度(設定画面)
 #include <DirectXMath.h>
 #include <memory>
 #include <vector>
@@ -72,8 +73,8 @@ public:
 	static constexpr float FINALE_LETTERBOX_SEC = 1.8f;	// 終幕: 黒帯が入るまで(秒)。最後の工程(QuenchStep / TemperStep)が共通で使う
 	static constexpr float FINALE_HOLD_SEC      = 2.5f;	// 終幕: 黒帯の後、結果画面まで絵を見せる秒
 	void  AdvanceStep();						// 次の工程へ進む(配方の順序で遷移。無ければ完成)
-	void  StartAtStep(int idx, bool placeNow);	// 配方の idx 番目の工程から始める(前の工程は済ませた状態)。placeNow=その工位に即座に立つ(F1 の Jump) / false=導入カメラで入る(チュートリアルの課程)
-	int   m_debugJumpIdx = 0;					// F1 で選んでいる工程
+	void  StartAtStep(int idx, bool placeNow);	// 配方の idx 番目の工程から始める(前の工程は済ませた状態)。placeNow=その工位に即座に立つ(F4 の Jump) / false=導入カメラで入る(チュートリアルの課程)
+	int   m_debugJumpIdx = 0;					// F4 で選んでいる工程
 	const StepSetting& CurrentStep() const;		// 今実行中の工程設定(HUD が instruction を表示)
 	bool  StepReached(StepName type) const;		// 配方でその種類の工程まで進んだか(今その工程 or もう済んだ)
 
@@ -137,9 +138,18 @@ private:
 	void  LoadLayout();						// stage_layout.txt を読み、プロップ/炭の配置を上書き(編集シーンと共有)
 	DirectX::XMMATRIX PropWorld(Prop& p);	// アンカー方式のワールド行列(地面に自動設置)
 	void  DrawScenery();		// 装飾モデルをまとめて描画
-	//--- 設計者用パネル(F2 = ライティング確認)。imgui の調整窓(F1)とは別の、ゲームと同じ見た目(羊皮紙+日本語)の道具
-	bool  m_lightPanelOpen = false;	// F2 で開閉。開いている間はゲームの入力と時間を止める(F1 と同じ)
-	bool  ToolUiOpen() const { return DebugUI::IsVisible() || m_lightPanelOpen; }	// 調整用の画面が開いている=ゲーム入力を止める(判定はここ1つ)
+	//--- 設計者用パネル(F2〜F5)。1キー=1つの仕事。ゲームと同じ見た目(羊皮紙+日本語)
+	//    (2026-10-25: 何でも入っていた F1 の調整窓を廃止し、ここへ分けた)
+	bool  m_lightPanelOpen = false;	// F2 = ライティング確認。開いている間はゲームの入力と時間を止める
+	bool  m_toolsPanelOpen = false;	// F4 = 検査ツール(見える化の切替・工程へ飛ぶ・進捗の確認)。クリックする為に入力を止める
+	bool  m_feelPanelOpen  = false;	// F5 = 手感の調整(試遊の後に触る数値だけ)。入力を止める
+	bool  ToolUiOpen() const { return m_lightPanelOpen || m_toolsPanelOpen || m_feelPanelOpen; }	// 調整用の画面が開いている=ゲーム入力を止める(判定はここ1つ)
+	bool  SegLowEndOnRight();		// 工程リストの区域の格子を画面の刃の左右に合わせる(HUD.cpp)
+	void  DrawToolsPanel();			// F4 パネル(HUD.cpp)
+	void  DrawFeelPanel();			// F5 パネル(HUD.cpp)
+	void  BeginToolWindow(const char* id, const char* title, const char* hint, float leftRatio, float widthRatio);	// F4/F5 共通: 羊皮紙の imgui 窓を開く(HUD.cpp)
+	void  EndToolWindow();
+	bool  m_showPropBoxes = false;	// F4「道具の箱」: 金床の AABB と鉄条の箱を線で描く(DrawDebugBoxes)
 	void  DrawLightPanel();			// F2 パネルの描画とクリック処理(HUD.cpp)
 	bool  m_profilerPanelOpen = false;	// F3 = 処理の重さ(GPU の各段階の時間)。見るだけ=ゲームは止めない
 	void  DrawProfilerPanel();		// F3 パネル(HUD.cpp)
@@ -152,30 +162,30 @@ private:
 	float m_sunSinceCaptureDeg = 0.0f;	// 前に反射の写真を撮ってから太陽が動いた角度
 	static constexpr float SHADOW_RANGE_M = 20.0f;			// 太陽の影を作る範囲(カメラ中心の正方形, m)。小さい=影が細かい/遠くの影は出ない。カメラが屋内の時
 	static constexpr float SHADOW_RANGE_OUTDOOR_M = 48.0f;	// カメラが屋外の時の範囲(m)。20m だと見ている家が範囲から半分はみ出し、歩くと影の境目が家の上を這った(2026-10-23 試遊)
-	bool  m_showInteract = false;		// F1 最上段「Show interact」: 互動範囲の箱と目線を F1 を閉じても表示(F1 中は入力が止まるので、歩いて試す用)
-	bool  m_showShadowRange = false;	// F1 最上段「Show shadow range」: 影の地図が掛かる正方形を地面に水色で描く(壁越しに透視)
+	bool  m_showInteract = false;		// F4「互動の範囲」: 互動範囲の箱と目線を F4 を閉じても表示(F4 中は入力が止まるので、歩いて試す用)
+	bool  m_showShadowRange = false;	// F4「影の範囲」:影の地図が掛かる正方形を地面に水色で描く(壁越しに透視)
 	bool  ShadowCameraIndoors();		// カメラが家の中(=反射プローブの部屋の箱の中)か。影の範囲 20m / 48m の切り替えに使う
 	void  DrawShadowRange();			// m_showShadowRange の時、影の範囲の正方形を描く(Scenery.cpp)
 	//--- 屋外の地面(yard, y=0.5m の大きな平面)は家の地基の上面(0.514m)と 1.4cm しか離れていない=戸口の敷居で Z-fighting。
 	//    地面だけ深度バイアス(depth bias)で奥へ押し、深度比較で必ず家に負ける様にする(物は動かさない)
-	bool  m_yardDepthBias = true;		// F1「Yard depth bias」(OFF にすると戸口の敷居がチラつく=原因の確認用)
-	bool  m_hideYard = false;			// F1「Hide yard ground」(地面を描かない=チラつきが地面との重なりか確認する)
-	int   m_yardBiasUnits = YARD_DEPTH_BIAS_UNITS;	// F1 で調整(固定バイアス。D32 の 1 単位 ≒ 深度 6e-8)
+	bool  m_yardDepthBias = true;		// F4「地面の深度バイアス」(OFF にすると戸口の敷居がチラつく=原因の確認用)
+	bool  m_hideYard = false;			// F4「地面を隠す」(地面を描かない=チラつきが地面との重なりか確認する)
+	int   m_yardBiasUnits = YARD_DEPTH_BIAS_UNITS;	// F4 で調整(固定バイアス。D32 の 1 単位 ≒ 深度 6e-8)
 	static constexpr int   YARD_DEPTH_BIAS_UNITS = 200;	// 20m 先で約 2.4cm 奥へ(1.4cm の隙間+補間誤差を越える)。近くはほぼ 0
 	static constexpr float YARD_SLOPE_DEPTH_BIAS = 1.0f;	// 斜めに見る(地面を寝た角度で見る)ほど足す分。画素ごとの深度の傾き × これ
 	void  SetYardRaster(bool on);		// 地面を描く間だけ深度バイアス付きのラスタライザへ差し替え / 戻す(Scenery.cpp)
 	static constexpr float PROBE_RECAPTURE_DEG = 8.0f;		// 太陽がこれだけ動いたら反射の写真を撮り直す(6面の描画は重いので毎回はしない)
 	void  UpdateSun(float dt);		// 時刻を進め、描画に渡す太陽を決める(Scenery.cpp)
 	bool  m_capturingProbe = false;	// 反射の写真を撮っている最中(DrawScenery が影の地図を作り直さない)
-	void  CaptureReflectionProbe();	// 反射プローブ(IBL): 金床の上から部屋を 360° 撮る(開始時に1回 + F1「Recapture」)。Scenery.cpp
+	void  CaptureReflectionProbe();	// 反射プローブ(IBL): 金床の上から部屋を 360° 撮る(開始時に1回 + 太陽が動いた時 / F2 で光を切り替えた時)。Scenery.cpp
 	float m_probeLift = 0.4f;		// プローブを砧面から上げる高さ(m)。刃・ハンマーが反射する辺りの視点
 	void  UpdateProbeRoomBox();		// ボックスプロジェクション用の「部屋の箱」= 家の境界箱を内側へ縮めた物(毎フレーム。変わった時だけ GPU へ)
-	float m_probeBoxInset = 0.25f;	// 家の境界箱から内側へ縮める量(m)。壁の厚み・屋根の張り出し分。F1 の橙の箱を壁の内面に合わせる
+	float m_probeBoxInset = 0.25f;	// 家の境界箱から内側へ縮める量(m)。壁の厚み・屋根の張り出し分。F4「反射の部屋の箱」の橙の箱を壁の内面に合わせる
 	void  DrawHammer3D();		// 3Dハンマー(蓄力で上がり打撃で振り下ろす。金床を離れたら右腰)
 	DirectX::XMMATRIX HammerWorld(Model* hammer, bool withRecoil = true);	// 金床で構える/打つハンマーの行列(描画と火花で共用。火花は反冲無しの落ちた所)
 	DirectX::XMMATRIX HammerHipWorld(Model* hammer);	// 右腰に下げたハンマーの行列
 	DirectX::XMFLOAT3 HammerStrikePoint();				// ハンマーの頭の真下の鉄の上面(打撃の火花の出る所)
-	DirectX::XMFLOAT3 m_lastStrikeOrigin = { 0, 0, 0 };	// 最後に打撃の火花が出た点(F1 で十字を描く)
+	DirectX::XMFLOAT3 m_lastStrikeOrigin = { 0, 0, 0 };	// 最後に打撃の火花が出た点(F4「道具の箱」で十字を描く)
 	DirectX::XMFLOAT3 m_hammerHeadLocal = { 0, 0, 0 };	// ハンマーの頭の中心(モデル空間。初回に頂点から求めて覚える)
 	bool  m_hammerHeadReady = false;
 	DirectX::XMFLOAT3 FindHammerHeadLocal(Model* hammer);	// 長軸の両端で断面の広い方 = 頭
@@ -186,7 +196,8 @@ private:
 	bool HeatGaugeZone(float& lo, float& hi, StepName* forStep = nullptr) const;	// 今の工程で見せる温度の幅(温度が関係ない工程は false=ゲージを出さない)。forStep=どの工程の幅か
 	bool HeatGaugeInUse() const;	// 今いる所で温度を見て判断するか(炉 / 鍛造中の金床 / 焼入れ中の水槽)。それ以外はゲージを薄くする
 	float m_gaugeAlpha = 1.0f;		// 温度ゲージの濃さ(使う所=1 / 使わない所=GAUGE_IDLE_ALPHA へなめらかに)
-	void DoStrike();		// 蓄力を解放して1打(変形＋フィードバック)
+	void DoStrike(float power);	// 錘が鉄に届いた瞬間の1打(変形＋フィードバック)。power = 当たった速さ 0..1(HammerPhysics::ImpactPower)
+	bool m_strikePending = false;	// 離した後、錘がまだ振り下ろし中(届いたら DoStrike。工位を離れたら取り消し)
 
 private:
 	//--- 火花・余燼の粒子シミュ(状態と運動は Physics/Particles が所有)。描画はこのクラス。
@@ -243,7 +254,7 @@ private:
 	float m_stationLookLift  = 0.00f;				// 工位カメラ: 注視点の高さ補正
 	float m_hearthLift  = 0.04f;					// 炉: 炭床の上に刃を置く高さ(差し込んだ切っ先の高さ)
 	// 炉は炭床に平らに、斜めに寝かせる(先端は炭床の奥、掴んだ端は炉口から斜め手前へはみ出す。ユーザー指定 2026-10-05)。
-	float m_hearthYaw      = 0.27925f;					// 炉: 炭床の長辺から奥へ振る角(rad, 水平面)。F1 Stations
+	float m_hearthYaw      = 0.27925f;					// 炉: 炭床の長辺から奥へ振る角(rad, 水平面)。forge_tuning.txt の hearthlay
 	float m_hearthTipSide  = 0.80f; 					// 炉: 先端が炭床の中心から長辺方向へずれる距離(m)
 	float m_hearthTipDepth = 0.28f;					// 炉: 先端が炭床の中心から奥へ入る距離(m)
 	DirectX::XMFLOAT3 HearthDir() const;			// 炉に寝かせた鉄の長軸(水平。+側=奥の先端)
@@ -255,10 +266,10 @@ private:
 	DirectX::XMFLOAT3 StationInto() const { return DirectX::XMFLOAT3(-m_stationViewDir.x, 0.0f, -m_stationViewDir.z); }	// 工位の奥へ向かう水平方向
 	// 砥石だけは「近づいた側」でなく砥石自身の向きから視点を決める(どこから入っても刃の置き方が同じ)。
 	//   視点 = 輪の軸に直交する水平方向 → 刃の長軸(StationRight)は輪の軸に沿う=刃が輪の縁を横切る置き方。
-	bool  m_hearthFrontFlip = false;				// 炉の正面の自動判定(SetupStationView)を逆にする。F1 Stations
+	bool  m_hearthFrontFlip = false;				// 炉の正面の自動判定(SetupStationView)を逆にする。forge_tuning.txt の stationfront
 	bool  m_troughFrontFlip = false;				// 水槽の〃(前後対称なら近づいた側。それを逆にする)
 	static constexpr float STATION_FRONT_MIN_OFFSET = 0.05f;	// 道具の中心と作業点がこれ(m)以上ずれていたら「正面がある」とみなす
-	float m_grindViewYaw = 0.0f;					// その視点方向に足す回転(rad)。反対側から見たい時は π。F1 Stations
+	float m_grindViewYaw = 0.0f;					// その視点方向に足す回転(rad)。反対側から見たい時は π。forge_tuning.txt の grindview
 	DirectX::XMFLOAT3 GrindViewDir();				// 砥石の固定視点方向(水平単位)
 	float StationAlignYaw() const;					// 刃の長軸を StationRight に揃える追加 yaw(金床では 0)
 	void  StationView(Station s, DirectX::XMFLOAT3& eye, DirectX::XMFLOAT3& target);	// 工位の視点と注視点
@@ -312,11 +323,10 @@ private:
 	GrindWheel m_wheel;								// 足踏み砥石の回転物理(力積+指数減衰)
 	float m_grindU      = 0.5f;						// 砥石に当たっている刃の長手位置 0..1(区域 = U*NSEG)
 	float m_grindSens   = 0.0012f;					// マウス1pxあたりの滑り量(長手の割合)
-	//--- 研ぎ角(bevel angle。ユーザー同意 2026-10-07): マウスの上下で刃を長軸まわりに傾ける。
-	//    実際の刃付け: 刃は決まった角度で砥石に当てる。寝かせすぎ = 刃でなく平らな面を削る / 立てすぎ = 刃先が丸まる。
-	//    角度が正しいほど速く研げ、火花も多い(正しい角度は画面に出さない。火花・研げ具合・独白で分かる)。
+	//--- 研ぎ角(bevel angle): 刃は決まった角度で砥石に当てる。当てると(m_grindPress)自動でその角へ傾く。
+	//    2026-10-26: 玩家が マウス上下で角度を合わせる操作は廃止(踏む・当てる・滑らせる・裏返すと同時は多すぎた。10-23 試遊)。
 	//    研ぐ面は F で裏返して選ぶ(鍛造の F と同じ操作。ユーザー指定 2026-10-07)。両方研ぎ上がって研磨完了。
-	float m_grindAngle       = 0.0f;				// 今の傾き(rad, 0..MAX)。0 = 平らに寝ている
+	float m_grindAngle       = 0.0f;				// 今の傾き(rad)。0 = 平らに寝ている / 当てている間は GRIND_IDEAL_ANGLE
 	int   m_grindFace        = 0;					// 今研いでいる面(0 = 表 / 1 = 裏)。F で切り替え
 	bool  m_grindFaceInit    = false;				// この回で砥石に置いた最初に「表を砥石へ」を済ませたか(StartGame で false)
 	float m_grindFlipRoll    = 0.0f;				// 裏返しの見た目の回転(rad。m_grindFace × π へ追従)
@@ -325,20 +335,18 @@ private:
 	//    押した長さ m_grindFlipHold が半回転の再生位置。押している間 +dt / 離すと −dt×FLIP_REWIND_RATE で戻る。
 	//    刃は手に持っている(火钳の運鏡が無い)ので、半回転だけ=短い。
 	bool  m_grindFlipping    = false;				// 裏返しの途中(押している or 巻き戻している)
+	bool  m_grindFlipNeedRelease = false;			// 裏返し切った後、F を一度離すまで次の裏返しを始めない(2回裏返る事への保護。2026-10-26)
 	float m_grindFlipHold    = 0.0f;				// 再生位置(秒)。GRIND_FLIP_SEC で裏返り切る
 	float m_grindFlipStart   = 0.0f;				// 押し始めた時の回転(=今の面の清潔な角)
 	static constexpr float GRIND_FLIP_SEC = 0.6f;	// 押し続けて裏返り切るまでの秒
-	float m_grindAngleTarget = 0.0f;				// マウスで決めた傾きの目標(刃は少し遅れて追う)
-	static constexpr float GRIND_ANGLE_SENS   = 0.004f;	// マウス 1px → 傾き(rad)
-	static constexpr float GRIND_ANGLE_MAX    = 0.80f;	// 傾けられる限界(rad, 約46°)
-	static constexpr float GRIND_ANGLE_FOLLOW = 14.0f;	// 刃が目標を追う速さ(Damp率, 1/秒)
-	static constexpr float GRIND_IDEAL_ANGLE  = 0.35f;	// 正しい研ぎ角(rad, 約20°)
+	//--- 研ぐ前の刃先の欠け(PS_Wp が画素ごとに切り欠く)。研いだ分だけ浅くなる=刃の縁の形で研ぎの残りが分かる
+	float m_edgeJagAmp  = 0.40f;					// 欠けの一番深い所(刃の半分の幅に対する割合)。2026-10-26 ユーザーが F5 で決めた値(旧 0.08 は 1〜2 画素で見えなかった)。F5「刃のギザギザ」
+	float m_edgeJagFreq = 8.0f;						// ギザギザの細かさ(長手セル1つあたりの山の数)。ユーザーが F5 で決めた値。F5
+	static constexpr float GRIND_ANGLE_FOLLOW = 14.0f;	// 刃が研ぎ角へ傾く速さ(Damp率, 1/秒)
+	static constexpr float GRIND_IDEAL_ANGLE  = 0.35f;	// 研ぎ角(rad, 約20°)
 	static constexpr float GRIND_TILT_DIR     = 1.0f;	// 研ぎ角で傾く向き(画面に対して一定。+1/-1。逆に見えたら符号を反す)
-	static constexpr float GRIND_ANGLE_TOL    = 0.20f;	// 正しい角からこれだけ外れると研げなくなる(rad, 約11°)
-	float GrindAngleEfficiency() const;				// 研ぎの効率 0..1(正しい角で 1、TOL 外れで 0)
 	int   GrindSide() const;							// 今研いでいる刃の面(0 = 表 / 1 = 裏)= 砥石へ向いている面(WeaponRender.cpp)
 	bool  PlusIsFront() const;						// モデルの厚み軸の + 側の面が表か
-	static constexpr float SHARP_HOLD_MAX = 0.55f;	// 研ぎ上がるまでの刃の見た目の上限(0..1)。仕上がった瞬間に 1 へ跳ぶ=区域の完成が見える
 	float m_grindSparkAcc = 0.0f;
 	bool  m_grindSndOn  = false;						// 研磨ループが流れているか(砥石の工位にいる間は流しっぱなし)
 	float m_grindVol    = 0.0f;						// 研磨音の現在の大きさ 0..1(Damp で目標へ)
@@ -353,7 +361,7 @@ private:
 	float m_grindPress = 0.0f;						// 押し当て 0..1(Damp)。0 = 砥石の少し上に構える / 1 = 砥石に当てる
 	static constexpr float GRIND_HOVER        = 0.03f;	// 押し当てていない時、刃の一番低い点を砥石から浮かせる高さ(m)
 	static constexpr float GRIND_PRESS_LAMBDA = 14.0f;	// 押し当て/持ち上げの速さ(Damp率, 1/秒)
-	static constexpr float GRIND_SPARK_RATE   = 90.0f;	// 全速時の研ぎ火花(個/秒)
+	static constexpr float GRIND_SPARK_RATE   = 240.0f;	// 全速時の研ぎ火花(個/秒)。1つ1つは細い粉=数で密な扇を作る(2026-10-26: 90 → 240。旧は粗い大粒が少数)
 	//--- 研ぎの分段進捗(2026-10-19 試遊「研ぎが単調」→ ユーザー決定): 区域(NSEG)が研ぎ上がった瞬間に、その刃先に光芒(スターグリント)+小さな音。
 	//    その後も、研ぎ上がった区域の刃先は時々きらっと光る(磨いた斜面が光を拾う)=見落としても「どこが済んだか」が刃を見れば分かる。
 	//    工程リストの棒も区域の数の格子に分ける。面全体の完成は従来どおり SE_FACE_DONE(意味を分ける: 小=区域 / 大=面)。
@@ -386,12 +394,13 @@ private:
 	static constexpr float GLINT_TOWARD_CAM  = 0.03f;	// 刃の表面からカメラ側へ浮かせる距離(m)=刃にめり込んで半分隠れない様に
 	static constexpr float GRIND_SEG_SE_VOLUME = 1.0f;	// 区域が仕上がった時の音の大きさ。研ぎのループ音(シャー)に埋もれない様に最大(音そのものの大きさは合成音の LEVEL)
 	static constexpr float GRIND_DONE_SPARK_FACTOR = 0.15f;	// 研ぎ上がった所を研ぐと火花はこの割合まで細る(削る金属がもう無い)
+	static constexpr float GRIND_PARTIAL_DULL      = 0.5f;	// 研ぎの途中の接点は、進みのこの割合まで火花が鈍る(研ぎ上がった所 = 1 と段差を付ける=済が一目で分かる)
 	static constexpr float GRIND_DONE_VOL_MUL      = 0.5f;	// 〃 研ぐ音の大きさの倍率(手応えが無い)
 	static constexpr float GRIND_DONE_PITCH_MUL    = 1.3f;	// 〃 研ぐ音の高さの倍率(上滑りする軽い音)
 	static constexpr float GRIND_SPARK_DIP       = -0.25f;	// 火花の向きの下向き成分(接線の少し下へ。砥石の縁に沿って落ちる)
-	static constexpr float GRIND_SPARK_SPREAD    = 0.30f;	// 火花が広がる円錐の半角(rad)
-	static constexpr float GRIND_SPARK_SPEED_MIN = 2.0f;	// 火花の速さ(m/秒)
-	static constexpr float GRIND_SPARK_SPEED_MAX = 4.5f;
+	static constexpr float GRIND_SPARK_SPREAD    = 0.10f;	// 火花が広がる円錐の半角(rad)。研ぎの火花は砥石の接線に沿った細い扇(2026-10-26: 0.30 → 0.10)
+	static constexpr float GRIND_SPARK_SPEED_MIN = 4.0f;	// 火花の速さ(m/秒)。砥石の縁の速さで弾き出される=速い(2026-10-26: 2..4.5 → 4..8)
+	static constexpr float GRIND_SPARK_SPEED_MAX = 8.0f;
 	void  UpdateGrind(float tick, bool inputOn);	// 研磨の入力・物理・火花・音
 
 	//--- 淬火と終幕(QuenchStep が進みを渡し、ここが見た目/音を担当)
@@ -549,7 +558,7 @@ private:
 	float m_lookYaw = 0.0f, m_lookPitch = 0.0f;	// 基準視線からのマウス累積回転(夹住)
 	DirectX::XMFLOAT3 m_camFwd = { 0, 0, 1 };	// 現在のカメラ正前方(照準射線に使う)
 	void  UpdateMouseLook();		// マウス移動を視角(yaw/pitch)へ累積(再センタリング方式)
-	void  UpdateCursorVisibility();	// OS の光標を出すか(毎フレーム1か所で決める): メニュー/タイトルでキーボード・マウス操作中 or F1
+	void  UpdateCursorVisibility();	// OS の光標を出すか(毎フレーム1か所で決める): メニュー/タイトルでキーボード・マウス操作中 or 設計者用パネル(F2/F4/F5)
 	bool  ReadMouseDelta(float& dx, float& dy);	// このフレームのマウスの移動量(px)。光標を中心へ戻す。スティックは使う側が InputActions から足す
 	void  UpdateAim();				// 準心射線を板と交差させ m_aimI/J/World を更新
 
@@ -562,7 +571,7 @@ private:
 	float  m_walkEyeH   = 1.6f;			// 目線の高さ(玩家足元からカメラまで, 単位)
 	float  m_walkSens   = 0.0017f;		// 走動時マウス感度(rad/px)。UpdateMouseLook と同値で統一
 	float  m_walkPitchLim = 1.3f;		// 上下視角の制限(rad)≒74°。真上/真下でひっくり返るのを防ぐ
-	float  m_walkSpeed  = 4.0f;			// 走動速度(単位/秒)。2026-10-22: 3.0 → 4.0(1回3分に短縮)。毎フレーム m_player へ渡す(F1で調整)
+	float  m_walkSpeed  = 4.0f;			// 走動速度(単位/秒)。2026-10-22: 3.0 → 4.0(1回3分に短縮)。毎フレーム m_player へ渡す(F5で調整)
 	void   UpdateWalkLook();			// 走動時: マウスを玩家yaw(左右)とカメラpitch(上下)へ
 	void   ApplyWalkCamera();			// 走動時: カメラを玩家の目線に置く一人称カメラ
 
@@ -575,10 +584,11 @@ private:
 	float  m_transTimer = 0.0f;				// 経過秒
 	float  m_transDur   = 1.0f;				// 今回の長さ(秒)=距離 / m_transSpeed を MIN..MAX に収める
 	DirectX::XMFLOAT3 m_transFromEye = { 0,0,0 }, m_transFromFwd = { 0,0,1 };	// 開始時の視点(スナップショット)
-	float  m_transSpeed    = 2.0f;			// 過渡の移動速さ(単位/秒)。遠いほど長くなる
+	//    2026-10-25 試遊(10-23)の「過渡が遅い」で短縮: 速さ 2→3、最短 1.0→0.6、最長 2.0→1.2。F5「動き」で調整・tuning に保存
+	float  m_transSpeed    = 3.0f;			// 過渡の移動速さ(単位/秒)。遠いほど長くなる
 	float  m_exitStepBack  = 0.6f;			// 退出時、工位の視点から金床と反対側へ下がる距離(=一歩)
-	static constexpr float TRANS_MIN_TIME = 1.0f;	// 過渡の最短(秒。近くても一瞬で飛ばない)
-	static constexpr float TRANS_MAX_TIME = 2.0f;	// 過渡の最長(秒。遠くても待たせすぎない)
+	float  m_transMinTime  = 0.6f;			// 過渡の最短(秒。近くても一瞬で飛ばない)
+	float  m_transMaxTime  = 1.2f;			// 過渡の最長(秒。遠くても待たせすぎない)
 	bool   Transitioning() const { return m_modeTrans != ModeTrans::None; }
 	bool   m_gripAfterExit = false;	// 工位を Q/X で出た=出終わったら続けて鉄を掴む(E で出た時は false)
 	void   BeginEnterStation(Station s);	// 走動→工位の過渡を開始(刃もその工位へ置く)
@@ -626,7 +636,7 @@ private:
 	void  UpdateInteract(float tick);			// 2判定→m_focus を決める(走動中のみ)
 	void  DoInteract(const Interactable& it);	// E を押された物件の行為を実行
 	void  DrawInteractPrompt();					// 物件の上に「E」ボタンを描く(HUD)
-	void  DrawInteractBoxes();					// F1: 互動範囲の箱を線で表示(範囲内=緑)
+	void  DrawInteractBoxes();					// F4: 互動範囲の箱を線で表示(範囲内=緑)
 
 	//--- 走動中の衝突(SceneForge/Collision.cpp)。玩家=足元の円。ぶつかる相手は形で2種類(Physics/Collision2D):
 	//      道具=上から見た2Dの凸包 / 建物(整屋)=腰の高さで水平に切った断面の線分(壁線)。
@@ -641,7 +651,7 @@ private:
 	static const Collider COLLIDERS[];
 	static const int      NUM_COLLIDERS;
 	Collision2D::World m_collision;				// 今フレームのワールドの衝突形状(XZ)。Player::Update に渡す
-	bool  m_showCollision = false;				// 衝突の可視化(F1 最上段のチェック。F1を閉じても表示し続ける。壁越しでも見える)
+	bool  m_showCollision = false;				// 衝突の可視化(F4「衝突の形」。F4を閉じても表示し続ける。壁越しでも見える)
 	static constexpr float PLAYER_BODY_HEIGHT = 1.7f;	// 人の背丈。これより高い部分(樹冠/梁)はぶつからない=凸包から外す。可視化の柱の高さも同じ
 	static constexpr float COLLISION_DRAW_LIFT   = 0.02f;	// 可視化: 床と重ならない様に少し浮かせる(Zファイト防止)
 	static constexpr float COLLISION_TOUCH_MARGIN = 0.02f;	// 可視化: 玩家の円がこの距離まで近ければ「接触中」(赤)
@@ -657,8 +667,8 @@ private:
 	std::vector<Collision2D::Segment>  m_wallSegLocal;	// 断面の線分(家のモデル空間 XZ)
 	float m_wallSliceLocalY = -1e30f;				// 一番低い切り口(家のモデル空間)。変化検出用
 	float m_wallSliceStepUsed = -1.0f;				// 切った時の刻み。変化検出用
-	float m_wallSliceLowHeight = 0.3f;				// 一番低い切り口(床から, m)。床の段差/敷居は拾わない高さ(F1)
-	float m_wallSliceStep      = 0.3f;				// 切り口の間隔(m)。これより薄い張り出しは間をすり抜け得る(F1)
+	float m_wallSliceLowHeight = 0.3f;				// 一番低い切り口(床から, m)。床の段差/敷居は拾わない高さ
+	float m_wallSliceStep      = 0.3f;				// 切り口の間隔(m)。これより薄い張り出しは間をすり抜け得る
 	static constexpr float WALL_RESLICE_EPS = 1e-3f;	// 切る高さがこれ以上変わったら切り直す(家のモデル空間)
 	void  UpdateWallSlice(const DirectX::XMMATRIX& houseWorld);	// 必要なら壁線を切り直す
 	void  InitBuildingCollision();					// 家の三角形・扉の蝶番/凸包を用意する(Init で1回)
@@ -733,7 +743,7 @@ private:
 	static constexpr float TONGS_JAW_CENTER_FRAC = 0.5f;	// 挟む点 = 口の先端→鋲 のこの割合の所
 	void  InitTongsGeometry();						// 上の値を火钳モデルから求める(Init で1回)
 	float m_hipOff[3]     = { 0.28f, 0.95f, 0.12f };	// 腰の火钳の位置(体から 左/床からの高さ/前, world)
-	// 右腰のハンマー(ユーザー要望 2026-10-08: 金床を離れてもハンマーが金床に残って見えた → 左腰=火钳 / 右腰=ハンマー)。F1「Carry」で合わせる
+	// 右腰のハンマー(ユーザー要望 2026-10-08: 金床を離れてもハンマーが金床に残って見えた → 左腰=火钳 / 右腰=ハンマー)。forge_tuning.txt の hammerbelt
 	float m_hammerHipOff[3] = { 0.28f, 0.95f, 0.0f };	// 腰帯の輪(頭が掛かる所): 体から 右/床からの高さ/前(m)。前 0 = 体の真横=見下ろしても視野に入らない
 	float m_hammerHipYaw    = 0.0f;						// 垂れた柄の軸まわりの向き(rad)。頭の打つ面を前後/左右どちらへ向けるか(見た目だけ)
 	DirectX::XMFLOAT3 HeldPoint();					// 手に持った鉄の中心(挟む点から m_heldDir へずらした所)。m_heldDir も更新
@@ -799,11 +809,12 @@ private:
 	float m_seqArcK    = 0.0f;						// 今の拍の弧の高さ(水平移動距離に対する比。m_seqArcLift × 揺らぎ)
 	bool  m_seqAttached = false;					// 今の拍で火钳が鉄を挟んだまま(火钳の姿勢を鉄から求める=ずれない)
 	bool  m_seqPrevGrip = false;					// 前の拍の終わりに火钳が鉄を挟んでいたか
-	// 人の動きらしさ(ディズニーの12原則のうち4つ。F1 Carry → Sequence feel)
+	// 人の動きらしさ(ディズニーの12原則のうち4つ。forge_tuning.txt の seqfeel)
 	float m_seqHandLag    = 0.18f;	// フォロースルーとオーバーラップ: 目が先、手は拍の長さのこの割合だけ遅れて動き出す
 	float m_seqArcLift    = 0.25f;	// アーク: 手で運ぶ物は弧を描く。中間で水平移動距離のこの割合だけ持ち上がる
 	float m_seqTimeJitter = 0.10f;	// 揺らぎ: 拍の長さが再生ごとに ±この割合ばらつく(毎回同じ機械的な動きにしない)
 	float m_seqArcJitter  = 0.30f;	// 揺らぎ: 弧の高さの ±ばらつき
+	float m_seqTimeScale  = 0.6f;	// 拍の長さ全体の倍率(表の秒数 × これ)。拍どうしの比は表のまま。2026-10-25 試遊で 1.0→0.6
 	float m_seqBreathW    = 0.0f;	// 再生中だけ走動カメラに手持ちの呼吸を乗せる重み(0..1。急に付いたり消えたりしない様に追従)
 	static constexpr float SEQ_BREATH_FADE_TIME = 0.35f;	// その重みが追従する時定数(秒)
 	void  UpdateSeqBreath(float tick);				// m_seqBreathW を再生中=1 / それ以外=0 へ近づける
@@ -847,7 +858,7 @@ private:
 	float m_grassStampRadius = 0.7f;			// 足元で草を押し分ける円の半径(world)。体(円 0.3)より広い=周りの草も避ける
 	float m_grassLean        = 0.6f;			// 横へ倒れる量(草の高さに対する割合。坂が最も急な所で約1.5倍)
 	float m_grassPress       = 0.5f;			// 足元で葉先が沈む量(草の高さに対する割合)
-	bool  m_showGrassMap     = false;			// F1: 貼图そのものを画面に表示(押した跡が見える)
+	bool  m_showGrassMap     = false;			// F4: 貼图そのものを画面に表示(押した跡が見える)
 	static constexpr UINT GRASS_MAP_RESOLUTION = 512;	// 貼图の解像度(一辺)。範囲は屋外の地面から自動
 	static constexpr const char* GRASS_KEY_PREFIX = "StOutdoorGrass";	// このキーで始まるプロップを草として描く
 	struct GrassParams { DirectX::XMFLOAT4 area, bend, slope; };	// VS_Grass の cbuffer b1 と同じ並び
@@ -855,7 +866,7 @@ private:
 	void  UpdateGrassMap();						// Draw の最初: 薄める → 足元を押す → 描画先を元に戻す
 	bool  IsGrass(const std::string& key) const;
 	void  BindGrassParams(VertexShader* vs, Prop& p);	// 草1株ぶんの cbuffer と貼图を VS へ
-	void  DrawGrassMapPreview();				// F1: 貼图を ImGui で表示
+	void  DrawGrassMapPreview();				// F4: 貼图を ImGui で表示
 
 	//--- 整屋の裏口の扉(開閉する独立物件。CottageDoor.h / GameLogic/HingedDoor)。E で開閉。
 	//    絵(DoorWorld で描く)・衝突(扉の凸包を同じ行列で運ぶ)・互動(扉の箱)が全部同じ角度を読む。
@@ -864,7 +875,7 @@ private:
 	Collision2D::Hull  m_doorHullLocal;			// 扉板の凸包(家のモデル空間 XZ。閉じた姿勢)
 	DirectX::XMMATRIX  DoorWorld();				// 扉のワールド行列 = 蝶番の回転 × 家の配置
 
-	//--- F1調整値の永続化(Assets/forge_tuning.txt)。Initで読み, Uninit/Saveボタンで書く。
+	//--- 調整値の永続化(Assets/forge_tuning.txt)。Initで読み, Uninit/Saveボタンで書く。
 	void  LoadTuning();
 	void  SaveTuning();
 
@@ -900,10 +911,19 @@ private:
 	//--- 一時停止メニュー(ESC。2026-10-08 ユーザー要望)。開いている間は世界の更新を止める。
 	enum class PauseItem { Resume, Options, Title, Quit, Count, None = -1 };	// 並び順 = メニューの上から
 
-	//--- 設定(一時停止メニューの「設定」。2026-10-12 ユーザー要望: F1 と分けて、玩家が自分で調整できる所)
+	//--- 設定(一時停止メニューの「設定」。2026-10-12 ユーザー要望: 設計者用パネルと分けて、玩家が自分で調整できる所)
 	//    今は「教学アニメの速さ」だけ。段階の中から選ぶ(◀ ▶)。選んでいる間は横に瞄準の指示図を実際の速さで動かして見せる。
 	//    保存 = Assets/options.txt(調整値 forge_tuning.txt とは別=玩家の好み)。
-	enum class OptionItem { LessonSpeed, Rumble, Quality, Back, Count };
+	//    2026-10-26: 画面モード / 解像度 / 音量(全体・BGM・効果音)を追加(ユーザー要望)。
+	enum class OptionItem { DisplayMode, Resolution, Quality, VolMaster, VolBgm, VolSe, LessonSpeed, Rumble, Back, Count };
+	int   m_displayMode    = (int)Display::Mode::Windowed;	// Display::Mode(窓 / 無枠の全画面 / 全画面)
+	int   m_displaySizeIdx = 0;					// Display の解像度一覧の番号(LoadOptions で起動時の窓 1280x720 に一番近い物から)
+	static constexpr int VOLUME_STEP_COUNT = 11;	// 音量の段階 0%, 10% … 100%
+	static constexpr int VOLUME_DEFAULT    = VOLUME_STEP_COUNT - 1;	// 既定 = 100%
+	int   m_volMasterIdx = VOLUME_DEFAULT, m_volBgmIdx = VOLUME_DEFAULT, m_volSeIdx = VOLUME_DEFAULT;
+	static float VolumeOf(int idx) { return (float)idx / (float)(VOLUME_STEP_COUNT - 1); }
+	void  ApplyDisplayAndVolume();				// 今の設定を Display / Audio へ渡す(読み込み時と変更時)
+	int   DisplaySizeCount() const;				// この画面に収まる解像度の数(大きすぎる物は選べない)
 	bool  m_optionsOpen    = false;				// 設定の画面を開いているか(一時停止の中)
 	int   m_optionsSel     = 0;					// 選んでいる行
 	int   m_optionsRequest = -1;				// 決定された行(描画側のクリック / キー)。UpdateOptions で実行
@@ -940,12 +960,14 @@ private:
 	//--- チュートリアル(2026-10-09 ユーザー要望: 初めての人向け)。タイトルで「チュートリアル / 通常モード」を選ぶ。
 	//    チュートリアルの時だけ: 右の説明パネル / 刃の未完成の所を青く光らせる / 温度ゲージの「ここで叩く」/ 研ぎの角度計 /
 	//    研ぎの誤りの案内をすぐ出す。通常モードの遊び方・判定は一切変えない(表示を足すだけ)。
-	enum class ModeItem { Tutorial, Normal, Quit, Count };	// 並び順 = 選択パネルの上から(終了は一番下=誤って選びにくい)
+	enum class ModeItem { Tutorial, Guided, Normal, Quit, Count };	// 並び順 = 選択パネルの上から(終了は一番下=誤って選びにくい)
+	//    Guided(ガイド付き。2026-10-27, 10-23 試遊の要望): 通常の一通りを、チュートリアルの課(教える順・覚えた合図)付きで遊ぶ
+	//    = m_tutorial かつ課程なし(m_courseIdx = -1)。新しい教え方は作らず、チュートリアルの仕組みをそのまま使う
+	bool  Guided() const { return m_tutorial && m_courseIdx < 0; }
 	bool  m_tutorial       = false;				// この回はチュートリアルか(タイトルで選んだ値。次に選ぶまで保つ)
 	bool  m_modeSelectOpen = false;				// タイトルでモード選択を開いているか
 	int   m_modeSel        = 0;					// 選んでいる項目
 	int   m_modeRequest    = -1;				// 決定された項目(描画側のクリック or キー)。次の UpdateTitle で実行
-	void  DrawGrindAngleMeter();				// 研ぎの角度計(緑 = 研げる角度 / 印 = 今の角度)
 
 	//--- チュートリアルの課程(2026-10-12 ユーザーの絵): タイトル → チュートリアル → 課程の一覧(鍛造/研ぎ/焼入れ, ○/✓)。
 	//    1つ選ぶと、その工程の所からその工程だけを遊ぶ(操作の案内つき)。終わると「レッスン完了」→ 一覧へ戻り ✓ が付く。
@@ -979,7 +1001,7 @@ private:
 
 	//--- プレイテスト計時(2026-10-11 ユーザー要望): 工程ごとの所要時間を測る=時間配分(タイムバジェット)を決める材料。
 	//    「感覚」でなく計測で、どこに時間が掛かっているか(操作か / 歩きか)を見る。遊び方・判定は一切変えない(測って見せるだけ)。
-	//    時間は「世界が動いている間」だけ数える: 一時停止・F1・画面フェード・導入カメラの間は止まる。
+	//    時間は「世界が動いている間」だけ数える: 一時停止・調整パネル・画面フェード・導入カメラの間は止まる。
 	static constexpr float PLAYTEST_BUDGET_SEC = 180.0f;	// 1プレイの目標時間(3分。2026-10-11 決定。後で伸ばす予定)
 	struct StepTime
 	{
@@ -987,13 +1009,13 @@ private:
 		float move  = 0.0f;		// うち「歩く+工位への出入り」の時間(秒)=操作していない移動の時間
 	};
 	std::vector<StepTime> m_stepTimes;			// 配方の工程と同じ数(StartGame で作り直す)
-	bool  m_showPlaytestTimer = false;			// F1 最上段で切替。F1 を閉じても表示は残る(試遊してもらう時に出しておく)。調整値と一緒に保存
+	bool  m_showPlaytestTimer = false;			// F4 で切替。F4 を閉じても表示は残る(試遊してもらう時に出しておく)。調整値と一緒に保存
 	void  TickPlaytestTimer(float dt);			// 今の工程に時間を足す(毎フレーム, Update)
 	void  DrawPlaytestTimer();					// 右下の羊皮紙: 工程ごとの時間 / 合計と目標
 	void  WritePlaytestLog() const;				// 完成時に1行追記(Assets/playtest_log.txt)=何回分も後で見比べられる
 	bool  TutorialAtAnvil() const;				// チュートリアルで金床の工位にいて鍛造できる状態か(温度ゲージの「ここで叩く」を出す)
 
-	//--- 調整用パラメータ(F1デバッグでスライダ変更可)
+	//--- 調整用パラメータ(試遊で触る物は F5、それ以外は forge_tuning.txt / ここの既定)
 	float m_strikeCDMax = 1.25f;	// 打撃後クールダウン(秒)
 	// 自然冷却速度は鉄の物理なので m_forging.coolRate に移した。
 
@@ -1003,7 +1025,7 @@ private:
 	// sharp = 研いだ刃先の度合い 0..1(=その区域の鋭さ × 刃先への近さ)。PS が研ぎ面の見た目に使う。
 	// work = この頂点が属する面(表/裏)の鍛造進捗 0..1。PS が氧化皮(黒皮)を「叩いた分だけ」剥がすのに使う。
 	//   ※並びは VS の入力(POSITION/NORMAL/TEXCOORD0..3)と一致させる(入力レイアウトは D3DReflect で順に詰めて作る)。
-	struct WpVtx { DirectX::XMFLOAT3 pos; DirectX::XMFLOAT3 nrm; DirectX::XMFLOAT2 uv; DirectX::XMFLOAT4 col; float sharp; float work; float temper; };	// temper = 焼き戻しの色の位置 0..1(並びは VS_Wp の VIN と同じ)
+	struct WpVtx { DirectX::XMFLOAT3 pos; DirectX::XMFLOAT3 nrm; DirectX::XMFLOAT2 uv; DirectX::XMFLOAT4 col; float work; float temper; DirectX::XMFLOAT2 edge; };	// temper = 焼き戻しの色の位置 0..1(並びは VS_Wp の VIN と同じ)
 	struct WpStage { std::vector<DirectX::XMFLOAT3> pos, nrm; std::vector<DirectX::XMFLOAT2> uv; };	// 1段分の生頂点(ローカル)
 	std::vector<WpStage>        m_wpStage;		// stage_0 .. stage_final
 	std::vector<unsigned int>   m_wpIdx;		// インデックス(全段共通)
@@ -1022,7 +1044,7 @@ private:
 	//    物理の根拠: 塑性変形の仕事は熱に変わる=叩いた所はわずかに温度が上がる(見かけだけ。m_forging の温度は変えない)。
 	float m_impactCoord = 0.0f;					// 最後に打った長手位置(セル単位 0..NL。ForgingSim/描画と同じローカル長手規約)
 	float m_impactTime  = -1000.0f;				// 最後に打った時刻(m_time)
-	float m_impactFlashTime   = 0.35f;			// 光が消えるまでの秒数(F1 Forge)
+	float m_impactFlashTime   = 0.35f;			// 光が消えるまでの秒数(forge_tuning.txt の impactflash)
 	float m_impactFlashHeat   = 0.25f;			// 光る所の見かけの温度の上乗せ(HeatRGB の温度単位。大=白く光る)
 	float m_impactFlashSpread = 1.0f;			// 光の長手方向の広がり(セル単位の標準偏差)
 	float StrikeLenCoord();						// ハンマーの頭が落ちる所 → 刃のローカル長手位置(セル単位 0..NL)
@@ -1034,21 +1056,18 @@ private:
 	float m_wpHotEmisMin = 0.35f;				// 発射率の下限。低=法線マップと角度で発光に凹凸が出る / 高=どの角度でも同じ明るさ(平ら)
 	int   m_wpN = 0;							// 1段の頂点数
 	bool  m_wpOk = false;						// 読み込み成功&段間で頂点数一致
-	float m_forgeProg = 0.0f;					// 全体進捗 0..1(=各区域の平均。F1のプレビュー用)
+	float m_forgeProg = 0.0f;					// 全体進捗 0..1(=各区域の平均。表示/プレビュー用)
 	//--- 成形進度は m_forging が所有(長手セルごとの連続値。区域 NSEG はその集計=HUD/完成判定用)。
 	int   m_aimSeg = 0;							// 現在照準している区域(AimSystemが更新)
 	// 照準している区域番号。AimSystem(射線×区域ボックス)が決めた値をそのまま返す。
 	int   AimSeg() const { return m_aimSeg; }
 	DirectX::XMFLOAT3 m_wpMin = { 0,0,0 }, m_wpMax = { 0,0,0 };	// stage0のローカルAABB(配置用)
 	DirectX::XMFLOAT3 m_wpFinMin = { 0,0,0 }, m_wpFinMax = { 0,0,0 };	// 完成形のローカルAABB(刃先=幅方向の端の判定用)
-	//--- 研ぎの形: 刃先(幅方向の端)の頂点ほど、鋭さに応じて厚みを中心面へ寄せる=刃が薄く立つ。
-	static constexpr float EDGE_BAND_START = 0.55f;	// 幅の正規化座標でここから外側を「刃先」とみなす(0=中心,1=端)
-	static constexpr float EDGE_THIN       = 0.65f;	// 研ぎ上がりで刃先の厚みを減らす割合
 	//--- 両面の形の分解(軸分解モーフ): 輪郭(長さ/幅)は両面で共有=両面進捗の平均、
 	//    厚み方向だけは各面が自分の進捗で動く(叩いた面だけ刃の斜面が付く)。
 	int   m_wpThickAxis = -1;					// 刃の表裏を貫くローカル軸(0=x,1=y,2=z)。Loadで完成形から判定
-	static constexpr float FACE_BLEND_BAND = 1.0f;	// 表/裏の面の混ぜ幅(厚みの正規化座標)。小=境目が急	//--- 配置調整(F1スライダ。向き/大きさをここで合わせて焼き込む)
-	float m_wpScale = 0.70f;					// 追加スケール倍率(AABBフィットにさらに掛ける)。ユーザーが F1 で決めた値(2026-10-07: 水槽に収まる+短剣らしい長さ)
+	static constexpr float FACE_BLEND_BAND = 1.0f;	// 表/裏の面の混ぜ幅(厚みの正規化座標)。小=境目が急	//--- 配置調整(向き/大きさをここで合わせて焼き込む)
+	float m_wpScale = 0.70f;					// 追加スケール倍率(AABBフィットにさらに掛ける)。ユーザーが決めた値(2026-10-07: 水槽に収まる+短剣らしい長さ)
 	float m_wpYaw = 0.0f, m_wpPitch = 0.0f, m_wpRoll = 0.0f;	// 向き(0=前後/屏幕奥行き。90°で左右横向き)
 	float m_wpOff[3] = { 0.0f, 0.0f, 0.0f };	// 砧面アンカーからの微調整
 	//--- 翻面(裏返し)の見た目: 長軸まわりに 0→180°を回転。
@@ -1060,26 +1079,33 @@ private:
 	//    参考=『鬼武者 Way of the Sword』の剛力: 押している間だけ動作が進み、離すと動作が自然に巻き戻る。最後まで押し切ると完成の動作。
 	//    仕組み: 押した長さ m_flipHold(秒)を「動作の再生位置」にする。押している間は増え、離すと減る(巻き戻し)。
 	//      火钳へ振り向く→手に取る→刃を掴む→半回転 の全部が m_flipHold の関数=同じ値なら同じ画(前にも後ろにも滑らかに動く)。
-	//      [0, TONGS)           火钳へ振り向いて手に取り、刃の方へ戻る(FLIP_TONGS_OUT_TIME)
-	//      [TONGS, TONGS+GRIP)  刃へ寄って掴む(FLIP_GRIP_TIME)
+	//      [0, TONGS)           火钳へ振り向いて手に取り、刃の方へ戻る(m_flipTongsOutTime)
+	//      [TONGS, TONGS+GRIP)  刃へ寄って掴む(m_flipGripTime)
 	//      [TONGS+GRIP, 全長]    半回転(m_flipTurnSec)。半分を越えると面が替わる
 	//      0 まで巻き戻った → 何も無かった事に(None) / 全長に達した → 裏返し完成 → 火钳を戻す(PutBack: 時間で進む・巻き戻せない完成の動作)
 	//    None=鍛打中 / Holding=押している or 巻き戻している途中 / PutBack=完成して火钳を戻す運鏡
 	enum class FlipPhase { None, Holding, PutBack };
 	enum class FlipBeat  { Tongs, Grip, Turn };		// Holding の中のどの区間か(案内文・運鏡が使う。m_flipHold から決まる)
 	FlipPhase m_flipPhase = FlipPhase::None;
+	bool  m_flipNeedRelease = false;			// 金床で裏返し切った後、F を一度離すまで次の裏返しを始めない(2回裏返る事への保護。2026-10-26)
+	//    裏返しが終わった直後も少しの間 F を読まない(2026-10-26 ユーザー: 裏返しの途中で急いでもう一度押すと2回裏返った。
+	//    途中の押下は元々読んでいないが、終わった瞬間の次の押下が新しい裏返しを始めていた)。金床=火钳を戻し終えてから / 砥石=裏返り切ってから。
+	static constexpr float FLIP_RELOCK_SEC = 0.2f;	// 裏返しが終わってから F を受け付けない秒(0.4 は連続で裏返す時に引っ掛かった。2026-10-26)
+	float m_flipLockout      = 0.0f;			// 金床: 残りの受け付けない秒
+	float m_grindFlipLockout = 0.0f;			// 砥石: 同上
 	float m_flipTimer = 0.0f;					// PutBack の経過秒
 	float m_flipHold  = 0.0f;					// 動作の再生位置(秒)。押している間 +dt / 離すと −dt×FLIP_REWIND_RATE
 	float m_flipStartAngle = 0.0f;				// 押し始めた時の刃の角度(=今の面の清潔な角)。巻き戻すとここへ戻る
 	void  UpdateFlip(float tick, bool inputOn);	// 翻面子状態機を駆動(押した長さ→再生位置→画)
-	float FlipHoldTotal() const { return FLIP_TONGS_OUT_TIME + FLIP_GRIP_TIME + m_flipTurnSec; }	// 押し切るまでの秒
+	float FlipHoldTotal() const { return m_flipTongsOutTime + m_flipGripTime + m_flipTurnSec; }	// 押し切るまでの秒
 	FlipBeat CurrentFlipBeat() const;			// 今の再生位置がどの区間か
-	static constexpr float FLIP_TONGS_OUT_TIME = 2.5f;	// 火钳へ振り向いて手に取る区間の長さ(秒。慢=映画的)
-	static constexpr float FLIP_GRIP_TIME      = 1.0f;	// 刃を掴む区間の長さ(秒)
-	static constexpr float FLIP_PUTBACK_TIME   = 2.0f;	// 火钳を戻す運鏡の長さ(秒)
 	static constexpr float FLIP_REWIND_RATE    = 2.0f;	// 離した時の巻き戻りの速さ(押して進む速さの何倍)。速め=「やめた」がすぐ分かる
-	//--- 翻す手感(F1「Flip」で調整・forge_tuning.txt に保存)
+	//--- 翻す手感(F5「裏返し」で調整・forge_tuning.txt に保存)
 	float m_flipTurnSec  = 0.8f;				// F を押し続けて半回転(裏返る)するのに掛かる秒。大=重い鉄をゆっくり返す
+	//    運鏡の各区間の長さ。2026-10-25 試遊(10-23)の「翻面が遅い」で短縮: 2.5/1.0/2.0 → 1.2/0.5/1.0(1回 6.3→3.5秒)
+	float m_flipTongsOutTime = 1.2f;			// 火钳へ振り向いて手に取る区間の長さ(秒)
+	float m_flipGripTime     = 0.5f;			// 刃を掴む区間の長さ(秒)
+	float m_flipPutBackTime  = 1.0f;			// 火钳を戻す運鏡の長さ(秒)
 
 	//--- 翻面の運鏡(火钳アニメの代替)。カメラは2つの「寄り」を重み付きで混ぜる:
 	//    tongs=左腰に掛けた火钳(HipPoint)の方へ振り向く / grip=刃(砧面アンカー)へ寄って見下ろす。
@@ -1093,7 +1119,7 @@ private:
 	//--- 翻面中はハンマーを置く(火钳に持ち替える)。重み 0=構え / 1=置いた。
 	//    Tongs 区間の「振り向く」所で置き、PutBack の「戻る」区間で取り上げる(火钳運鏡と同じ時間割)。
 	float m_hammerStowW = 0.0f;
-	float m_hammerStowOff[3] = { 0.45f, -0.55f, -0.25f };	// 置いた位置=構え位置からのずれ(F1「Flip」で調整)
+	float m_hammerStowOff[3] = { 0.45f, -0.55f, -0.25f };	// 置いた位置=構え位置からのずれ(forge_tuning.txt の stowoff)
 	float m_hammerStowTilt = 1.2f;				// 置く時に寝かせる角度(rad。錘頭の pitch に加算)
 	// 火钳運鏡の時間割(ビート長に対する比率 0..1): [0,REACH)=振り向く / [REACH,RETURN)=手に取る(静止) / [RETURN,1]=戻る
 	static constexpr float FLIP_REACH_FRAC  = 0.35f;
@@ -1101,9 +1127,9 @@ private:
 	void  UpdateFlipCamera(float tick);			// 翻面の段階から運鏡の重みを更新(UpdateFlipの後)
 	//--- 刀身の質感: 粗さ・金属度は材質表(GameData/PropMaterials の "Weapon")、光はシーンと同じ(LitRender::Lights)。
 	//    旧: 刀身だけ固定の光の向きと「空/地の2色」の擬似環境を持っていた(シーンの太陽・炉と無関係)→ 2026-10-15 統一で削除
-	//--- 熱い鋼の見え方(発光していても形が読める様に。F1「Weapon」→ Hot steel)
-	bool  m_wpShowReflect = true;				// F1 診断: 刀身の反射(太陽・炉・部屋)を描くか
-	bool  m_wpShowGlow    = true;				// F1 診断: 刀身の熱の発光を描くか
+	//--- 熱い鋼の見え方(発光していても形が読める様に。forge_tuning.txt の hotsteel2)
+	bool  m_wpShowReflect = true;				// 診断: 刀身の反射(太陽・炉・部屋)を描くか(旧 F1 のチェック。今は常に ON)
+	bool  m_wpShowGlow    = true;				// 診断: 刀身の熱の発光を描くか(旧 F1 のチェック。今は常に ON)
 	float m_wpHotReflect = 1.0f;				// 熱い間も反射(太陽・炉・部屋)を残す割合。1=物理どおり(発光と反射は足し算)。2026-10-16 旧「反射を熱で消す」をやめた
 	std::shared_ptr<Texture> m_wpNormalTex;	// 刀身の法線マップ(素材パックの Blade_Normal_OpenGL)。冷/熱どちらでも凹凸が読める
 	void  LoadWeaponStages();					// Assets/Model/weapon/stage_*.fbx を読む
@@ -1129,13 +1155,13 @@ private:
 	float m_barLen   = 1.8f;	// 長さ
 	float m_barThick = 0.18f;	// 初期の半分の厚み
 	float m_barWidth = 0.22f;	// 鉄坯(進捗0)の一様な半幅。目標プロファイルより広く=削って武器へ
-	float m_barLift  = 0.0f;	// 砧面からの微調整オフセット(F1)
+	float m_barLift  = 0.0f;	// 砧面からの微調整オフセット
 
-	//--- シーン装飾のプロップ(炉/風箱/作業台/水桶/床)。F1スライダで配置調整→焼込む
+	//--- シーン装飾のプロップ(炉/風箱/作業台/水桶/床)。配置は編集シーン → stage_layout.txt
 	struct Prop
 	{
 		std::string       key;			// CreateObj/GetObj のキー
-		std::string       label;		// F1パネル表示名
+		std::string       label;		// 表示名
 		float             scale = 0.02f;
 		float             pos[3] = { 0,0,0 };
 		float             yaw   = 0.0f;
@@ -1152,16 +1178,10 @@ private:
 	//--- 石墙(AI生成FBX)専用PBR: UVが壊れているため triplanar(Box投影)で Poly Haven の実PBR貼图を worldPos から投影する
 	void  DrawWall(Model* m, const DirectX::XMMATRIX& world);	// 石墙専用描画(VS_Wall/PS_Wall)
 
-	//--- Unity風のドラッグ配置エディタ(F1中に選択したプロップを地面上でLMBドラッグ移動)
-	int   m_editSel     = -1;		// 選択中のプロップindex(-1=なし)
-	bool  m_editDragging = false;
-	float m_editPrevX = 0.0f, m_editPrevY = 0.0f;
-	void  UpdateEditorDrag();	// LMBドラッグで選択プロップを地面移動
-
 	//--- 自作の光る炭ベッド(FBXに頼らず、狙った位置に確実に炭火を出す。明滅する)
 	std::shared_ptr<MeshBuffer> m_coalBedMesh;	// 低ポリの炭塊群(CoalBedMesh::Create)。隙間だけ発光
 	bool  m_coalOn     = true;
-	float m_coalPos[3] = { 3.20f, 0.55f, 1.80f };	// 炉の火床の位置(F1で合わせる)
+	float m_coalPos[3] = { 3.20f, 0.55f, 1.80f };	// 炉の火床の位置(stage_layout.txt で上書き)
 	float m_coalYaw    = 0.0f;
 	float m_coalSize[2]= { 0.55f, 0.75f };	// 板の半径(X,Z)
 	float m_coalGlow   = 1.8f;				// 明るさ(Bloomで光る)
@@ -1185,21 +1205,21 @@ private:
 	//--- 砧面のアンカー(鉄条を乗せる点。UpdateBarAnchorが毎フレーム算出)
 	DirectX::XMFLOAT3 m_barAnchor = { 0, 2.32f, 0 };
 
-	//--- 3Dハンマー(F1で向き調整。蓄力で上がり打撃で振り下ろす)
+	//--- 3Dハンマー(向きは forge_tuning.txt。蓄力で上がり打撃で振り下ろす)
 	float m_hammerScale  = 0.02f;
 	float m_hammerRot[3] = { 3.14f, -0.20f, -1.58f };	// 向き(ラジアン)。調整済み既定
 	float m_hammerOff[3] = { 0.06f, 0.0f, 0.0f };		// 打撃点からの位置微調整
 	// 鎚の縦運動(高さ/速度)と弾簧-阻尼の係数は Physics/HammerPhysics に切り出した。
-	//   ForgeStep が Hold/Strike で駆動し、Update で静止高へ収束する。係数は F1 で調整・tuning に保存。
+	//   ForgeStep が Hold/Strike で駆動し、Update で静止高へ収束する。係数は F5 で調整・tuning に保存。
 	HammerPhysics m_hammer;
 	// 表示用の平滑化した横位置(XZ)。準心が格子単位で跳ぶのを Lerp::Damp で吸収する。
 	// Draw はこれを読む。y は m_hammer.Lift() のアニメをそのまま使う。
 	DirectX::XMFLOAT3 m_hammerPos = { 0, 0, 0 };
 	bool m_hammerPosInit = false;					// 初回だけ瞬間セット(起動時に飛んでこない)
-	float m_hammerFollow = 12.0f;	// 錘のXZ追従の速さ(小=遅れて重い, 大=機敏)。F1「Hammer follow」
-	float m_aimSens      = 0.0020f;	// 照準感度(小=重い/慎重, 大=軽快)。F1「Aim sens」
+	float m_hammerFollow = 12.0f;	// 錘のXZ追従の速さ(小=遅れて重い, 大=機敏)。forge_tuning.txt の hfollow
+	float m_aimSens      = 0.0020f;	// 照準感度(小=重い/慎重, 大=軽快)。F5「照準の感度」
 	// 弾簧-阻尼の係数(restLift/chargeRaise/stiffness/damping/mass/impulse)は m_hammer が持つ。
-	//   F1「Hammer」窓と forge_tuning.txt は m_hammer.* を直接指す。
+	//   F5「ハンマー」と forge_tuning.txt は m_hammer.* を直接指す。
 	// 反冲(後座)の見た目: 打撃の反作用で錘が「奥行き(手前へ後退)＋錘頭の上翻り」する。
 	// 位相 rp は上記バネの縦速度から直接求める(接触直後=最大→上昇で減衰)=物理と一致。
 	float HAMMER_RECOIL_BACK  = 0.60f;	// 手前(-Z)へ後退する量(world)
@@ -1243,7 +1263,7 @@ private:
 
 	//--- タイトル画面 = ゲーム世界そのもの(別の絵ではない)。固定の標題カメラから、金床で鎚が打ち続ける様子を映す。
 	//    SPACE → ロゴが淡出しながら、カメラが標題の位置から金床の工位へゆっくり移る(導入運鏡)→ 鍛打から開始。
-	float m_titleCamPos[3]  = { 0.2f, 1.9f, -4.8f };	// 標題カメラの位置(F1「Title」で取景→forge_tuning.txt に保存)
+	float m_titleCamPos[3]  = { 0.2f, 1.9f, -4.8f };	// 標題カメラの位置(F4「今の視点をタイトルのカメラにする」で取景→forge_tuning.txt に保存)
 	float m_titleCamLook[3] = { 0.2f, 1.1f,  0.3f };	// 標題カメラの注視点
 	float m_titleIntroTime  = 3.0f;					// ロゴが消えた後、標題→金床へカメラが移る時間(秒。長い=ゆっくり)
 	float m_logoFadeTime    = 1.0f;					// SPACE 後、ロゴが線形に淡出する時間(秒)。カメラはこの後に動き出す
@@ -1320,7 +1340,8 @@ private:
 		Flip, LeaveCold, Aim, Strike, ReadGauge, HitScale,		// 金床
 		TakeOut, Bellows, WaitHot,								// 炉
 		GripIron, PutDown, WalkTo,								// 走動・搬運
-		GrindFlip, GrindRun, GrindAngle, GrindSlide,			// 砥石(GrindRun = 左の長押しと右の連打を同時に)
+		GrindFlip, GrindRun, GrindSlide,						// 砥石(GrindRun = 左の長押しと右の連打を同時に)
+		Temper, TemperBellows,													// 炉の上で焼き戻し(2026-10-27: ガイド付きで一通り遊ぶ為に追加)
 		Plunge, Stir,											// 水槽
 		Slash,												// 試し切り
 		Count
@@ -1328,12 +1349,12 @@ private:
 	enum class LessonAnim		// 課の動く絵の種類(同じ操作は同じ絵)
 	{
 		MouseVertical,			// マウスを上下に動かす
+		HandHorizontal,			// 手を左右に動かす(焼き戻しで刃を炭の上で滑らせる)
 		StrikeHold,				// 左ボタンを押し続けて溜める → 離す
 		FlipHold,				// 裏返し: F を押し続ける(押している間は実際の進み)
 		PressKey,				// キーを1回押す(押下を繰り返す)。キーは LessonDef::key
 		PointGauge,				// 温度ゲージの目指す範囲を囲み、上から矢印で指す(範囲は LessonGaugeRange)
 		Walk,					// WASD で歩く
-		GrindAngle,				// 研ぎの角度: マウス上下(救急の時は直す向きの矢印だけ明るい)
 		GrindFlipHold,			// 砥石の裏返し: F を押し続ける(押している間は実際の進み)
 		GrindRun,				// 砥石: 左の長押し + 右の連打 を並べ、今できている方を薄くする(できていない方が目立つ)
 		GrindSlide,				// 砥石: 長押し + 連打 を続けたまま 左右に滑らせる(3つを並べる=「左右だけ」と誤解させない)
@@ -1410,15 +1431,12 @@ private:
 	float m_bellowsHeldSec = 0.0f;				// ふいごを押していた秒の累計(LessonMetric: Bellows)
 	int   m_flipCount    = 0;					// 金床で裏返した回数(LessonMetric: Flip)
 	float m_grindRunTime   = 0.0f;				// 左の長押し + 研げる速さで回っている砥石 で研いでいた秒(GrindRun)
-	float m_grindGoodStreak= 0.0f;				// 使える角度で途切れずに研げている秒(今の続き)
-	int   m_grindAngleHolds = 0;				// 使える角度を GRIND_ANGLE_HOLD_SEC 途切れずに保てた回数(GrindAngle の「できた」量。通り過ぎるだけでは増えない)
-	static constexpr float GRIND_ANGLE_HOLD_SEC = 1.5f;	// 角度の課: これだけ途切れずに使える角度で研げたら「できた」
 	bool  GrindRunning() const;					// 今、研げている(左を押していて、砥石が研げる速さで回っている)
 	void  DrawGrindRunLesson(float alpha, float scale, unsigned int tint, float xShift = 0.0f);	// 左の長押し + 右の連打(できている方を薄く)。xShift = 案内の中心から横へずらす(px)
 	float m_grindSlideTravel = 0.0f;			// 当てたまま刃を滑らせた量(GrindSlide)
 	int   m_grindFlipCount = 0;					// 砥石で裏返した回数(GrindFlip)
-	bool  m_grindTooFlat   = false;				// 最後の角度の誤りは「寝かせすぎ」か(救急の矢印の向き)
 	int   m_plungeCount    = 0;					// 刃を水に入れた回数(Plunge)
+	float m_temperSlideTravel = 0.0f;			// 焼き戻しで刃を炭の上で滑らせた量(m_temperU の変化の合計。Temper)
 	float m_stirTravel     = 0.0f;				// 水の中で揺すった量(m。Stir)
 	//--- 走動の行き先の目印を点滅させる(2026-10-12 ユーザー決定): 同じ行き先へ歩き出してから WALK_BLINK_AFTER 秒着かなければ ▼と名前が点滅。
 	float m_walkGoalTime = 0.0f;				// 今の行き先へ向かっている秒(行き先が変わる/工位に入ると 0)
@@ -1531,7 +1549,7 @@ private:
 	float m_reboundRef      = 0.0f;		// 打った瞬間の揺れの大きさ(振幅)。以後の強さの基準
 	bool  m_reboundActive   = false;	// 打った後、跳ね返りを震わせているか
 	float HammerSwingAmplitude() const;	// 鎚の今の揺れの大きさ(ばねの振幅)
-	void  StartReboundHaptics();		// 打った瞬間(m_hammer.Strike の直後)に呼ぶ
+	void  StartReboundHaptics();		// 打った瞬間(m_hammer.Rebound の直後)に呼ぶ
 	void  UpdateReboundHaptics();		// ③ 跳ね返りの震動(毎フレーム)
 	float IronSoftness(float heat) const;			// 緑帯の中の位置 0(下端=硬い)..1(上端=柔らかい)
 
@@ -1539,17 +1557,17 @@ private:
 	//    火の光らしさ = ① 明るさが速く不規則に揺れる ② 光る所(火の位置)も揺れる = 物の明暗とハイライトが動く
 	//      どちらも周波数の違う正弦波の重ね合わせ(倍音が整数倍でない = 繰り返しが目立たない)。一様乱数だとガクガク跳ねる
 	//    ふいご: 踏むと炭が燃え上がる → 部屋も明るくなる(離すとゆっくり戻る)
-	//    2026-10-16 F5: 旧(±12%・ゆっくり・位置固定)は「ただの点光源」にしか見えなかった → 速く・深く・位置も揺らす。F1「Forge light」で調整
+	//    2026-10-16 F5: 旧(±12%・ゆっくり・位置固定)は「ただの点光源」にしか見えなかった → 速く・深く・位置も揺らす。値はここの既定
 	static constexpr float FIRE_FLICKER_HZ[3]     = { 1.3f, 3.7f, 8.9f };	// 重ねる波の速さ(回/秒)。基音 + 非整数倍の倍音(炎のちらつきは数 Hz)
 	static constexpr float FIRE_FLICKER_WEIGHT[3] = { 0.5f, 0.3f, 0.2f };	// 各波の重み(合計 1)
 	static constexpr float FIRE_FLICKER_PHASE[3]  = { 0.0f, 1.3f, 2.9f };	// 各波の位相(同時に山が来ない様にずらす)
 	static constexpr float FIRE_JITTER_HZ[3]      = { 0.9f, 1.7f, 2.3f };	// 火の位置の揺れの速さ(回/秒)。x / y / z で別の速さ = 同じ所を往復しない
 	static constexpr float FIRE_BOOST_RISE        = 4.0f;	// 踏んだ時に明るくなる速さ(Damp率, 1/秒)= 送った風ですぐ燃え上がる
 	static constexpr float FIRE_BOOST_FALL        = 0.8f;	// 離した時に戻る速さ(Damp率, 1/秒)= 炭はゆっくり落ち着く
-	float m_fireFlickerAmount = 0.30f;				// 揺らぎの深さ(明るさの ±割合)。F1
-	float m_fireFlickerSpeed  = 1.0f;				// 揺らぎの速さの倍率。F1
-	float m_fireJitter        = 0.06f;				// 火の位置の揺れの幅(m)。F1
-	float m_fireBellowsBoost  = 1.6f;				// ふいごを踏んでいる間の明るさの倍率。F1
+	float m_fireFlickerAmount = 0.30f;				// 揺らぎの深さ(明るさの ±割合)
+	float m_fireFlickerSpeed  = 1.0f;				// 揺らぎの速さの倍率
+	float m_fireJitter        = 0.06f;				// 火の位置の揺れの幅(m)
+	float m_fireBellowsBoost  = 1.6f;				// ふいごを踏んでいる間の明るさの倍率
 	float m_fireBoost = 1.0f;						// ふいごによる今の明るさの倍率(UpdateHeat が動かす)
 	float FireLightScale() const;					// 揺らぎ × ふいご
 	void  FireLightPos(float out[3]) const;			// 揺れた火の位置(炉床 m_coalPos + 揺れ)。光の計算だけに使う(火花・炭の位置は動かさない)
@@ -1656,13 +1674,13 @@ private:
 	CutTarget m_cutTarget;
 	static const CutTarget::PartDef CUT_PARTS[];	// 藁人形の部品の表(データ。TestCut.cpp)
 	static const int NUM_CUT_PARTS;
-	float m_cutPosXZ[2] = { 0.0f, -8.0f };	// 藁人形の柱の根元(ワールド XZ。高さは歩く床)。F1「Test cut」の「目の前に置く」で決め forge_tuning.txt へ
+	float m_cutPosXZ[2] = { 0.0f, -8.0f };	// 藁人形の柱の根元(ワールド XZ。高さは歩く床)。F4「わら人形を目の前に置く」で決め forge_tuning.txt へ
 	float m_cutYaw      = 0.0f;				// 藁人形の向き(rad)
 	float m_cutReach    = 2.4f;				// この距離(m)より遠い所には刃が届かない(空振り)
 	float m_cutSlashTilt = 0.95f;			// 斬撃の斜めの傾き(rad。0 = 水平に薙ぐ / π/2 = 真上から)。Zornhau = 急な斜め
 	float m_cutStandDist = 1.5f;			// 構える位置: 藁人形の柱から何 m 手前に立つか(近すぎると構えた剣が藁人形に入る。2026-10-21 F5)
 	float m_cutStrikeDamage = 1.10f;		// 斬撃の基本の強さ(× 出来 × 集中 = 1太刀の強さ)。部品の耐久と比べる
-	bool  m_showCutDebug = false;			// F1: 断片が乗っている切り株の断面(橙の円)
+	bool  m_showCutDebug = false;			// F4: 断片が乗っている切り株の断面(橙の円)
 	static constexpr float CUT_STEP_OVER = 0.15f;	// 落ちた断片の上端がこれ(m, 床から)より低ければ歩く時にぶつからない(跨いで通る)
 	static constexpr float CUT_MIN_QUALITY = 0.25f;	// 出来がこれより低くても、この値として斬る(何太刀でも必ずいつかは斬れる)
 	bool  m_cutNeedsBuild = true;			// 次の更新で藁人形を作り直す(ResetTestCut が立てる。GPU の作成は更新の中だけで行う)
@@ -1721,7 +1739,7 @@ private:
 	// モデル(ChatGPT 製 2026-10-21。無ければ箱)
 	std::vector<MeshSlicer::Mesh> m_cutModelParts;	// CUT_PARTS と同じ順の網格(空 = 箱のまま)
 	bool  m_cutModelsLoaded = false;
-	int   m_cutModelFound   = 0;				// モデルから取れた部品の数(F1 に表示)
+	int   m_cutModelFound   = 0;				// モデルから取れた部品の数
 	std::string m_cutModelError, m_hiltModelError;	// 読めなかった理由(assimp のエラー。F1 に表示)
 	void  LoadCutModels();
 	void  BuildHilt();
@@ -1738,13 +1756,13 @@ private:
 	static SwordPose LerpPose(const SwordPose& a, const SwordPose& b, float t);	// 2つの姿勢の間(位置は線形・向きは nlerp)
 	void  BeginSlashPhase(SlashPhase p);	// 段階を切り替える(今の姿勢を始点として記録)
 	void  StrikeAtCrosshair();				// 振りが当たる瞬間: 準心の所を、振りの向きを含む平面で斬る
-	void ResetTestCut();					// 藁人形と試し切りの記録を最初へ(ResetRunState と F1 から)
+	void ResetTestCut();					// 藁人形と試し切りの記録を最初へ(ResetRunState と F4 から)
 	void UpdateTestCut(float tick);			// 落ちる断片の物理(どの状態でも)
 	void UpdateTestCutStation(float tick, bool inputOn);	// 剣の構え・集中・斬撃(入力・アニメ・当たり)。UpdatePlay と走動中から
 	void UpdateTestCutLook();				// 工位での見回し(マウス/右スティック)
 	void ApplyTestCutCamera();				// 工位のカメラ: 立つ位置から藁人形を見る + 見回し + 呼吸の揺れ + 衝撃
 	void DrawTestCut();
-	void TestCutControls();					// F1「Test cut」
+	void PlaceCutTargetInFront();			// F4「目の前に置く」: 藁人形を玩家の正面へ移し、こちらを向かせる
 };
 
 #endif // __SCENE_FORGE_H__

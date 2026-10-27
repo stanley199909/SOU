@@ -2,6 +2,7 @@
 #include "resource.h"	// IDI_APPICON
 #include "Defines.h"
 #include "Main.h"
+#include "Display.h"	// 無枠の全画面: マウス座標をバックバッファの座標へ
 #include <stdio.h>
 #include <crtdbg.h>
 #include "imgui/imgui.h"
@@ -136,6 +137,10 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
+	// 無枠の全画面では、窓(モニター)の座標をバックバッファ(UI を描く大きさ)の座標へ直してから ImGui へ渡す
+	//   (UI はバッファの座標で並べてあり、映す時に窓へ引き伸ばされる。Display::ScaleMouse)
+	if (message >= WM_MOUSEFIRST && message <= WM_MOUSELAST && message != WM_MOUSEWHEEL && message != WM_MOUSEHWHEEL)
+		lParam = Display::ScaleMouse(lParam);
 	// 先にImGuiへ入力を渡す(UI上の操作はImGuiが処理する)
 	if (ImGui_ImplWin32_WndProcHandler(hWnd, message, wParam, lParam))
 		return true;

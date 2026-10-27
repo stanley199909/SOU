@@ -12,7 +12,7 @@ struct PropMaterial;
 //
 //  道具(金床・砥石・水槽…)・手に持った物(鎚・火ばさみ)・編集シーン、全部ここを通る。
 //    光の式   = Lighting.hlsli(壁と同じ GGX)
-//    光の情報 = CottageRender::Data()(太陽・環境光・炉の火の強さ。F1 で調整・保存)+ 炉の位置(毎フレーム1回 SetFirePosition)
+//    光の情報 = CottageRender::Data()(太陽・環境光・炉の火の強さ。F2 / 編集シーンで調整・保存)+ 炉の位置(毎フレーム1回 SetFirePosition)
 //    材質     = GameData/PropMaterials の表
 //  旧: SunStage::LitProp(Lambert)・SceneForge::DrawModelWorld(光なし)・編集シーンの複製、と描き方が3通りあった。
 //====================================================================
@@ -58,6 +58,6 @@ namespace LitRender
 	          const DirectX::XMFLOAT4& hotSpot = DirectX::XMFLOAT4(0, 0, 0, 0), float hot = 0.0f);
 	// 自前で作ったメッシュ(試し切りで切った断片など)を同じ光と材質で描く。頂点は位置・法線・UV(VS_Wall の入力と同じ並び)
 	void DrawMesh(MeshBuffer* mesh, Texture* baseColor, DirectX::FXMMATRIX world, CameraBase* camera, const PropMaterial& material, float highlight = 0.0f);
-	bool NormalMapsEnabled();	// F1「Normal maps」(刀身も同じ切り替えに従う)
-	void Controls();	// F1: 法線/ORM の画像の有無を切り替えて見比べる・法線の向き(DirectX/OpenGL式)を確かめる
+	bool NormalMapsEnabled();	// 編集シーンの「Normal maps」(刀身も同じ切り替えに従う)
+	void Controls();	// 編集シーンのパネル: 法線/ORM の画像の有無を切り替えて見比べる・法線の向き(DirectX/OpenGL式)を確かめる
 }

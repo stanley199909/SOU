@@ -1,7 +1,7 @@
 #include "WorkField.h"
 #include <cmath>
 
-WorkField::Result WorkField::Apply(float coord, float amount, float spread)
+WorkField::Result WorkField::Apply(float coord, float amount, float spread, Spill spill)
 {
     const float MIN_SPREAD = 0.1f;   // guard: sigma 0 would divide by zero
     const float sigma = fmaxf(spread, MIN_SPREAD);
@@ -16,6 +16,20 @@ WorkField::Result WorkField::Apply(float coord, float amount, float spread)
     for (int i = 0; i < N && !reachesUnfinished; ++i)
         if (falloff(i) >= WASTE_WEIGHT && m_left[i] > 0.0f) reachesUnfinished = true;
     if (!reachesUnfinished) return Result::AlreadyDone;
+
+    // Spill::None: only the cells under the tool gain, each by its own falloff share of the
+    // whole contact. A finished cell's share is simply lost (the wheel grinds air there), so
+    // holding still slows down and stops instead of quietly finishing the neighbours.
+    if (spill == Spill::None)
+    {
+        float wall = 0.0f;
+        for (int i = 0; i < N; ++i) wall += falloff(i);
+        for (int i = 0; i < N; ++i)
+            if (m_left[i] > 0.0f) m_left[i] = fmaxf(m_left[i] - amount * falloff(i) / wall, 0.0f);
+        const float DONE_EPS = 1e-4f;   // same snap as below: "done" is exact
+        for (int i = 0; i < N; ++i) if (m_left[i] < DONE_EPS) m_left[i] = 0.0f;
+        return Result::Worked;
+    }
 
     // 1) Share the work among the UNFINISHED cells by falloff weight (normalised, so the
     //    shares sum to the whole amount). A cell never goes below 0.
@@ -50,34 +64,6 @@ WorkField::Result WorkField::Apply(float coord, float amount, float spread)
     // Snap float dust to exactly 0 so "done" is exact.
     const float DONE_EPS = 1e-4f;
     for (int i = 0; i < N; ++i) if (m_left[i] < DONE_EPS) m_left[i] = 0.0f;
-    return Result::Worked;
-}
-
-WorkField::Result WorkField::ApplySegment(int s, int nseg, float amount)
-{
-    if (SegDone(s, nseg)) return Result::AlreadyDone;
-    const int per = N / nseg;
-    const int first = s * per;
-    // Even share among the unfinished cells; a cell that fills up passes its unused share
-    // to the others on the next round (cells of one segment stay level, so this rarely loops).
-    const float REST_EPS = 1e-6f;
-    float rest = amount;
-    while (rest > REST_EPS)
-    {
-        int open = 0;
-        for (int i = first; i < first + per; ++i) if (m_left[i] > 0.0f) ++open;
-        if (open == 0) break;   // segment finished; the leftover is not carried to other segments
-        const float share = rest / open;
-        for (int i = first; i < first + per; ++i)
-        {
-            if (m_left[i] <= 0.0f) continue;
-            const float take = fminf(m_left[i], share);
-            m_left[i] -= take;
-            rest      -= take;
-        }
-    }
-    const float DONE_EPS = 1e-4f;   // same snap as Apply: "done" is exact
-    for (int i = first; i < first + per; ++i) if (m_left[i] < DONE_EPS) m_left[i] = 0.0f;
     return Result::Worked;
 }
 

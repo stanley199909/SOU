@@ -317,33 +317,7 @@ void SceneRoot::Draw()
 
 void SceneRoot::DrawUI()
 {
-	// --- シーン選択パネル ---
-	// 実在する3シーンに対応(enum SceneKind の順)。旧SP31テンプレの死にラベルは削除済み。
-	static const char* names[] = {
-		"SceneForge", "Stage Editor", "Weapon Edit"
-	};
-
-	// シーン選択パネルはデバッグUI(F1)がONのときだけ表示
-	if (DebugUI::IsVisible())
-	{
-		ImGui::SetNextWindowPos(ImVec2(12, 170), ImGuiCond_FirstUseEver);
-		ImGui::SetNextWindowSize(ImVec2(300, 0), ImGuiCond_FirstUseEver);
-		ImGui::Begin("Scene");
-
-		int idx = m_index;
-		if (ImGui::Combo("##scene", &idx, names, IM_ARRAYSIZE(names)))
-		{
-			if (idx != m_index)
-			{
-				m_index = idx;
-				RemoveSubScene();
-				ChangeScene();
-			}
-		}
-		ImGui::TextDisabled("Camera: ALT+Drag / R = Reset");
-		ImGui::End();
-	}
-
+	// シーンの切替は SHIFT+←/→(Update)。旧 F1 の「Scene」選択窓は 2026-10-25 に廃止。
 	// --- 現在のシーン固有のUI ---
 	if (m_pSubScene) m_pSubScene->DrawUI();
 }

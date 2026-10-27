@@ -18,7 +18,7 @@ public:
     bool  IsOpen() const { return m_open; }     // the state it is heading to
     float Angle() const;            // current swing angle (rad). 0 = closed, openAngle = fully open
 
-    // Tunables (public, like HammerPhysics, so F1 sliders can bind to them).
+    // Tunables (public, like HammerPhysics, so tuning code can bind to them).
     float openAngle = 1.5708f;      // how far it opens (rad, = pi/2: square to the wall; more swings the leaf into the stones beside the frame)
     float swingTime = 1.2f;         // seconds for a full swing (slow = heavy wooden door)
 

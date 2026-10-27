@@ -47,10 +47,14 @@ const SceneForge::LessonDef SceneForge::LESSONS[] =
 	//   2026-10-12 ユーザー: 別々に教えると「一緒に押さなくてよい」と思わせ、踏むのを止めて砥石が止まり、案内が行き来した。
 	//   覚えた後は「思い出させる」課(remind): 研ぐのが止まった時だけ出る。通常モードは 3 秒止まったら。
 	{ LessonId::GrindRun,  LessonAnim::GrindRun,      NO_KEY,           (const char*)u8"{GrindPress}を長押ししたまま、{Pedal}を連打して砥石を回す", 1.5f, 3.0f, 0, true },
-	{ LessonId::GrindAngle,LessonAnim::GrindAngle,    NO_KEY,           (const char*)u8"{Tilt}を上下に動かし、火花が一番多い角度で研ぎ続ける", 1.0f, 0.0f, 10 },	// GRIND_ANGLE_HOLD_SEC 途切れずに 1回
 	{ LessonId::GrindSlide,LessonAnim::GrindSlide,    NO_KEY,           (const char*)u8"{GrindPress}長押し・{Pedal}連打のまま、{Hand}を左右に動かして刃全体を研ぐ", 0.5f, 0.0f, 10 },	// 2026-10-19: 旧は左右の絵だけ=押すのを止めてよいと誤解された
+	// --- 炉の上で焼き戻し(2026-10-27 ガイド付きの為に追加。need = 滑らせた量 m_temperU の合計。救急: 4 秒動かさなかったら) ---
+	{ LessonId::Temper,    LessonAnim::HandHorizontal, NO_KEY,          (const char*)u8"{Hand}を左右に動かして刃を炭の上で温め、刃先が麦わら色になったら{Grab}で取り出す", 0.3f, 4.0f, 0 },
+	// 焼き戻しのふいご(2026-10-27 ユーザー: 焼き戻しの課の後に R/LT で速く進むと教えてほしい)。加熱のふいごの課は焼き戻しでは出さず、
+	//   多くは再加熱で覚え済み → 焼き戻し用に別の課。表で焼き戻しの課の次=動かし方を覚えてから教える。救急は無し(速くするだけの任意の操作)
+	{ LessonId::TemperBellows, LessonAnim::PressKey, Action::Bellows, (const char*)u8"{Bellows}を押し続けると色が早く進む。ただし、進めすぎないように注意", 1.0f, 0.0f, 0 },
 	// --- 水槽(救急: 3 秒、2026-10-12 ユーザー決定) ---
-	{ LessonId::Plunge,    LessonAnim::PressKey,      Action::Use,      (const char*)u8"{Use}で、刃を水に入れる",                 1.0f,  3.0f,  0 },
+	{ LessonId::Plunge,   LessonAnim::PressKey,      Action::Use,      (const char*)u8"{Use}で、刃を水に入れる",                 1.0f,  3.0f,  0 },
 	{ LessonId::Stir,      LessonAnim::MouseVertical, NO_KEY,           (const char*)u8"{Hand}を上下に動かして、水の中で刃を揺する",   0.15f, 3.0f,  0 },
 	// --- 試し切り(2026-10-22 構えと集中の一太刀)。救急: 斬らずに 6 秒 / 落ち着かないまま離して鎧に 2 回弾かれたら ---
 	{ LessonId::Slash,     LessonAnim::StrikeHold,    NO_KEY,           (const char*)u8"{Use}長押しで構えて胴を狙い、照準の揺れが止まった瞬間に離して斬る", 1.0f, 6.0f, 2 },
@@ -110,7 +114,6 @@ bool SceneForge::LessonActive(LessonId id) const
 		return atGrind && (m_grindFlipping || (m_forging.SharpProgress(GrindSide()) >= 1.0f && !m_forging.AllSharp()));
 	case LessonId::GrindRun:	// 砥石で、今の面がまだ残っている(研いでいる最中も含む。止まったかは remind の仕組みが LessonMetric で見る)
 		return atGrind && !m_grindFlipping && m_forging.SharpProgress(GrindSide()) < 1.0f;
-	case LessonId::GrindAngle:
 	case LessonId::GrindSlide:
 	{
 		// 研いでいる最中だけ(左を押していて砥石が回っている)。止まったら GrindRun が「思い出させる」。
@@ -123,6 +126,9 @@ bool SceneForge::LessonActive(LessonId id) const
 	case LessonId::Plunge:		// 水槽で、焼きが入る熱さの刃を持っていて、まだ入れていない
 		return AtStation(Station::Trough) && m_workAt == Station::Trough && !m_carrying && CurrentStep().type == StepName::Quench
 		    && m_quenchTurn <= 0.0f && !QuenchStirring() && heat >= QUENCH_MIN_TEMP && heat <= QUENCH_MAX_TEMP;
+	case LessonId::Temper:		// 炉の工位で、焼き戻しの刃を炭の上に構えている
+	case LessonId::TemperBellows:
+		return AtStation(Station::Hearth) && m_workAt == Station::Hearth && !m_carrying && Tempering();
 	case LessonId::Stir:		// 水の中で、蒸気の膜がまだ破れていない
 		return QuenchStirring() && m_boilStage == BoilStage::Film;
 	case LessonId::Slash:		// 藁人形の前に立っていて、まだ両断していない
@@ -170,9 +176,10 @@ float SceneForge::LessonMetric(LessonId id) const
 	case LessonId::WalkTo:    return (float)m_reachCount;
 	case LessonId::GrindFlip: return (float)m_grindFlipCount;
 	case LessonId::GrindRun:  return m_grindRunTime;
-	case LessonId::GrindAngle:return (float)m_grindAngleHolds;
 	case LessonId::GrindSlide:return m_grindSlideTravel;
 	case LessonId::Plunge:    return (float)m_plungeCount;
+	case LessonId::Temper:    return m_temperSlideTravel;
+	case LessonId::TemperBellows: return m_bellowsHeldSec;	// 押していた秒(加熱のふいごの課と同じ量。教え始めからの差で測る)
 	case LessonId::Stir:      return m_stirTravel;
 	case LessonId::Slash:     return (float)m_cutStrikes;	// 構えて離した回数
 	default: return 0.0f;
@@ -197,7 +204,7 @@ void SceneForge::PopLesson(LessonState& l)
 	l.soundDone  = !l.popVisible;
 }
 
-//====================================================================
+//============================	========================================
 //  毎フレーム(Update): 進み/放置/救急/覚えた/確認音、出す課を決める
 //====================================================================
 void SceneForge::UpdateLessons(float dt)
@@ -634,13 +641,6 @@ const SceneForge::LessonPicture SceneForge::LESSON_PICTURES[] =
 		{ "lesson_press_blade_base.png", "lesson_press_blade_pose1.png", 0.65f, 0.0f, 0.0f, 0.0f, 197.0f, 257.0f },	// 構える
 		{ "lesson_press_blade_base.png", "lesson_press_blade_pose2.png", 1.20f, 0.0f, 0.0f, 0.0f, 197.0f, 257.0f },	// 当てる(火花)
 	} },
-	// 角度: 寝かせすぎ(火花少)→ 立てすぎ(火花少)→ 正しい角度(火花多・長く止める)。
-	//   「正しい角度は火花が多い」= ゲームの中の手掛かりと同じ(角度計を見なくても火花で分かる様に)。支点 = 刃と砥石の接点。
-	{ LessonId::GrindAngle, 0.0f, 3, {
-		{ "lesson_grind_angle_base.png",  "lesson_grind_angle_pose_few.png",  0.65f, 0.0f, 0.0f,  0.08f, 197.0f, 257.0f },	// 寝かせすぎ
-		{ "lesson_grind_angle_base2.png", "lesson_grind_angle_pose_few.png",  0.65f, 0.0f, 0.0f, -0.48f, 197.0f, 257.0f },	// 立てすぎ
-		{ "lesson_grind_angle_base3.png", "lesson_grind_angle_pose_many.png", 1.40f, 0.0f, 0.0f, -0.18f, 197.0f, 257.0f },	// 正しい
-	} },
 	// 滑らせる: 刃先側 → 真ん中 → 根元側 → 真ん中。火花(接点)は砥石の上に留まり、刃だけが左右に動く。
 	{ LessonId::GrindSlide, 0.0f, 4, {
 		{ "lesson_grind_slide_base.png",  "lesson_grind_slide_pose1.png", 0.40f,  60.0f, 0.0f, 0.0f, 197.0f, 257.0f },	// 刃先側
@@ -668,6 +668,25 @@ const SceneForge::LessonPicture SceneForge::LESSON_PICTURES[] =
 	{ LessonId::Stir, 0.0f, 2, {
 		{ "lesson_stir_base.png",  "lesson_stir_pose1.png", 0.30f, 0.0f, -40.0f, 0.0f, 245.0f, 260.0f },	// 上
 		{ "lesson_stir_base2.png", "lesson_stir_pose2.png", 0.30f, 0.0f,  22.0f, 0.0f, 245.0f, 260.0f },	// 下
+	} },
+	// --- 第4批(2026-10-27, lesson_*_animation.json の値のまま) ---
+	// 焼き戻し: 炭の上で刃を左右に動かす → 刃の中の白い帯(=焼き戻し色。図は白黒)が背から刃先へ広がる → 火ばさみで持ち上げる
+	{ LessonId::Temper, 0.0f, 4, {
+		{ "lesson_temper_base.png", "lesson_temper_pose1.png", 0.60f, -50.0f, 0.0f, 0.0f, 256.0f, 256.0f },	// 左・色なし
+		{ "lesson_temper_base.png", "lesson_temper_pose2.png", 0.60f,  50.0f, 0.0f, 0.0f, 256.0f, 256.0f },	// 右・細い帯
+		{ "lesson_temper_base.png", "lesson_temper_pose3.png", 0.60f, -50.0f, 0.0f, 0.0f, 256.0f, 256.0f },	// 左・広い帯
+		{ "lesson_temper_base.png", "lesson_temper_pose4.png", 1.40f,   0.0f, 0.0f, 0.0f, 256.0f, 256.0f },	// 刃先まで → 持ち上げる
+	} },
+	// 焼き戻しのふいご: 加熱のふいごと同じ絵(同じ道具・同じ操作)
+	{ LessonId::TemperBellows, 0.0f, 2, {
+		{ "lesson_bellows_base.png", "lesson_bellows_pose1.png", 0.80f, 0.0f, 0.0f, 0.0f, 175.0f, 310.0f },
+		{ "lesson_bellows_base.png", "lesson_bellows_pose2.png", 0.65f, 0.0f, 0.0f, 0.0f, 175.0f, 310.0f },
+	} },
+	// 試し切り: 屋根の構え(Vom Tag)で溜める → 斜めに振り下ろす(Zornhau)→ 胴が斜めに断たれる
+	{ LessonId::Slash, 0.0f, 3, {
+		{ "lesson_slash_base.png",  "lesson_slash_pose1.png", 1.20f, 0.0f, 0.0f, 0.0f, 256.0f, 256.0f },	// 構え
+		{ "lesson_slash_base.png",  "lesson_slash_pose2.png", 0.12f, 0.0f, 0.0f, 0.0f, 256.0f, 256.0f },	// 振り下ろす瞬間
+		{ "lesson_slash_base2.png", "lesson_slash_pose3.png", 1.20f, 0.0f, 0.0f, 0.0f, 256.0f, 256.0f },	// 両断
 	} },
 };
 static const float PICT_SRC_SIZE    = 512.0f;	// 図の原寸(px)
@@ -842,13 +861,7 @@ void SceneForge::DrawLessonAnim(const LessonDef& d, float alpha, float scale, un
 	switch (d.anim)
 	{
 	case LessonAnim::MouseVertical:   DrawAxisLesson(AxisPrompt::HandVertical,   0, alpha, scale, tint); break;	// 狙う / 揺する = 手
-	case LessonAnim::GrindAngle:
-	{
-		// 救急(誤りを重ねた)なら直す向きだけ: 寝かせすぎ → 上へ(立てる) / 立てすぎ → 下へ(寝かせる)。教える時は往復
-		const bool rescue = m_lessonShownRescue && m_lessonShown == (int)LessonId::GrindAngle;
-		DrawAxisLesson(AxisPrompt::TiltVertical, rescue ? (m_grindTooFlat ? -1 : +1) : 0, alpha, scale, tint);	// 刃の角度 = 回す
-		break;
-	}
+	case LessonAnim::HandHorizontal:  DrawAxisLesson(AxisPrompt::HandHorizontal, 0, alpha, scale, tint); break;	// 焼き戻し: 炭の上で滑らせる
 	case LessonAnim::GrindRun:      DrawGrindRunLesson(alpha, scale, tint); break;
 	case LessonAnim::GrindSlide:
 	{

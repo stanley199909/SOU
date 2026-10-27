@@ -19,7 +19,7 @@ namespace
 	const float NIGHT_SKY  = 0.015f;	// 夜の空(窓の外)の明るさ = 昼の何割(ほぼ黒い紺。0.04 では夜でも灰色に見えた)
 	float s_firePos[3] = {};
 	float s_fireScale  = 1.0f;
-	// F1 の見比べ用(既定 = 全部使う)。保存はしない(確かめる為だけの切り替え)
+	// 編集シーンの見比べ用(既定 = 全部使う)。保存はしない(確かめる為だけの切り替え)
 	bool s_useNormalMaps = true;
 	bool s_useOrmMaps    = true;
 	bool s_flipNormalY   = false;	// 表の DirectX/OpenGL 式の指定を全部逆にする(凹凸が逆に見えたら表が間違い)
@@ -67,7 +67,7 @@ namespace LitRender
 		l.eye     = { eye.x, eye.y, eye.z, 0.0f };
 		l.sun     = Sun();	// 今の太陽(時刻で動く向き × 昼の明るさ × F2 の ON/OFF)
 		l.ambient = { light.ambient.x, light.ambient.y, light.ambient.z, light.windowExtra.w * FillScale() };	// 色 + 屋内の環境光の強さ(夜は暗い)
-		l.fire    = { s_firePos[0], s_firePos[1], s_firePos[2], light.ambient.w * s_fireScale * (on.fire ? 1.0f : 0.0f) };	// 位置 + 炉の火の強さ(F1 の調整値 × ゲームの状態)
+		l.fire    = { s_firePos[0], s_firePos[1], s_firePos[2], light.ambient.w * s_fireScale * (on.fire ? 1.0f : 0.0f) };	// 位置 + 炉の火の強さ(調整値 × ゲームの状態)
 		l.lightVP = r.lightVP;
 		l.shadow  = { r.hasShadow ? 1.0f : 0.0f, 1.0f / SunStage::ShadowSize, SunStage::ShadowDepthBias, SunStage::ReceiverOffset };
 		return l;

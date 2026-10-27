@@ -43,7 +43,7 @@ float3 BRDF(float3 base, float rough, float metal, float3 n, float3 v, float3 l)
 // The reflection probe (ReflectionProbe.cpp) photographs the room once and bakes:
 //   iblEnv = the photo blurred per roughness (mip 0 = mirror ... last mip = fully rough)
 //   iblLut = the BRDF half of the split-sum: (A, B) for every (n.v, roughness)
-// Not bound (editor scene, before the first capture, or F1 "Use IBL" off) -> GetDimensions
+// Not bound (editor scene, before the first capture, or useInLighting off) -> GetDimensions
 // returns 0 and AmbientLight falls back to the old flat room color below.
 TextureCube  iblEnv  : register(t6);
 Texture2D    iblLut  : register(t7);
@@ -130,7 +130,7 @@ float3 IblSpecular(float3 f0, float rough, float3 n, float3 v, float3 wp, out bo
 // Without IBL (fallback) -- two different "ambient" inputs on purpose:
 //   diffuse  = base * diffuseAmbient * (1-metal)       diffuseAmbient  = room color x indoor FILL boost
 //   specular = F * specularAmbient, ONLY for metals     specularAmbient = room color WITHOUT the boost
-// The FILL boost (x4, F1 "Indoor fill strength") is an artist lift so dark corners stay readable --
+// The FILL boost (x4, "Indoor fill strength" in the editor scene) is an artist lift so dark corners stay readable --
 // it is not how bright the room really is. Reflecting it (a mirror shows the real surroundings):
 //   - on every surface turned the interior milky white, worst at grazing angles (2026-10-15 F5)
 //   - on metals made the blade and the anvil top a bluish white at any temperature (2026-10-16 F5)

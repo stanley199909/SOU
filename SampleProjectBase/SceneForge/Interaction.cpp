@@ -330,7 +330,7 @@ void SceneForge::DrawInteractPrompt()
 	if (grabOn) DrawKeyPrompt(dl, grabP, m_grabPromptAlpha, Action::Grab,     (const char*)u8"火ばさみで鉄を掴む");
 }
 
-//--- F1: 互動範囲の箱(①)を線で表示。
+//--- F4「操作できる範囲」: 互動範囲の箱(①)を線で表示。
 //    赤=今は互動できない状況(例: 火钳は鍛打工程だけ) / 灰=範囲外 / 緑=範囲内 / 黄=注視中(E が出ている)。
 void SceneForge::DrawInteractBoxes()
 {

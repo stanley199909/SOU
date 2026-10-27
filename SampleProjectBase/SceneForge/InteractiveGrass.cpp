@@ -65,7 +65,7 @@ void SceneForge::BindGrassParams(VertexShader* vs, Prop& p)
 	vs->SetTexture(0, m_grassMap.GetTexture());
 }
 
-//--- F1: 貼图そのものを小窓に表示。白いほど強く押されている(R チャンネルだけなので赤く見える)。
+//--- F4「草の踏み跡」: 貼图そのものを小窓に表示。白いほど強く押されている(R チャンネルだけなので赤く見える)。
 void SceneForge::DrawGrassMapPreview()
 {
 	if (!m_showGrassMap || !m_grassMap.IsReady()) return;

@@ -68,7 +68,7 @@ public:
         int  stoppedBy = -1;      // not cut: the part that held (most durability left), else -1
     };
 
-    // Tunables (F1 "Test cut").
+    // Tunables (strike strength = F5; the rest = forge_tuning.txt / defaults).
     RigidBody::Params physics;
     float density   = 250.0f;   // kg/m^3 of a fallen chunk's bounding box (straw + wood, rough)
     float pushSpeed = 1.6f;     // m/s the blade gives the cut-off part along the swing (x the slash's push scale)
@@ -102,7 +102,7 @@ public:
 
     void Update(float dt);
     void Draw(CameraBase* camera, float highlight = 0.0f);   // highlight 0..1 = the "go here next" glow (LitRender)
-    void DrawDebug(CameraBase* camera);            // F1: the stump's cut-face discs (where fallen pieces rest)
+    void DrawDebug(CameraBase* camera);            // F4: the stump's cut-face discs (where fallen pieces rest)
 
     // Ray (world) vs the standing parts' bounding box. t = distance along the ray.
     bool RayHit(const DirectX::XMFLOAT3& origin, const DirectX::XMFLOAT3& dir, float& t) const;
