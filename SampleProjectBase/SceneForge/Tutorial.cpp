@@ -250,17 +250,19 @@ void SceneForge::UpdateLessons(float dt)
 		const bool progressed = metric > l.lastMetric + METRIC_EPS;
 		l.lastMetric = metric;
 		// 教えている課は、できた瞬間に場面が終わる事が多い(E で離れる → もう金床の課ではない)ので、場面の外でも「できた」を見る
-		if (m_tutorial && !l.learned && l.based && metric - l.base >= d.need) { l.learned = true; l.mistakes = 0; PopLesson(l); }
+		if (m_tutorial && !l.learned && l.based && metric - l.base >= d.need) { l.learned = true; l.mistakes = 0; m_lessonLearnedAt = m_time; PopLesson(l); }
 		if (!active && !held) { l.idle = 0.0f; l.rescue = false; continue; }	// 場面を離れたら救急も解く(教え始めの量は残す)
 		if (active) l.idle = progressed ? 0.0f : l.idle + dt;	// 残している間は放置の時間を数えない
 
 		if (m_tutorial && !l.learned)
 		{
-			if (teach < 0)
+			// 覚えた直後は少し待ってから次の課を出す(待っている間は教え始めの量も取らない=その間の進みは数えない)
+			const bool nextReady = (m_time - m_lessonLearnedAt) >= LESSON_NEXT_DELAY_SEC;
+			if (teach < 0 && nextReady)
 			{
 				teach = (int)d.id;
 				if (!l.based) { l.base = metric; l.based = true; }	// 教え始めの量
-				if (metric - l.base >= d.need) { l.learned = true; l.mistakes = 0; PopLesson(l); teach = -1; }	// 教え始めたこのフレームに、もうできていた
+				if (metric - l.base >= d.need) { l.learned = true; l.mistakes = 0; m_lessonLearnedAt = m_time; PopLesson(l); teach = -1; }	// 教え始めたこのフレームに、もうできていた
 			}
 			continue;	// 覚えるまでは救急の対象にしない(教えている最中)
 		}
@@ -286,6 +288,8 @@ void SceneForge::UpdateLessons(float dt)
 		}
 		if (l.rescue && rescue < 0) rescue = (int)d.id;
 	}
+	// 覚えた直後の待ちの間は救急も出さない(覚えた課の弾ける演出だけを見せる)
+	if (m_tutorial && (m_time - m_lessonLearnedAt) < LESSON_NEXT_DELAY_SEC) rescue = -1;
 	m_lessonShown       = (teach >= 0) ? teach : rescue;
 	m_lessonShownRescue = (teach < 0 && rescue >= 0);
 
@@ -390,7 +394,7 @@ void SceneForge::DrawAxisLesson(AxisPrompt axisPrompt, int towards, float alpha,
 	const float SWING      = 0.30f;		// 動く幅(アイコンの大きさに対する比。片側)
 	const float ARROW_GAP  = 0.95f, ARROW_HALF_W = 0.22f, ARROW_H = 0.18f, ARROW_DIM = 0.30f;	// 矢印
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
-	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImDrawList* dl = HudDrawList();
 	const float size = disp.y * LESSON_ICON_RATIO * scale;
 	const ImVec2 c(disp.x * LESSON_CENTER_X + xShift, disp.y * LESSON_CENTER_Y);
 	if (label) DrawLessonLabel(dl, label, c, size, alpha);	// 絵の上の一言(「長押し」「連打」と同じ見た目)
@@ -421,7 +425,7 @@ void SceneForge::DrawStrikeHoldLesson(float alpha, float scale, unsigned int tin
 	const float STRIKE_SEC = 0.6f;		// 離す=叩く(輪が弾ける)
 	const float BURST_GROW = 1.8f;		// 弾ける輪が広がる大きさ(元の半径の倍率)
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
-	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImDrawList* dl = HudDrawList();
 	const float size = disp.y * LESSON_ICON_RATIO * scale;
 	const ImVec2 c(disp.x * LESSON_CENTER_X, disp.y * LESSON_CENTER_Y);
 	const float t = fmodf(m_lessonClock, HOLD_SEC + STRIKE_SEC);
@@ -455,7 +459,7 @@ void SceneForge::DrawHoldKeyLesson(Action action, float alpha, float scale, unsi
 	const float HOLD_SEC = 1.4f;		// 押し続けて輪が溜まる
 	const float REST_SEC = 0.5f;		// 離して一呼吸(押す/離すの区別が付く様に)
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
-	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImDrawList* dl = HudDrawList();
 	const float size = disp.y * LESSON_ICON_RATIO * scale;
 	const ImVec2 c(disp.x * LESSON_CENTER_X, disp.y * LESSON_CENTER_Y);
 	const float t = fmodf(m_lessonClock, HOLD_SEC + REST_SEC);
@@ -487,7 +491,7 @@ void SceneForge::DrawFlipHoldPrompt(float alpha, float scale, unsigned int tint,
 void SceneForge::DrawHoldProgressPrompt(Action action, float fill01, bool pressed, const char* label, float alpha, float scale, unsigned int tint)
 {
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
-	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImDrawList* dl = HudDrawList();
 	const float size = disp.y * LESSON_ICON_RATIO * scale;
 	const ImVec2 c(disp.x * LESSON_CENTER_X, disp.y * LESSON_CENTER_Y);
 	std::string outline;
@@ -506,7 +510,7 @@ void SceneForge::DrawTapKeyLesson(Action action, float alpha, float scale, unsig
 	const float PRESS_FRAC = 0.2f;		// 押している割合
 	const float BURST_GROW = 1.5f;		// 押すたびに弾ける輪の広がり(元の半径の倍率)
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
-	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImDrawList* dl = HudDrawList();
 	const float size = disp.y * LESSON_ICON_RATIO * scale;
 	const ImVec2 c(disp.x * LESSON_CENTER_X, disp.y * LESSON_CENTER_Y);
 	const float p = fmodf(m_lessonClock, PERIOD) / PERIOD;
@@ -546,7 +550,7 @@ void SceneForge::DrawGaugePointLesson(float lo, float hi, float alpha, float sca
 	const float BOB_AMP    = 0.008f;	// 矢印の上下の揺れ(画面高さ比)
 	const float BOB_HZ     = 1.5f;		// 揺れの速さ(回/秒)
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
-	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImDrawList* dl = HudDrawList();
 	const float tw = disp.x * HEAT_TRACK_W_RATIO, th = disp.y * HEAT_TRACK_H_RATIO;
 	const float tx0 = (disp.x - tw) * 0.5f, ty0 = disp.y * HEAT_TRACK_Y_RATIO;	// 温度 t は tx0 + tw*t(DrawHeatGauge の heatX と同じ)
 	const float x0 = tx0 + tw * lo, x1 = tx0 + tw * hi, pad = disp.y * FRAME_PAD;
@@ -727,7 +731,7 @@ bool SceneForge::DrawLessonPicture(LessonId id, float centerX, float centerY, fl
 	if (!base || !base->GetResource() || !pose || !pose->GetResource()) return false;	// 画像がまだ無い課は出さない(キーの絵だけ)
 
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
-	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImDrawList* dl = HudDrawList();
 	const float size = disp.y * LESSON_ICON_RATIO * PICT_SIZE_RATIO * scale;	// 画面上の図の大きさ(台も姿勢も同じ四角に描く=原寸の位置合わせが保たれる)
 	const float k    = size / PICT_SRC_SIZE;										// 原寸 px → 画面 px
 	const ImVec2 tl(centerX - size * 0.5f, centerY - size * 0.5f);
@@ -782,7 +786,7 @@ void SceneForge::DrawWalkLesson(float alpha, float scale, unsigned int tint)
 	static const float OFFS[4][2] = { { 0.0f, -1.0f }, { -1.0f, 0.0f }, { 0.0f, 0.0f }, { 1.0f, 0.0f } };	// キー1つ分の並び(W A S D)
 	static const float TILT[4][2] = { { 0.0f, -1.0f }, { -1.0f, 0.0f }, { 0.0f, 1.0f }, { 1.0f, 0.0f } };	// 同じ順に倒す向き(上 左 下 右)
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
-	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImDrawList* dl = HudDrawList();
 	const XMFLOAT2 base = LessonCenter(LessonAnim::Walk);
 	const int now = (int)(m_lessonClock / STEP_SEC) % 4;
 	if (InputPrompts::Device() == InputDevice::Gamepad)
@@ -821,7 +825,7 @@ void SceneForge::DrawGrindRunLesson(float alpha, float scale, unsigned int tint,
 	const float HOLD_SEC = 1.4f, REST_SEC = 0.5f;	// 長押しの見本(押して輪が溜まる → 一呼吸)
 	const float TAP_PERIOD = 0.35f, TAP_PRESS_FRAC = 0.4f;	// 連打の見本(ペダルの絵と同じ間隔)
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
-	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImDrawList* dl = HudDrawList();
 	const float size = disp.y * LESSON_ICON_RATIO * scale;
 	const ImVec2 c(disp.x * LESSON_CENTER_X + xShift, disp.y * LESSON_CENTER_Y);
 	const bool  holdOK = InputActions::Held(Action::GrindPress);
@@ -905,7 +909,7 @@ void SceneForge::DrawLessonPrompts()
 	const ImU32 GOLD        = IM_COL32(255, 214, 120, 255);	// できた色(金)
 	const float dt = ImGui::GetIO().DeltaTime;
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
-	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImDrawList* dl = HudDrawList();
 
 	for (const LessonDef& d : LESSONS)
 	{

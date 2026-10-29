@@ -508,7 +508,7 @@ void SceneForge::ResetRunState()
 	m_trackerRows.clear();		// 工程リストの済状態を作り直す(UpdateTracker が配方の工程数で用意する)
 	m_stepTimes.assign(m_recipe ? m_recipe->steps.size() : 0, StepTime{});	// プレイテスト計時も 0 から
 	for (LessonState& l : m_lessons) l = LessonState{};		// 操作の案内は毎回最初から(新しい人が遊ぶ)
-	m_lessonShown = -1; m_lessonShownRescue = false;
+	m_lessonShown = -1; m_lessonShownRescue = false; m_lessonLearnedAt = -1000.0f;
 	m_aimTravel = 0.0f; m_lastAimRail = -1.0f; m_validStrikes = 0; m_bellowsHeldSec = 0.0f; m_flipCount = 0;	// 案内の「できた」量
 	m_leaveCount = 0; m_gripCount = 0; m_putCount = 0; m_reachCount = 0; m_heatReadyCount = 0;
 	m_prevFocusGoal = false; m_prevHeatReady = false;

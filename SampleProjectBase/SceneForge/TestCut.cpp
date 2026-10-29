@@ -1050,7 +1050,7 @@ void SceneForge::DrawSeverBanner()
     const float fade  = 1.0f - Clamp01((age - BANNER_SLAM_SEC - BANNER_HOLD_SEC) / BANNER_FADE_SEC);
     const float alpha = fade * Clamp01(slam * 2.0f);   // appears as it slams in
     const ImVec2 disp = ImGui::GetIO().DisplaySize;
-    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    ImDrawList* dl = HudDrawList();
     const ImVec2 c(disp.x * 0.5f, disp.y * BANNER_Y);
     if (m_cutBannerBrush)
     {
@@ -1080,7 +1080,7 @@ void SceneForge::DrawFocusOverlay()
     const float VISIBLE = 0.01f;
     if (m_focusFade < VISIBLE || !SwordAtStation()) return;
     const ImVec2 disp = ImGui::GetIO().DisplaySize;
-    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    ImDrawList* dl = HudDrawList();
     // vignette: four gradient bands, dark at the edge -> clear inward
     const ImU32 dark  = IM_COL32(0, 0, 0, (int)(VIGNETTE_ALPHA * m_focusFade));
     const ImU32 clear = IM_COL32(0, 0, 0, 0);

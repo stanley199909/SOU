@@ -21,6 +21,12 @@ struct ImFont;
 void DrawSubtitleBox(ImDrawList* dl, float x0, float y0, float x1, float y1, float textPx, float alpha01);	// box around a content rect (padding added inside)
 void DrawOutlinedText(ImDrawList* dl, ImFont* font, float px, float x, float y, unsigned int col, const char* text);	// dark 8-way outline, then the text
 
+// The draw list for the game HUD (prompts, tracker, gauge, menus, fade). It is ImGui's BACKGROUND list:
+// still drawn over the 3D picture, but under every ImGui window and the foreground list, so the debug
+// panels (F2/F3 on the foreground list, F4/F5 as windows) always stay on top of the game UI.
+// Layers inside the HUD follow call order (draw an underlay before its text). Defined in HUD.cpp.
+ImDrawList* HudDrawList();
+
 // Sample the shared 7-stop steel-heat gradient at h(0..1) -> r,g,b(0..1).
 // Both HeatRGB (3D weapon/bar) and the HUD's HeatColor use this one table.
 // Defined in SceneForge.cpp.

@@ -1,8 +1,8 @@
 lessonspeed 2
 rumble 4
 quality 0
-displaymode 1
-displaysize 1920 1200
+displaymode 2
+displaysize 1280 800
 volmaster 10
 volbgm 10
 volse 10

@@ -26,5 +26,6 @@ namespace Display
 	bool ApplyPending(UINT& outW, UINT& outH);// true when the back buffer must be resized to outW x outH
 	void BufferSize(UINT& w, UINT& h);        // the back buffer = the size the game draws at (UI layout space)
 	LPARAM ScaleMouse(LPARAM lParam);         // window client pixel -> back buffer pixel (borderless is stretched)
+	void OnActivate(bool active);            // WM_ACTIVATEAPP: exclusive fullscreen is lost on Alt+Tab -> minimize, and re-enter it when the game comes back
 	void Shutdown();                          // leave exclusive fullscreen before the swap chain is released
 }

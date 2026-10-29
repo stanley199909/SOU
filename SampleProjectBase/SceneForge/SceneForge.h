@@ -1392,6 +1392,7 @@ private:
 	LessonState m_lessons[(int)LessonId::Count];
 	int   m_lessonShown = -1;			// 今出している課(-1 = 無し)。UpdateLessons が決め、DrawLessonPrompts が描く
 	bool  m_lessonShownRescue = false;	// それは救急か(false = チュートリアルの教え)
+	float m_lessonLearnedAt = -1000.0f;	// チュートリアルで最後に課を覚えた時刻(m_time)。LESSON_NEXT_DELAY_SEC の間は次の課を出さない
 	bool  LessonActive(LessonId id) const;		// 今の状況でその課が意味を持つか(工位・温度・面…)
 	float LessonMetric(LessonId id) const;		// その課の「正しくできた」量(単調に増える)
 	void  NoteLessonMistake(LessonId id);		// 遊びのコードが誤りを報告する(空振り / 完成済みの所を叩く …)
@@ -1409,6 +1410,9 @@ private:
 	// できてから「弾ける+確認音」までの間。叩いた瞬間にできる(金床の音と重なる)ので、少し遅らせて「カン！…チーン」と聞かせる。
 	static constexpr float LESSON_POP_DELAY   = 0.2f;
 	static constexpr float LESSON_NUDGE_SEC   = 8.0f;	// チュートリアル: この秒数進まなければ絵を脈打たせる(アイドルヒント)
+	// チュートリアル: 課を覚えてから次の課を出すまでの秒(2026-10-29 プレイテスト: 次の課がすぐ出て、同じ動きで一瞬で終わり気付かれなかった)。
+	//   この間の進みは次の課に数えない(教え始めの量は「出した時」に取る)。
+	static constexpr float LESSON_NEXT_DELAY_SEC = 1.0f;
 	// 出している課は、場面が合わなくなってもこの秒数は残す(2026-10-12 不具合: 砥石の回転が閾値の前後を行き来し、
 	//   ペダル ↔ 刃を当てる の案内が踏む度に入れ替わって、弾ける演出と確認音が何度も出た)。
 	static constexpr float LESSON_HOLD_SEC    = 1.5f;

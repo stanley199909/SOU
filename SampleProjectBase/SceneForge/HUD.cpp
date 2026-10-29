@@ -43,6 +43,11 @@ using namespace DirectX;
 //  UI (HUD)
 //====================================================================
 
+// ゲームの HUD を描く層 = ImGui の背景層(3D の上・全ての ImGui 窓と前景層の下)。
+//   2026-10-29 プレイテスト: HUD を前景層に描いていたので、F4/F5 の窓(と F2/F3)が工程リストや温度ゲージの下に隠れた。
+//   HUD を一段下げ、調試パネルが常に一番上に来る様にした。同じ層の中の重なりは呼ぶ順(下地を先に呼ぶ)。
+ImDrawList* HudDrawList() { return ImGui::GetBackgroundDrawList(); }
+
 // 画面中央にウィンドウ枠なしのメッセージを出す小道具。
 //   font=nullptr なら既定フォント(メイリオ)。scale は各フォントの実寸への倍率。
 //   読みやすさのため暗い影を1枚下に敷く(3D背景の上でも文字が沈まない)。
@@ -50,7 +55,7 @@ using namespace DirectX;
 static void CenterText(const char* text, float yRatio, float scale = 1.0f,
                        ImU32 col = IM_COL32(255, 255, 255, 255), ImFont* font = nullptr, bool shadow = true)
 {
-	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImDrawList* dl = HudDrawList();
 	ImVec2 disp = ImGui::GetIO().DisplaySize;	// 実際の画面サイズ(解像度非依存)
 	ImFont* f = font ? font : ImGui::GetFont();
 	float px = f->FontSize * scale;
@@ -72,7 +77,7 @@ static void CenterTextWithIcons(const char* before, InputGlyph glyph, const char
 	const float ICON_GAP   = 0.15f;		// 絵と絵の間(絵の大きさに対する比)
 	const float SHADOW_PX  = 2.0f;
 	const int   MAX_ICONS  = 4;		// 1つのボタンの絵の最大枚数(キーボードの決定 = Enter + Space の2枚)
-	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImDrawList* dl = HudDrawList();
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
 	ImFont* f = font ? font : ImGui::GetFont();
 	const float px = f->FontSize * scale;
@@ -204,7 +209,7 @@ static float StripHeightPx(float textPx) { return textPx * STRIP_H_PER_TEXT; }
 static void DrawTextOnStripAt(Texture* strip, const char* text, ImVec2 center, float textPx, ImFont* font, float alpha01)
 {
 	if (!text || !text[0]) return;
-	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImDrawList* dl = HudDrawList();
 	ImFont* f = (font == DebugUI::FontJP()) ? DebugUI::FontJPFor(textPx) : (font ? font : ImGui::GetFont());
 	const ImVec2 ts = f->CalcTextSizeA(textPx, FLT_MAX, 0.0f, text);
 	const float h = StripHeightPx(textPx), w = ts.x + h * STRIP_PAD_PER_H * 2.0f;
@@ -286,7 +291,7 @@ void DrawOutlinedText(ImDrawList* dl, ImFont* f, float textPx, float x, float y,
 static void DrawSubtitle(const char* text, float cyRatio, float textPx, ImFont* font, ImU32 col)
 {
 	if (!text || !text[0]) return;
-	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImDrawList* dl = HudDrawList();
 	const ImVec2 disp = ImGui::GetIO().DisplaySize;
 	ImFont* f = (font == DebugUI::FontJP()) ? DebugUI::FontJPFor(textPx) : (font ? font : ImGui::GetFont());
 	const ImVec2 ts = f->CalcTextSizeA(textPx, FLT_MAX, 0.0f, text);
@@ -311,7 +316,7 @@ void SceneForge::DrawKeyHints(const KeyHint* hints, int count, float yRatio, flo
 	const float TEXT_RATIO      = 0.024f;	// 一言の文字の高さ
 	const float SHADOW_PX       = 2.0f;		// 影のずれ(px)
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
-	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImDrawList* dl = HudDrawList();
 	const float icon = disp.y * ICON_RATIO, px = disp.y * TEXT_RATIO;
 	ImFont* jp = DebugUI::FontJPFor(px);	// 描く大きさに一番近い実寸のフォント
 	const int   a = (int)(255 * alpha);
@@ -367,7 +372,7 @@ void SceneForge::DrawKeyHints(const KeyHint* hints, int count, float yRatio, flo
 void SceneForge::DrawParchmentPanel(float yCenter, float heightRatio)
 {
 	if (!m_uiParchment || !m_uiParchment->GetResource()) return;
-	ImDrawList* dl = ImGui::GetBackgroundDrawList();	// 文字より奥に敷く
+	ImDrawList* dl = HudDrawList();	// 文字より奥に敷く(同じ層なので、文字より先に呼ぶ)
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
 	float aspect = (float)m_uiParchment->GetWidth() / (float)m_uiParchment->GetHeight();
 	float h = disp.y * heightRatio;
@@ -434,7 +439,7 @@ void SceneForge::DrawTemperChart()
 	m_gaugeAlpha = Lerp::Damp(m_gaugeAlpha, inUse ? 1.0f : GAUGE_IDLE_ALPHA, inUse ? GAUGE_FADE_IN_LAMBDA : GAUGE_FADE_OUT_LAMBDA, ImGui::GetIO().DeltaTime);
 	const int   ga   = (int)(255 * m_gaugeAlpha);
 	const ImVec2 disp = ImGui::GetIO().DisplaySize;
-	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImDrawList* dl = HudDrawList();
 	const float tw = disp.x * HEAT_TRACK_W_RATIO, th = disp.y * HEAT_TRACK_H_RATIO;	// 温度ゲージの槽と同じ大きさ・位置
 	const float x0 = (disp.x - tw) * 0.5f, y0 = disp.y * HEAT_TRACK_Y_RATIO, y1 = y0 + th;
 	auto X = [&](float t) { return x0 + tw * t; };
@@ -478,7 +483,7 @@ void SceneForge::DrawHeatGauge()
 	const bool gaugeInUse = HeatGaugeInUse();
 	m_gaugeAlpha = Lerp::Damp(m_gaugeAlpha, gaugeInUse ? 1.0f : GAUGE_IDLE_ALPHA, gaugeInUse ? GAUGE_FADE_IN_LAMBDA : GAUGE_FADE_OUT_LAMBDA, ImGui::GetIO().DeltaTime);
 	const int ga = (int)(255 * m_gaugeAlpha);	// ゲージ全体(画像・文字)に掛ける不透明度
-	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImDrawList* dl = HudDrawList();
 
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
 	const float x0 = disp.x * 0.25f;
@@ -616,7 +621,7 @@ void SceneForge::DrawTitleLogo(float alpha)
 	const float SUB_H_RATIO    = 0.030f;	// 副題の文字の高さ
 	const float SUB_GAP_RATIO  = 0.01f;	// ロゴと副題の間
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
-	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImDrawList* dl = HudDrawList();
 	ImFont* title = DebugUI::FontTitle() ? DebugUI::FontTitle() : ImGui::GetFont();
 	ImFont* body  = DebugUI::FontBody()  ? DebugUI::FontBody()  : ImGui::GetFont();
 	const int a = (int)(255 * alpha);
@@ -692,7 +697,7 @@ void SceneForge::DrawTitleUI()
 void SceneForge::DrawLetterbox()
 {
 	if (m_letterbox <= 0.0f) return;
-	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImDrawList* dl = HudDrawList();
 	ImVec2 disp = ImGui::GetIO().DisplaySize;			// 解像度非依存(画面比)
 	const float h = disp.y * LETTERBOX_RATIO * m_letterbox;
 	dl->AddRectFilled(ImVec2(0, 0),            ImVec2(disp.x, h),      IM_COL32(0, 0, 0, 255));
@@ -869,7 +874,7 @@ void SceneForge::DrawStepTracker()
 {
 	if (!m_recipe) return;
 	ImVec2 disp = ImGui::GetIO().DisplaySize;		// 寸法はすべて画面比(解像度非依存)
-	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImDrawList* dl = HudDrawList();
 	auto JP = [](float px) { return DebugUI::FontJPFor(px); };	// 見出し/工程名/表裏で大きさが違う→それぞれ一番近い実寸
 
 	// --- 羊皮紙パネル ---
@@ -1384,7 +1389,7 @@ void SceneForge::DrawObjectiveMarker()
 	XMFLOAT3 v; XMStoreFloat3(&v, vp);		// ビュー空間(+Z=前, +X=右, +Y=上)
 
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
-	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImDrawList* dl = HudDrawList();
 	ImFont* jp = DebugUI::FontJPFor(disp.y * LABEL_RATIO);	// 行き先名の大きさに一番近い実寸のフォント
 	const float s = disp.y * SIZE_RATIO;
 	const float edge = disp.y * EDGE_RATIO;
@@ -1520,7 +1525,7 @@ void SceneForge::DrawResultUI()
 int SceneForge::DrawChoicePanel(const char* head, const char* const* labels, int n, int& sel, float centerY, bool dimBack, const int* marks)
 {
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
-	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImDrawList* dl = HudDrawList();
 
 	const ImU32 DIM_COL       = IM_COL32(0, 0, 0, 150);			// 背後の世界を暗く(止まっている事が分かる)
 	const float PANEL_W_RATIO = 0.30f;							// パネルの幅(画面幅比)
@@ -1897,7 +1902,7 @@ void SceneForge::DrawCourseComplete()
 {
 	if (!m_recipe || m_courseIdx < 0 || m_courseIdx >= (int)m_recipe->courses.size()) return;
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
-	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImDrawList* dl = HudDrawList();
 	const float FADE_SEC      = 0.4f;	// 現れる速さ(秒)
 	const float PANEL_W_RATIO = 0.30f, PANEL_H_RATIO = 0.26f, CORNER_RATIO = 0.085f;	// 課程の一覧と同じ隅の大きさ
 	const float NAME_RATIO = 0.034f, DONE_RATIO = 0.052f;	// 課程の名前 / 「レッスン完了」の文字の高さ
@@ -1924,7 +1929,7 @@ void SceneForge::DrawCourseComplete()
 void SceneForge::DrawOptionsMenu()
 {
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
-	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImDrawList* dl = HudDrawList();
 	const ImU32 DIM_COL       = IM_COL32(0, 0, 0, 150);
 	const float PANEL_W_RATIO = 0.42f, CORNER_RATIO = 0.085f;	// 一時停止メニューより少し広い(値の列がある)
 	const float HEAD_RATIO = 0.040f, ITEM_RATIO = 0.028f, ROW_RATIO = 0.052f, HEAD_GAP = 1.3f;	// 行は 9 個(2026-10-26 画面/音量を追加)= 画面に収まる行の高さ

@@ -150,6 +150,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 	case WM_DESTROY:
 		PostQuitMessage(0);
 		break;
+	case WM_ACTIVATEAPP:
+		// 排他フルスクリーンで Alt+Tab: 離れる時は最小化、戻った時にフルスクリーンへ入り直す(Display::OnActivate)
+		Display::OnActivate(wParam != FALSE);
+		break;
 	}
 	return DefWindowProc(hWnd, message, wParam, lParam);
 }

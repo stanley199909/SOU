@@ -43,7 +43,7 @@ void ScreenFade::Update(float dt)
 void ScreenFade::Draw() const
 {
 	if (m_alpha <= 0.001f) return;
-	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImDrawList* dl = ImGui::GetBackgroundDrawList();   // same layer as the game HUD (under the debug panels); drawn last, so it covers the HUD
 	ImVec2 sz = ImGui::GetIO().DisplaySize;
 	ImU32 col = ImGui::GetColorU32(ImVec4(0.0f, 0.0f, 0.0f, m_alpha));
 	dl->AddRectFilled(ImVec2(0, 0), sz, col);

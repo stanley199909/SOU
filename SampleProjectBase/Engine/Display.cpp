@@ -131,6 +131,17 @@ namespace Display
 		Mode mode = g_mode;
 		if (mode == Mode::Fullscreen)
 		{
+			// Coming back from Alt+Tab: the window is minimized and DXGI cannot take the screen from an icon.
+			if (IsIconic(g_hWnd)) ShowWindow(g_hWnd, SW_RESTORE);
+			// A frameless window under the fullscreen picture: when DXGI drops fullscreen (focus lost) the window
+			// it falls back to has no title bar cutting into the picture.
+			if (!fullscreen)
+			{
+				SetWindowLongPtr(g_hWnd, GWL_STYLE, BORDERLESS_STYLE | WS_VISIBLE);
+				SetWindowLongPtr(g_hWnd, GWL_EXSTYLE, 0);
+				const RECT m = MonitorRect(false);
+				SetWindowPos(g_hWnd, HWND_TOP, m.left, m.top, (int)s.w, (int)s.h, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+			}
 			// ResizeTarget before AND after entering fullscreen: the first picks the display mode, the
 			// second (refresh rate 0 = keep) is what DXGI documents to avoid a mode mismatch.
 			DXGI_MODE_DESC md = {};
@@ -170,6 +181,19 @@ namespace Display
 		g_bufW = s.w; g_bufH = s.h;
 		outW = s.w; outH = s.h;
 		return true;
+	}
+
+	void OnActivate(bool active)
+	{
+		if (g_mode != Mode::Fullscreen || !g_hWnd) return;
+		if (!active)
+		{
+			// DXGI leaves exclusive fullscreen on its own when focus goes; minimizing keeps the half-restored
+			// window (wrong size, picture cut off) from showing on the desktop.
+			ShowWindow(g_hWnd, SW_MINIMIZE);
+		}
+		else
+			g_pending = true;   // back in front: re-enter fullscreen at the start of the next frame (+ resize the buffers)
 	}
 
 	void Shutdown()

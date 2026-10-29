@@ -325,7 +325,7 @@ void SceneForge::DrawInteractPrompt()
 		grabP = ImVec2(mid.x - r * SPREAD_RADII, mid.y);	// 掴む = 左
 		useP  = ImVec2(mid.x + r * SPREAD_RADII, mid.y);	// 使う = 右
 	}
-	ImDrawList* dl = ImGui::GetForegroundDrawList();
+	ImDrawList* dl = HudDrawList();
 	if (useOn)  DrawKeyPrompt(dl, useP,  m_promptAlpha,     Action::Interact, m_promptLabel);
 	if (grabOn) DrawKeyPrompt(dl, grabP, m_grabPromptAlpha, Action::Grab,     (const char*)u8"火ばさみで鉄を掴む");
 }
