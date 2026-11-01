@@ -143,10 +143,12 @@ private:
 	bool  m_lightPanelOpen = false;	// F2 = ライティング確認。開いている間はゲームの入力と時間を止める
 	bool  m_toolsPanelOpen = false;	// F4 = 検査ツール(見える化の切替・工程へ飛ぶ・進捗の確認)。クリックする為に入力を止める
 	bool  m_feelPanelOpen  = false;	// F5 = 手感の調整(試遊の後に触る数値だけ)。入力を止める
-	bool  ToolUiOpen() const { return m_lightPanelOpen || m_toolsPanelOpen || m_feelPanelOpen; }	// 調整用の画面が開いている=ゲーム入力を止める(判定はここ1つ)
+	bool  m_swordPanelOpen = false;	// F6 = 剣の姿勢(試し切りの構え・溜め・柄)。入力を止める
+	bool  ToolUiOpen() const { return m_lightPanelOpen || m_toolsPanelOpen || m_feelPanelOpen || m_swordPanelOpen; }	// 調整用の画面が開いている=ゲーム入力を止める(判定はここ1つ)
 	bool  SegLowEndOnRight();		// 工程リストの区域の格子を画面の刃の左右に合わせる(HUD.cpp)
 	void  DrawToolsPanel();			// F4 パネル(HUD.cpp)
 	void  DrawFeelPanel();			// F5 パネル(HUD.cpp)
+	void  DrawSwordPanel();			// F6 パネル(HUD.cpp)
 	void  BeginToolWindow(const char* id, const char* title, const char* hint, float leftRatio, float widthRatio);	// F4/F5 共通: 羊皮紙の imgui 窓を開く(HUD.cpp)
 	void  EndToolWindow();
 	bool  m_showPropBoxes = false;	// F4「道具の箱」: 金床の AABB と鉄条の箱を線で描く(DrawDebugBoxes)
@@ -248,6 +250,7 @@ private:
 	Station m_station  = Station::Anvil;			// 今(または移動アニメの到着先で)作業している工位
 	Station m_workAt   = Station::Anvil;			// 刃が置かれている工位(開始時は金床の上)
 	bool    m_carrying = false;						// 刃を火钳で掴んで手に持っている(カメラの前に描く・炉で熱されない)。Carry.cpp
+	DirectX::XMFLOAT3 m_grindSparkOff = { 0.0f, 0.0f, 0.0f };	// grind sparks: offset from the wheel's contact point (m): beyond the wheel / along the axle / up. F5
 	DirectX::XMFLOAT3 m_stationViewDir = { 0, 0, -1 };	// 工位(金床以外)の視点方向=入った時に玩家が居た側(水平単位)
 	float m_stationCamDist   = 1.00f;				// 工位カメラ: 作業点から手前へ離れる水平距離
 	float m_stationCamHeight = 0.75f;				// 工位カメラ: 作業点からの目の高さ
@@ -339,9 +342,6 @@ private:
 	float m_grindFlipHold    = 0.0f;				// 再生位置(秒)。GRIND_FLIP_SEC で裏返り切る
 	float m_grindFlipStart   = 0.0f;				// 押し始めた時の回転(=今の面の清潔な角)
 	static constexpr float GRIND_FLIP_SEC = 0.6f;	// 押し続けて裏返り切るまでの秒
-	//--- 研ぐ前の刃先の欠け(PS_Wp が画素ごとに切り欠く)。研いだ分だけ浅くなる=刃の縁の形で研ぎの残りが分かる
-	float m_edgeJagAmp  = 0.40f;					// 欠けの一番深い所(刃の半分の幅に対する割合)。2026-10-26 ユーザーが F5 で決めた値(旧 0.08 は 1〜2 画素で見えなかった)。F5「刃のギザギザ」
-	float m_edgeJagFreq = 8.0f;						// ギザギザの細かさ(長手セル1つあたりの山の数)。ユーザーが F5 で決めた値。F5
 	static constexpr float GRIND_ANGLE_FOLLOW = 14.0f;	// 刃が研ぎ角へ傾く速さ(Damp率, 1/秒)
 	static constexpr float GRIND_IDEAL_ANGLE  = 0.35f;	// 研ぎ角(rad, 約20°)
 	static constexpr float GRIND_TILT_DIR     = 1.0f;	// 研ぎ角で傾く向き(画面に対して一定。+1/-1。逆に見えたら符号を反す)
@@ -1025,7 +1025,7 @@ private:
 	// sharp = 研いだ刃先の度合い 0..1(=その区域の鋭さ × 刃先への近さ)。PS が研ぎ面の見た目に使う。
 	// work = この頂点が属する面(表/裏)の鍛造進捗 0..1。PS が氧化皮(黒皮)を「叩いた分だけ」剥がすのに使う。
 	//   ※並びは VS の入力(POSITION/NORMAL/TEXCOORD0..3)と一致させる(入力レイアウトは D3DReflect で順に詰めて作る)。
-	struct WpVtx { DirectX::XMFLOAT3 pos; DirectX::XMFLOAT3 nrm; DirectX::XMFLOAT2 uv; DirectX::XMFLOAT4 col; float work; float temper; DirectX::XMFLOAT2 edge; };	// temper = 焼き戻しの色の位置 0..1(並びは VS_Wp の VIN と同じ)
+	struct WpVtx { DirectX::XMFLOAT3 pos; DirectX::XMFLOAT3 nrm; DirectX::XMFLOAT2 uv; DirectX::XMFLOAT4 col; float work; float temper; float polish; };	// temper = 焼き戻しの色の位置 0..1(並びは VS_Wp の VIN と同じ)
 	struct WpStage { std::vector<DirectX::XMFLOAT3> pos, nrm; std::vector<DirectX::XMFLOAT2> uv; };	// 1段分の生頂点(ローカル)
 	std::vector<WpStage>        m_wpStage;		// stage_0 .. stage_final
 	std::vector<unsigned int>   m_wpIdx;		// インデックス(全段共通)
@@ -1276,6 +1276,7 @@ private:
 	float m_introTimer = 0.0f;						// LogoFade の経過秒
 	static constexpr float TITLE_BGM_VOLUME     = 0.40f;	// タイトル BGM の音量(淡出はここから 0 へ)
 	static constexpr float PLAY_BGM_VOLUME      = 0.45f;	// ゲーム中 BGM の音量
+	int   m_playBgm     = -1;	// 今鳴らしているゲーム中BGM(Audio::SoundId, -1 = まだ無し = Stop は何もしない)。FinishIntro が決め、止める所はこれを止める
 	static constexpr float TITLE_FADE_SE_VOLUME = 1.0f;		// ロゴ淡出の効果音の音量
 	void  UpdateIntro(float tick);					// 導入の段階を進める(LogoFade→CameraMove、BGM の淡出)
 	void  FinishIntro();							// 金床に着いた: BGM を切り替えて導入を終える
@@ -1672,7 +1673,7 @@ private:
 	//   左を長押し = 構え(Vom Tag: 剣を右肩の上に立てる)+ 集中: 照準が呼吸で揺れ、息を吐き切った瞬間が一番静か。
 	//   離す = 斬撃(Zornhau: 右上から左下へ斜めに斬り下ろす)一太刀だけ。連撃は無い(一刀両断の主題に合わせた, ユーザー決定 10-22)。
 	//   1太刀の強さ = 基本値 × 鍛えた出来(GradeScore) × 集中の良さ。藁人形の部品は耐久を持ち、届かなければ弾かれる。
-	//   胴(鎧の部品)を両断したら工程の完了(TestCutStep)。
+	//   胴を両断したら工程の完了(TestCutStep)。
 	//   「どう斬るか」(入力・振り・強さ)はここ、「何がどう切れるか」(形・耐久・切断・物理)は CutTarget に分けた
 	//   =後で別の武器の動作(例: 日本刀の居合)へ替えても CutTarget はそのまま使える(デカップリング)。
 	CutTarget m_cutTarget;
@@ -1684,6 +1685,27 @@ private:
 	float m_cutSlashTilt = 0.95f;			// 斬撃の斜めの傾き(rad。0 = 水平に薙ぐ / π/2 = 真上から)。Zornhau = 急な斜め
 	float m_cutStandDist = 1.5f;			// 構える位置: 藁人形の柱から何 m 手前に立つか(近すぎると構えた剣が藁人形に入る。2026-10-21 F5)
 	float m_cutStrikeDamage = 1.10f;		// 斬撃の基本の強さ(× 出来 × 集中 = 1太刀の強さ)。部品の耐久と比べる
+	// ---- 剣の姿勢(F6「剣の姿勢」で調整・forge_tuning の swordhold / swordwind に保存) ----
+	// 既定値は名前付き(F6 の「既定値に戻す」がここへ戻す。保存済みの値は起動時に上書きされる)
+	// 剣の構え(歩く時・振っていない時)。目からの距離(m): 前 / 右 / 上。2026-10-29 ユーザー: FPS の参考(Chivalry 2 / Valorant)の様に、
+	//   鍔を画面の右下の外に置き、刃を画面の中央寄りへ斜め上に立てる。
+	static constexpr DirectX::XMFLOAT3 HOLD_HAND_DEFAULT = { 0.38f, 0.22f, -0.30f };
+	static constexpr DirectX::XMFLOAT3 HOLD_DIR_DEFAULT  = { 0.60f, -0.10f, 1.00f };	// 鍔→切っ先の向きの重み(前 / 右 / 上)。右を負にすると刃が画面の中央へ傾く
+	static constexpr float HOLD_ROLL_DEFAULT = 25.0f;	// 刃の平らな面をカメラから何度ねじるか(0 = 平らな面が真正面 = 一番幅広く見える)
+	// 振りかぶり(長押しの溜め) = Zornhut(憤怒の構え): 鍔を右肩の前へ引き、柄頭は前(的)を向き、刃は肩越しに後ろへ倒す。
+	//   2026-10-29 ユーザー: 刃を立てる Vom Tag は一人称では柄が画面を横切って不自然 → 「柄を前・刃を後ろ」= 体の発力に沿った溜め(God of War)。
+	//   同日 F5: 刃を後ろへ倒し過ぎると溜めの間は剣が全く見えない → 手を右下の前へ、刃は斜め後ろ上(画面の右上へ抜ける)。
+	static constexpr DirectX::XMFLOAT3 WIND_HAND_DEFAULT = { 0.35f, 0.18f, -0.20f };	// 溜めた時の鍔(手)の位置: 目から 前 / 右 / 上 (m)
+	static constexpr float WIND_DEG_DEFAULT  = -110.0f;	// 溜めた時の刃の角度(振りの円弧の上。0 = 正面に当たる所、-90 = 真横に立つ、それより負 = 後ろへ倒れる)
+	static constexpr float HILT_SEAT_DEFAULT = 0.0f;	// 柄を刃の根元から切っ先の方へ差し込む深さ(m)。負 = 根元から離す
+	DirectX::XMFLOAT3 m_holdHand = HOLD_HAND_DEFAULT;
+	DirectX::XMFLOAT3 m_holdDir  = HOLD_DIR_DEFAULT;
+	float m_holdRollDeg = HOLD_ROLL_DEFAULT;
+	float m_swordBobPerMeter = 0.5f;	// sways per metre walked with the sword. Walking is 4 m/s here: the iron's 1.6 would be 6 steps a second (2026-11-01: "like a speed hack"); 0.5 = 2 a second
+	DirectX::XMFLOAT3 m_windHand = WIND_HAND_DEFAULT;
+	float m_windDeg  = WIND_DEG_DEFAULT;
+	float m_hiltSeat = HILT_SEAT_DEFAULT;
+	bool  m_previewWind = false;	// F6: パネルを開いている間、剣を溜めの姿勢で止めて見せる(パネル中はゲーム入力が止まり、長押しできないため)
 	bool  m_showCutDebug = false;			// F4: 断片が乗っている切り株の断面(橙の円)
 	static constexpr float CUT_STEP_OVER = 0.15f;	// 落ちた断片の上端がこれ(m, 床から)より低ければ歩く時にぶつからない(跨いで通る)
 	static constexpr float CUT_MIN_QUALITY = 0.25f;	// 出来がこれより低くても、この値として斬る(何太刀でも必ずいつかは斬れる)
@@ -1699,7 +1721,26 @@ private:
 	static constexpr float CUT_LOOK_PITCH_LIM = 0.9f;	// 〃 上下
 	// 剣の振り(手続き的なアニメーション: 姿勢 = 鍔の位置 + 刃の向き + 刃先の向き を時間で補間)
 	struct SwordPose { DirectX::XMFLOAT3 guard, dir, edge; };	// 鍔(手)の位置 / 鍔→切っ先の向き / 刃先が向く向き
-	enum class SlashPhase { Idle, Focus, Swing, Recoil, Recover };
+	// Stuck = 力が足りず刃が藁人形の中で止まった(2026-10-29) / PullOut = 刃を振りの道に沿って引き抜く(自動)
+	enum class SlashPhase { Idle, Focus, Swing, Stuck, PullOut, Recover };
+	// 斬る計画: 離した瞬間に決める(準心の所・平面・強さ、それで斬れるか/どこで止まるか)。
+	//   振りの円弧もこの瞬間の視線で描く = 刃は狙った所を通り、止まる所で正確に止まる(振りの間のカメラの傾きに引かれない)
+	struct StrikePlan
+	{
+		bool  valid = false;				// 今の振りに計画があるか(Idle に戻ると消える)
+		DirectX::XMFLOAT3 eye{ 0, 0, 0 }, fwd{ 0, 0, 1 };	// 離した瞬間の目と視線
+		bool  reach = false;				// 藁人形が届く所にいた(false = 空振り)
+		CutTarget::Aim aim{};
+		float damage = 0.0f;
+		CutTarget::StrikeResult judged;		// 斬った時に何が起きるか(CutTarget::Judge)
+		float thetaStop  = 0.0f;			// 止まる時: 刃が止まる振りの角度(rad)
+		float thetaEntry = 0.0f;			// 刃が藁人形に入る角度(引き抜く時はここより手前まで戻す)
+	};
+	StrikePlan m_plan;
+	SwordPose m_stuckPose{};				// 止まった時の剣の姿勢(ワールド。ここで震える)
+	float m_stuckTime = 0.0f;				// 止まってからの秒
+	DirectX::XMFLOAT4X4 m_stuckDummyWorld{};	// 止まった瞬間の藁人形のワールド行列(FollowDummy の基準)
+	SwordPose FollowDummy(const SwordPose& p, float weight);	// 止まってからの藁人形の揺れに、姿勢を付いて行かせる(刃は藁に挟まれている)
 	SlashPhase m_slashPhase = SlashPhase::Idle;
 	float m_slashT       = 0.0f;			// 今の段階の進み 0..1
 	float m_slashHitstop = 0.0f;			// 当たった瞬間の止め(ヒットストップ)の残り秒
@@ -1733,7 +1774,7 @@ private:
 	float m_cutSlowmo    = 0.0f;			// スローモーションの残り(実時間の秒)
 	float m_cutSlowmoScale = 1.0f;			// その間の時間の倍率
 	float m_chargeGlintAt = -1.0f;			// 一番静かな瞬間の切っ先の光芒の時刻
-	float m_cutRetryAt   = -1.0f;			// 鎧を斬らなかった太刀: この時刻に新しい藁人形を立てる(-1 = 無し)
+	float m_cutRetryAt   = -1.0f;			// 胴を斬らなかった太刀: この時刻に新しい藁人形を立てる(-1 = 無し)
 	// 両断の札(1太刀 =「一刀両断」の筆文字 / それ以上 =「N太刀で両断」)
 	float m_cutBannerAt  = -1.0f;			// 出た時刻(-1 = 無し)
 	bool  m_cutBannerBrush = false;			// 筆文字の画像か(else 文字)
@@ -1756,10 +1797,13 @@ private:
 	DirectX::XMFLOAT3 SwordCenter();			// 手に持った剣の箱の中心(WorkAnchor が使う)
 	int   SwordTipSign();					// 切っ先の側(m_swordTipSign を必要なら調べる)
 	SwordPose LowGuardPose();				// 下段: 歩いている時/構えていない時(剣を低く前へ)
-	SwordPose SwingPose(float theta, DirectX::XMFLOAT2 dir);	// 振りの円弧上の姿勢。theta = 刃の角度(rad): 負 = 振りかぶり(Vom Tag) / 0 = 正面(当たる所) / 正 = 振り抜き
+	SwordPose WindPose();					// 振りかぶり(Zornhut): 円弧の m_windDeg の向き + 手は右肩の前(m_windHand)
+	SwordPose SwingPose(float theta, DirectX::XMFLOAT2 dir);	// 振りの円弧上の姿勢。theta = 刃の角度(rad): 負 = 振りかぶり(Zornhut) / 0 = 正面(当たる所) / 正 = 振り抜き
 	static SwordPose LerpPose(const SwordPose& a, const SwordPose& b, float t);	// 2つの姿勢の間(位置は線形・向きは nlerp)
 	void  BeginSlashPhase(SlashPhase p);	// 段階を切り替える(今の姿勢を始点として記録)
-	void  StrikeAtCrosshair();				// 振りが当たる瞬間: 準心の所を、振りの向きを含む平面で斬る
+	void  PlanStrike();						// 離した瞬間: 準心の所を、振りの向きを含む平面で斬る計画を立てる(m_plan)
+	void  ApplyStrike();					// 刃が届いた瞬間: 計画どおりに斬る(斬れる / 中で止まる)と手応え
+	float ThetaAtOffset(float offset, float depth);	// 刃が視線から振りの向きへ offset(m)、目から depth(m)の所に来る振りの角度
 	void ResetTestCut();					// 藁人形と試し切りの記録を最初へ(ResetRunState と F4 から)
 	void UpdateTestCut(float tick);			// 落ちる断片の物理(どの状態でも)
 	void UpdateTestCutStation(float tick, bool inputOn);	// 剣の構え・集中・斬撃(入力・アニメ・当たり)。UpdatePlay と走動中から

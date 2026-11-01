@@ -150,6 +150,23 @@ void Particles::SpawnSplash(const XMFLOAT3& a, const XMFLOAT3& b, int count, flo
     }
 }
 
+void Particles::SpawnStraw(const XMFLOAT3& origin, const XMFLOAT3& dir, float spread,
+    int count, float speedMin, float speedMax, float floorY)
+{
+    m_strawFloorY = floorY;
+    const XMVECTOR d = XMVector3Normalize(XMLoadFloat3(&dir));
+    for (int i = 0; i < count && (int)m_straw.size() < MAX_STRAW; ++i)
+    {
+        Particle s = {};
+        s.pos = origin;
+        XMStoreFloat3(&s.vel, ConeVelocity(d, spread, rnd(speedMin, speedMax)));
+        s.maxLife = rnd(tune.strawLifeMin, tune.strawLifeMax);
+        s.life    = s.maxLife;
+        s.size    = rnd(tune.strawSizeMin, tune.strawSizeMax);
+        m_straw.push_back(s);
+    }
+}
+
 void Particles::SpawnBurnSpark(const XMFLOAT3& origin)
 {
     if ((int)m_burn.size() >= MAX_BURN) return;
@@ -217,6 +234,21 @@ void Particles::Update(float dt, float time)
         ++i;
     }
 
+    // Straw bits: gravity + strong air drag (they flutter down); gone on the floor.
+    const float strawKeep = expf(-tune.strawDrag * dt);
+    for (size_t i = 0; i < m_straw.size(); )
+    {
+        Particle& s = m_straw[i];
+        s.life -= dt;
+        s.vel.x *= strawKeep; s.vel.z *= strawKeep;
+        s.vel.y = s.vel.y * strawKeep - tune.strawGravity * dt;
+        s.pos.x += s.vel.x * dt;
+        s.pos.y += s.vel.y * dt;
+        s.pos.z += s.vel.z * dt;
+        if (s.life <= 0.0f || s.pos.y < m_strawFloorY) { s = m_straw.back(); m_straw.pop_back(); continue; }
+        ++i;
+    }
+
     // Sparks: gravity + bounce on the ground (y = 0).
     for (size_t i = 0; i < m_sparks.size(); )
     {
@@ -275,6 +307,7 @@ void Particles::Clear()
     m_steam.clear();
     m_steamSpawn = 0.0f;
     m_splash.clear();
+    m_straw.clear();
     m_burn.clear();
     m_sparks.clear();
     m_embers.clear();

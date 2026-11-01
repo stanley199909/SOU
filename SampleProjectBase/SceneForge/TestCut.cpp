@@ -6,23 +6,25 @@
 //   tempering done -> the screen fades and the hilt is fitted (FitHilt); from now on the sword is
 //   held in the hand, also while walking (low guard). At the dummy, E = stand ready (feet fixed,
 //   free mouse look). Then:
-//     hold  = raise the sword over the right shoulder (Vom Tag) and FOCUS: the aim drifts with the
+//     hold  = wind up (Zornhut: hilt forward, blade back over the right shoulder) and FOCUS: the aim drifts with the
 //             breath; at the end of the out-breath it is stillest (a glint on the tip) -- release then
 //     release = the strike (Zornhau): one diagonal cut from the upper right to the lower left
 //   One strike's strength = base x the whole-forge grade (GradeScore) x how still the aim was.
 //
-// The dummy is three kinds of part (user's design 2026-10-21): the post only holds it up, the straw
-// body only gives the armor its shape, the ARMOR is what tests the sword. So:
-//   - a slash that crosses armor is judged by durability (bounces until the armor gives);
-//   - a slash that misses the armor (post / straw only) still counts as a stroke, the dummy is cut,
-//     and after a moment a fresh dummy is stood up ("aim at the armor") -- no shortcut through straw;
-//   - cutting the torso armor in two = the step is done. Fewer strokes = a better sword.
+// The dummy (user's design 2026-10-29, the armor is gone): a straw dummy on a post; the TORSO is what
+// tests the sword. A slash that is strong enough cuts through along its path. One that is not stops
+// INSIDE the dummy at the depth its strength reached, quivers, and is pulled back out along the way it
+// came in, leaving a notch. Only slashes that land in the SAME notch add up (harder, but real -- the
+// user's choice): the next slash has to be aimed at the slit. So:
+//   - a slash that misses the torso (post / hips / head only) still counts as a stroke, and after a
+//     moment a fresh dummy is stood up ("aim at the torso") -- no shortcut;
+//   - cutting the torso in two = the step is done. Fewer strokes = a better sword.
 //
 // Feel (user 2026-10-21: "fast is not the same as satisfying" -- God of War (2018) / Capcom swords):
 //   the weight comes from CONTRAST and from the target's reaction, not from raw speed:
 //   a visible wind-up that cocks the blade on screen -> a swing that accelerates into the hit ->
 //   a heavy, decelerating follow-through; the body leans into it (camera), the hit freezes for a
-//   moment scaled by power (hit stop), sparks fly off the armor, the cut part is thrown along the
+//   moment scaled by power (hit stop), straw bits fly out of the cut, the cut part is thrown along the
 //   swing; a clean cut in two hangs a beat before the half slides off, in slow motion, with the
 //   "一刀両断" brush stroke slammed onto the screen.
 //
@@ -59,12 +61,12 @@ using namespace DirectX;
 
 namespace
 {
-    // --- assets (ChatGPT-made models 2026-10-21, see CREDITS.txt). Missing files fall back to boxes. ---
+    // --- assets (2026-10-29: Sketchfab CC BY models, prepared in Blender -- see CREDITS.txt). Missing files fall back to boxes. ---
     // Model files without the extension: the first of MODEL_EXTENSIONS that assimp can read is used.
     //   (2026-10-21: assimp could not parse the ChatGPT FBX -- "FBX-Parser ... unexpected data type" --
     //    so an OBJ / glTF export of the same model can simply be dropped next to it.)
-    const char* const DUMMY_MODEL  = "Assets/Model/TestCut/Armored_Straw_Dummy";
-    const char* const HILT_MODEL   = "Assets/Model/TestCut/Medieval_Sword_Hilt";
+    const char* const DUMMY_MODEL  = "Assets/Model/TestCut/medieval-combat-dummy/Medieval_Combat_Dummy";   // "Medieval Combat Dummy" (CaptainHC)
+    const char* const HILT_MODEL   = "Assets/Model/TestCut/Longsword_Hilt";   // the LongSword of "Historical Swords set" (Clint Bellanger)
     const char* const MODEL_EXTENSIONS[] = { ".obj", ".glb", ".gltf", ".fbx" };
     const char* const SEVER_BRUSH  = "Assets/Model/TestCut/Ichitou_Ryoudan.png";   // 「一刀両断」 brush calligraphy
     const char* const HILT_GUARD_MESH = "Guard", * const HILT_GRIP_MESH = "Grip", * const HILT_POMMEL_MESH = "Pommel";
@@ -75,12 +77,14 @@ namespace
     const float CM_DETECT_FACTOR = 10.0f;
     const float CM_TO_M = 0.01f;
 
-    // Base color images of the parts (the models have UVs but no textures).
-    #define COTTAGE_TEX "Assets/Medieval_Blacksmith_Cottage_Production/Medieval_Blacksmith_Cottage_Production/07_Textures/"
-    const char* const WOOD_TEX  = COTTAGE_TEX "Wood_Dark_Aged_BaseColor_2048.png";
-    const char* const IRON_TEX  = COTTAGE_TEX "Iron_Rusted_BaseColor_2048.png";
-    const char* const STRAW_TEX = "Assets/Cottage_Materials/wood_planks_base.jpg";   // tinted toward straw by the material table
-    #undef COTTAGE_TEX
+    // Base color images (the models' own textures, mapped by their UVs).
+    const char* const DUMMY_TEX      = "Assets/Model/TestCut/medieval-combat-dummy/textures/Dummy_BaseColor_compressed.jpg";   // one atlas for all parts
+    const char* const HILT_METAL_TEX = "Assets/Model/TestCut/historical-swords-set/textures/steel_diffuse.png";   // guard + pommel
+    const char* const HILT_GRIP_TEX  = "Assets/Model/TestCut/historical-swords-set/textures/leather_darker.png";  // the grip
+    // The cut faces sample the atlas where it shows the part's inside (uv: image left/top = 0). The scale keeps
+    // a cut face as wide as the torso with its cross-beam (~0.9 m) inside that island of the atlas.
+    const MeshSlicer::CapUv CAP_STRAW = { XMFLOAT2(0.655f, 0.28f), 0.06f };   // the grey hay island (top middle-right), its widest part
+    const MeshSlicer::CapUv CAP_WOOD  = { XMFLOAT2(0.18f,  0.28f), 0.06f };   // the wooden plank island (upper left)
 
     const float PLACE_DISTANCE = 1.6f;    // F4 "Place in front of me": metres ahead of the player
 
@@ -88,31 +92,31 @@ namespace
     // never overlapping (2026-10-20 F5: nested parts made two caps on the same plane = z-fighting),
     // each starting PART_GAP above the last (touching faces would z-fight too).
     const float PART_GAP    = 0.002f;
-    const float POST_TOP    = 0.75f;      // post: ground .. here
-    const float WAIST_TOP   = 1.00f;      // straw body (hips): post .. here
-    const float TORSO_TOP   = 1.52f;      // armored torso: waist .. here
-    const float HELMET_TOP  = 1.80f;      // helmet: torso .. here (= the dummy's height)
+    const float POST_TOP    = 0.553f;     // post + base: ground .. here (the prepared model's heights, 2026-10-29)
+    const float WAIST_TOP   = 0.762f;     // hips: post .. here
+    const float TORSO_TOP   = 1.470f;     // torso: waist .. here
+    const float HEAD_TOP    = 1.800f;     // head: torso .. here (= the dummy's height)
     const float POST_HALF_W = 0.06f;
     const XMFLOAT2 WAIST_HALF(0.20f, 0.14f);
     const XMFLOAT2 TORSO_HALF(0.23f, 0.17f);
-    const float HELMET_HALF_W = 0.13f;
-    // Durability = the damage one part must take before a slash goes through it.
-    //   Balance: damage = move base x grade. Heavy (1.10) x an S-grade sword (>= 0.9) >= 0.95 =
-    //   the armored torso in ONE slash; anything weaker needs two or more. The post and the straw
-    //   are soft (cheap materials), but a slash that cuts only them does not count (see the header).
-    const float POST_DURABILITY   = 0.35f;
-    const float STRAW_DURABILITY  = 0.30f;
-    const float ARMOR_DURABILITY  = 0.95f;
-    const float HELMET_DURABILITY = 0.95f;
+    const float HEAD_HALF_W = 0.13f;
+    // Durability = the damage one notch must gather before a slash goes through (the toughest part it crosses).
+    //   Balance: damage = strength x grade x focus. 1.10 x an S-grade sword (>= 0.9) x a still release >= 0.95 =
+    //   the torso in ONE slash; anything weaker stops inside and needs more slashes IN THE SAME NOTCH.
+    //   The post and the hips are soft, but a slash that cuts only them does not count (see the header).
+    const float POST_DURABILITY  = 0.35f;
+    const float HIPS_DURABILITY  = 0.30f;
+    const float TORSO_DURABILITY = 0.95f;
+    const float HEAD_DURABILITY  = 0.60f;
 
     using Kind = CutTarget::PartKind;
     // Box spanning y0..y1 (with the gap at the bottom).
     CutTarget::PartDef Stacked(const char* mesh, const char* material, const char* image, float y0, float y1,
-                               float halfX, float halfZ, float durability, Kind kind, bool core)
+                               float halfX, float halfZ, float durability, Kind kind, bool core, const MeshSlicer::CapUv& capUv)
     {
         const float b = y0 + PART_GAP;
         return { mesh, material, image, XMFLOAT3(0.0f, (b + y1) * 0.5f, 0.0f), XMFLOAT3(halfX, (y1 - b) * 0.5f, halfZ),
-                 durability, kind, core };
+                 durability, kind, core, capUv };
     }
 
     // --- the strike (seconds). One decisive cut from the guard -- no combo (user 2026-10-22: the theme is
@@ -125,11 +129,23 @@ namespace
     const float SWING_IN_POW       = 1.6f;    // ... ease-in into the hit (fastest at the hit)
     const float SWING_OUT_POW      = 3.0f;    // ... then ease-out: the follow-through drags to a stop (weight)
     const float SWING_BLEND_FRAC   = 0.25f;   // share of the swing spent blending from the start pose into the arc
-    const float RECOIL_SEC         = 0.16f;   // bounced: the blade springs back
-    const float RECOIL_THETA       = XMConvertToRadians(-40.0f);   // ... to this angle of the arc
     const float RECOVER_SEC        = 0.60f;   // back to the low guard (slow = the sword is heavy, and the moment is over)
     const float HITSTOP_CUT_SEC    = 0.09f;   // the blade "catches" as it goes through (hit stop)
-    const float HITSTOP_BOUNCE_SEC = 0.12f;
+    // --- not strong enough: the blade stops INSIDE, quivers, and is pulled back out (2026-10-29, user's design) ---
+    const float HITSTOP_STUCK_SEC  = 0.16f;   // the bite freezes a little longer than a clean cut (it stops dead)
+    const float STUCK_HOLD_SEC     = 0.28f;   // then it stays stuck this long ...
+    const float STUCK_QUIVER_AMP   = 0.006f;  // ... quivering across the cut (m) ...
+    const float STUCK_QUIVER_HZ    = 14.0f;   // ... this fast ...
+    const float STUCK_QUIVER_DECAY = 10.0f;   // ... dying away (1/s, exp)
+    const float PULL_SEC           = 0.30f;   // the pull back out along the swing's path
+    const float PULL_EASE_POW      = 2.0f;    // ease-in: slow while the straw holds the blade, then it comes free
+    const float PULL_CLEAR         = XMConvertToRadians(8.0f);   // pulled this far back past where it went in (clear of the dummy)
+    // --- the blade's push on the dummy (N s, CutTarget::Push -> it sways on its post) ---
+    const float BITE_IMPULSE = 12.0f;   // the blade stops inside: all its momentum (~1.4 kg at ~9 m/s) goes into the dummy
+    const float CUT_IMPULSE  = 4.0f;    // it goes through: only part of it
+    const float PULL_IMPULSE = 5.0f;    // pulled out: the straw drags the dummy toward the player until the blade comes free
+    const float THETA_SEARCH_LIMIT = XMConvertToRadians(80.0f);  // ThetaAtOffset searches the arc within this of the front
+    const int   THETA_BISECT_STEPS = 24;
     const float STRIKE_CONE = XMConvertToRadians(35.0f);   // the dummy counts as "in front" within this angle of the view (the blade sweeps wide)
 
     // --- focus (holding the guard): the aim drifts with the breath ---
@@ -163,7 +179,7 @@ namespace
     // theta < 0 = raised on the side it comes from, 0 = straight at the target (the hit), > 0 = followed
     // through to the other side. The strike: Zornhau ("wrath strike") from the guard over the right
     // shoulder (Vom Tag) diagonally down to the lower left. Search: "Vom Tag longsword", "Zornhau".
-    const float WIND_THETA = XMConvertToRadians(-80.0f);   // the guard: blade up over the right shoulder
+    // The wind-up angle is tunable (m_windDeg, F5): Zornhut, the blade laid back over the right shoulder.
     const float ARC_FWD    = XMConvertToRadians(100.0f);   // follow-through angle
     const float HAND_RADIUS = 0.24f;   // the hand travels a smaller arc than the blade (m)
     const float HAND_FWD    = 0.30f;   // the arc's center is this far ahead of the eye
@@ -172,10 +188,11 @@ namespace
     const float BLADE_ROLL  = XMConvertToRadians(35.0f);   // turn the flat a little toward the camera (else
                                                            // the blade is seen edge-on = a thin stick). Feel > exact edge alignment.
 
-    // --- low guard (walking / not raised; user's sketch 2026-10-22): the sword held low in front,
-    //     pointing forward and a little up to the right ---
-    const float LOW_FWD = 0.42f, LOW_RIGHT = -0.04f, LOW_UP = -0.40f;           // guard (hand)
-    const float LOW_DIR_FWD = 1.0f, LOW_DIR_RIGHT = 0.60f, LOW_DIR_UP = 0.45f;   // blade direction weights
+    // --- held guard (walking / not raised): the pose itself is tunable (m_holdHand / m_holdDir / m_holdRollDeg, F6) ---
+    const float HOLD_BREATH_AMP   = 0.006f;   // m: the hands drift this much with the breath (standing still too)
+    const float HOLD_BREATH_SPEED = 0.70f;    // noise time scale = a slow breath (same as the station camera's)
+    const float HOLD_BREATH_SEED_X = 2.3f, HOLD_BREATH_SEED_Y = 6.9f;   // two independent drifts (any distinct values)
+    const float HOLD_TIP_LAG      = 1.5f;     // the blade's direction turns against the hands' sway by this share (inertia)
     const int   AVOID_STEPS = 6;       // low guard / recover: lift the blade toward upright in this many steps while it would enter the dummy
 
     // --- the body behind the blade (camera) ---
@@ -188,15 +205,15 @@ namespace
 
     // --- camera kick when the blade lands (rad, decays back) ---
     const float KICK_CUT    = 0.06f;   // along the swing (follows through)
-    const float KICK_BOUNCE = 0.06f;   // against the swing (thrown back)
+    const float KICK_STUCK  = 0.04f;   // along the swing, then it stops dead
     const float KICK_LAMBDA = 16.0f;
 
     // --- the cut part is thrown along the swing (x CutTarget::pushSpeed) ---
     const float PUSH_SCALE = 1.8f;
 
-    // --- sparks off the armor ---
-    const int   SPARKS_CUT = 34, SPARKS_BOUNCE = 24;
-    const float SPARK_SPREAD = 0.7f, SPARK_SPEED_MIN = 2.0f, SPARK_SPEED_MAX = 6.5f;
+    // --- straw bits knocked out where the blade goes in (light chaff, Particles::SpawnStraw) ---
+    const int   STRAW_CUT = 60, STRAW_STUCK = 34, STRAW_PULL = 14;
+    const float STRAW_SPREAD = 0.9f, STRAW_SPEED_MIN = 0.6f, STRAW_SPEED_MAX = 2.4f;
 
     // --- weapon trail ---
     const int   TRAIL_SEGMENTS = 24;          // samples along the arc
@@ -209,18 +226,18 @@ namespace
     const float CHARGE_GLINT_SEC = 0.30f, CHARGE_GLINT_SIZE = 0.16f, CHARGE_GLINT_BRIGHT = 3.0f;
     const XMFLOAT4 CHARGE_GLINT_COL(1.0f, 0.95f, 0.85f, 1.0f);
 
-    // --- a slash that missed the armor: a fresh dummy after a moment ---
+    // --- a slash that missed the torso: a fresh dummy after a moment ---
     const float RETRY_DELAY_SEC = 1.6f;
 
     // --- feedback ---
     const float SWING_VOLUME = 0.8f, SWING_PITCH = 0.85f;      // the whoosh (low = heavy)
     const float CUT_VOLUME = 0.7f, CUT_PITCH = 1.1f;            // a thud as it goes through
-    const float CLANG_VOLUME = 0.9f, CLANG_PITCH = 1.35f;       // bounced off metal
-    const float THUD_VOLUME = 0.8f, THUD_PITCH = 1.0f;          // bounced off straw / wood
-    const float CUT_SHAKE = 0.55f, BOUNCE_SHAKE = 0.8f;         // camera shake (m_shake)
+    const float THUD_VOLUME = 0.8f, THUD_PITCH = 1.0f;          // the blade stops in the straw
+    const float PULL_VOLUME = 0.35f, PULL_PITCH = 0.7f;         // pulled out (a short, low swish)
+    const float CUT_SHAKE = 0.55f, STUCK_SHAKE = 0.7f;          // camera shake (m_shake)
     const Rumble RUMBLE_CUT    = { 0.7f, 0.8f, 0.0f, 0.9f };
-    const Rumble RUMBLE_BOUNCE = { 0.9f, 0.4f, 0.0f, 1.0f };
-    const float RUMBLE_CUT_SEC = 0.22f, RUMBLE_BOUNCE_SEC = 0.25f;
+    const Rumble RUMBLE_STUCK  = { 0.9f, 0.4f, 0.0f, 1.0f };
+    const float RUMBLE_CUT_SEC = 0.22f, RUMBLE_STUCK_SEC = 0.25f;
     const unsigned int VOICE_COL = IM_COL32(255, 200, 90, 255);   // the smith's mutter (same color as the other lines)
 
     // --- cut in two: the payoff, by how many strokes it took (data; the first row that fits) ---
@@ -355,11 +372,11 @@ namespace
 
 // The dummy, local space: the foot of the post at the origin, y up, metres. Mesh names = the model's.
 const CutTarget::PartDef SceneForge::CUT_PARTS[] = {
-    //       mesh      material     image      bottom      top         half x         half z         durability         kind          core
-    Stacked("Post",   "CutPost",   WOOD_TEX,  0.0f,       POST_TOP,   POST_HALF_W,   POST_HALF_W,   POST_DURABILITY,   Kind::Stand,  false),   // holds it up
-    Stacked("Straw",  "CutStraw",  STRAW_TEX, POST_TOP,   WAIST_TOP,  WAIST_HALF.x,  WAIST_HALF.y,  STRAW_DURABILITY,  Kind::Filler, false),   // shapes it
-    Stacked("Armor",  "CutArmor",  IRON_TEX,  WAIST_TOP,  TORSO_TOP,  TORSO_HALF.x,  TORSO_HALF.y,  ARMOR_DURABILITY,  Kind::Armor,  true ),   // the torso armor = the goal
-    Stacked("Helmet", "CutHelmet", IRON_TEX,  TORSO_TOP,  HELMET_TOP, HELMET_HALF_W, HELMET_HALF_W, HELMET_DURABILITY, Kind::Armor,  false),   // armor, but not the torso
+    //       mesh     material     image      bottom      top        half x        half z        durability        kind         core   cut face
+    Stacked("Post",  "CutDummy",  DUMMY_TEX, 0.0f,       POST_TOP,  POST_HALF_W,  POST_HALF_W,  POST_DURABILITY,  Kind::Stand, false, CAP_WOOD),    // holds it up
+    Stacked("Hips",  "CutDummy",  DUMMY_TEX, POST_TOP,   WAIST_TOP, WAIST_HALF.x, WAIST_HALF.y, HIPS_DURABILITY,  Kind::Body,  false, CAP_STRAW),   // the hips
+    Stacked("Torso", "CutDummy",  DUMMY_TEX, WAIST_TOP,  TORSO_TOP, TORSO_HALF.x, TORSO_HALF.y, TORSO_DURABILITY, Kind::Body,  true,  CAP_STRAW),   // the torso = the goal
+    Stacked("Head",  "CutDummy",  DUMMY_TEX, TORSO_TOP,  HEAD_TOP,  HEAD_HALF_W,  HEAD_HALF_W,  HEAD_DURABILITY,  Kind::Body,  false, CAP_STRAW),   // the head
 };
 const int SceneForge::NUM_CUT_PARTS = _countof(SceneForge::CUT_PARTS);
 
@@ -373,7 +390,7 @@ void SceneForge::LoadCutModels()
     if (m_cutModelsLoaded) return;
     m_cutModelsLoaded = true;
     m_cutModelParts.assign(NUM_CUT_PARTS, MeshSlicer::Mesh());
-    for (NamedMesh& nm : LoadMeshes(DUMMY_MODEL, HELMET_TOP, m_cutModelError))
+    for (NamedMesh& nm : LoadMeshes(DUMMY_MODEL, HEAD_TOP, m_cutModelError))
         for (int i = 0; i < NUM_CUT_PARTS; ++i)
             if (m_cutModelParts[i].Empty() && ContainsNoCase(nm.name.c_str(), CUT_PARTS[i].meshName))
                 m_cutModelParts[i] = std::move(nm.mesh);
@@ -418,6 +435,8 @@ void SceneForge::ResetTestCut()
     m_cutSeveredHits = 0;
     m_cutLookYaw = m_cutLookPitch = 0.0f;
     m_slashPhase   = SlashPhase::Idle;
+    m_plan         = StrikePlan{};
+    m_stuckTime    = 0.0f;
     m_slashT = m_slashHitstop = 0.0f;
     m_slashStruck  = false;
     m_trailAlpha   = 0.0f;
@@ -565,18 +584,31 @@ float SceneForge::SwordLength()
 //====================================================================
 //  poses (built from the view-model camera axes: the sword follows the view like the tongs)
 //====================================================================
-//--- Low guard (walking, or standing without raising): the sword low in front, pointing forward and a
-//    little up to the right. The flat faces up (the edge sideways) so the blade reads as a blade.
+//--- Held guard (walking, or standing without raising). 2026-10-29 user, after FPS references (Chivalry 2,
+//    Valorant melee): the hilt sits just outside the lower-right corner and the blade rises diagonally
+//    toward the middle of the screen, close to the eye = big on screen, while the crosshair stays clear.
+//    The flat faces the camera (rolled a little) so the blade reads wide, not as a thin stick.
 SceneForge::SwordPose SceneForge::LowGuardPose()
 {
     SwordPose p = m_swordPose;
     XMVECTOR E, F, R, U;
     if (!CameraBasis(E, F, R, U)) return p;
-    const XMVECTOR guard = E + F * LOW_FWD + R * LOW_RIGHT + U * LOW_UP;
-    const XMVECTOR dir = XMVector3Normalize(F * LOW_DIR_FWD + R * LOW_DIR_RIGHT + U * LOW_DIR_UP);
+    // + the weight of the sword in the hand (2026-10-29 user: walking with it felt like nothing was held):
+    //   the step bob (the same view bob as carrying the iron, phase from the distance walked) and the
+    //   slow drift of breathing (the same organic noise as the station camera's hand-held breath).
+    //   The tip lags behind the hand (the blade's inertia), so the blade sways rather than slides.
+    const float bt = m_time * HOLD_BREATH_SPEED;
+    const XMVECTOR breath = (R * OrganicNoise(bt, HOLD_BREATH_SEED_X) + U * OrganicNoise(bt, HOLD_BREATH_SEED_Y)) * HOLD_BREATH_AMP;
+    const XMVECTOR sway = ViewmodelBob(R, U) + breath;
+    const XMVECTOR guard = E + F * m_holdHand.x + R * m_holdHand.y + U * m_holdHand.z + sway;
+    const XMVECTOR dir = XMVector3Normalize(F * m_holdDir.x + R * m_holdDir.y + U * m_holdDir.z - sway * HOLD_TIP_LAG);
+    // edge across the blade, pointing right = the flat faces the camera; then roll it about the blade's axis
+    const XMVECTOR edge0 = Orthonormal(R, dir);
+    const float roll = XMConvertToRadians(m_holdRollDeg);
+    const XMVECTOR edge = edge0 * cosf(roll) + XMVector3Cross(dir, edge0) * sinf(roll);
     XMStoreFloat3(&p.guard, guard);
     XMStoreFloat3(&p.dir, dir);
-    XMStoreFloat3(&p.edge, Orthonormal(XMVector3Cross(U, dir), dir));   // horizontal, across the blade
+    XMStoreFloat3(&p.edge, Orthonormal(edge, dir));
     return p;
 }
 
@@ -585,7 +617,16 @@ SceneForge::SwordPose SceneForge::SwingPose(float theta, XMFLOAT2 s2)
 {
     SwordPose p = m_swordPose;
     XMVECTOR E, F, R, U;
-    if (!CameraBasis(E, F, R, U)) return p;
+    if (m_plan.valid)
+    {
+        // a strike under way: the arc is laid along the line of sight at the release (PlanStrike), so the
+        // blade passes through the planned cut and stops exactly where it was judged to stop
+        E = XMLoadFloat3(&m_plan.eye);
+        F = XMVector3Normalize(XMLoadFloat3(&m_plan.fwd));
+        R = XMVector3Normalize(XMVector3Cross(XMVectorSet(0, 1, 0, 0), F));   // left-handed: up x fwd = right
+        U = XMVector3Cross(F, R);
+    }
+    else if (!CameraBasis(E, F, R, U)) return p;
     const XMVECTOR s = XMVector3Normalize(R * s2.x + U * s2.y);   // the swing direction (world)
     const float c = cosf(theta), sn = sinf(theta);
     const XMVECTOR dir = XMVector3Normalize(F * c + s * sn);        // the blade on the arc
@@ -602,6 +643,23 @@ SceneForge::SwordPose SceneForge::SwingPose(float theta, XMFLOAT2 s2)
     XMStoreFloat3(&p.guard, guard);
     XMStoreFloat3(&p.dir, dir);
     XMStoreFloat3(&p.edge, Orthonormal(edge, dir));
+    return p;
+}
+
+//--- The wind-up (holding the press): Zornhut, the "wrath guard". 2026-10-29 user: raising the blade
+//    upright (Vom Tag) put the grip across the middle of the first-person view; the strong, natural
+//    wind-up (God of War) is hilt forward, blade back: the hands pulled to the front of the right
+//    shoulder, the pommel pointing at the target, the blade laid back over the shoulder.
+//    The blade's angle is a point of the swing arc (m_windDeg), so the swing starts exactly where the
+//    wind-up ends; only the hand is placed by hand (m_windHand) instead of on the arc's circle (that
+//    circle would put the hilt right in front of the eye). The swing blends from this hand position
+//    onto the arc (SWING_BLEND_FRAC). Search: "Zornhut longsword".
+SceneForge::SwordPose SceneForge::WindPose()
+{
+    SwordPose p = SwingPose(XMConvertToRadians(m_windDeg), m_slashDir);
+    XMVECTOR E, F, R, U;
+    if (!CameraBasis(E, F, R, U)) return p;
+    XMStoreFloat3(&p.guard, E + F * m_windHand.x + R * m_windHand.y + U * m_windHand.z);
     return p;
 }
 
@@ -632,14 +690,14 @@ namespace
     float Ease(float t) { t = Clamp01(t); return t * t * (3.0f - 2.0f * t); }   // smoothstep
     // ease-out-back: passes 1 by a little and settles back (a snap). k = how far it overshoots.
     float EaseOutBack(float t, float k) { t = Clamp01(t) - 1.0f; return 1.0f + (k + 1.0f) * t * t * t + k * t * t; }
-    // The swing's angle over its time: accelerate into the hit, then drag to a stop.
-    float SwingTheta(float t)
+    // The swing's angle over its time: accelerate into the hit, then drag to a stop. wind = the wind-up angle (rad).
+    float SwingTheta(float t, float wind)
     {
         t = Clamp01(t);
         if (t < SWING_HIT_FRAC)
         {
             const float u = t / SWING_HIT_FRAC;
-            return WIND_THETA * (1.0f - powf(u, SWING_IN_POW));            // WIND_THETA -> 0, fastest at the hit
+            return wind * (1.0f - powf(u, SWING_IN_POW));                  // wind -> 0, fastest at the hit
         }
         const float u = (t - SWING_HIT_FRAC) / (1.0f - SWING_HIT_FRAC);
         return ARC_FWD * (1.0f - powf(1.0f - u, SWING_OUT_POW));          // 0 -> ARC_FWD, slowing down
@@ -675,14 +733,14 @@ void SceneForge::UpdateTestCutStation(float tick, bool inputOn)
     m_cutFovPunch *= expf(-FOV_LAMBDA * tick);
     m_focusFade = Lerp::Damp(m_focusFade, (m_slashPhase == SlashPhase::Focus) ? 1.0f : 0.0f, FOCUS_FADE_LAMBDA, tick);
 
-    // A strike that missed the armor: stand a fresh dummy up (behind a fade). The strokes keep counting.
+    // A strike that missed the torso: stand a fresh dummy up (behind a fade). The strokes keep counting.
     if (m_cutRetryAt >= 0.0f && m_time >= m_cutRetryAt && !m_fade.IsBusy())
     {
         m_cutRetryAt = -1.0f;
         m_fade.Transition([this] { m_cutNeedsBuild = true; m_cutLookYaw = m_cutLookPitch = 0.0f; });
     }
 
-    if (!SwordInHand()) { m_slashPhase = SlashPhase::Idle; m_trailAlpha = 0.0f; m_cutLean = 0.0f; return; }
+    if (!SwordInHand()) { m_slashPhase = SlashPhase::Idle; m_plan.valid = false; m_trailAlpha = 0.0f; m_cutLean = 0.0f; return; }
     const float dt = tick * TestCutTimeScale();   // the swing slows down with the slow motion too
     if (m_slashPhase != SlashPhase::Swing && m_trailAlpha > 0.0f)
     {
@@ -690,8 +748,10 @@ void SceneForge::UpdateTestCutStation(float tick, bool inputOn)
         m_trailTail  = Lerp::Linear(m_trailHead, m_trailTail, m_trailAlpha);   // the tail catches up with the head as it fades
     }
     // the body: coils back in the guard, commits along the swing, settles otherwise
+    // (stuck: the body stays where it was when the blade stopped)
     const float leanTarget = (m_slashPhase == SlashPhase::Focus) ? -COIL
-                           : (m_slashPhase == SlashPhase::Swing) ? sinf(XM_PI * Clamp01(m_slashT)) : 0.0f;
+                           : (m_slashPhase == SlashPhase::Swing) ? sinf(XM_PI * Clamp01(m_slashT))
+                           : (m_slashPhase == SlashPhase::Stuck) ? m_cutLean : 0.0f;
     m_cutLean = Lerp::Damp(m_cutLean, leanTarget, LEAN_LAMBDA, dt);
 
     const bool canInput = inputOn && SwordAtStation() && !m_cutSevered && !m_clearDecided && m_cutRetryAt < 0.0f;
@@ -702,8 +762,9 @@ void SceneForge::UpdateTestCutStation(float tick, bool inputOn)
     switch (m_slashPhase)
     {
     case SlashPhase::Idle:
-        m_swordPose = LowGuardPose();
-        AvoidDummy(m_swordPose);
+        // F6 open + "show the wind-up": hold the sword in the wind-up pose so it can be tuned (input is frozen there)
+        m_swordPose = (m_swordPanelOpen && m_previewWind) ? WindPose() : LowGuardPose();
+        if (!(m_swordPanelOpen && m_previewWind)) AvoidDummy(m_swordPose);
         if (canInput && InputActions::Pressed(Action::Use))
         {
             m_focusTime = 0.0f;
@@ -714,9 +775,9 @@ void SceneForge::UpdateTestCutStation(float tick, bool inputOn)
 
     case SlashPhase::Focus:
     {
-        // raise to the guard over the shoulder (Vom Tag) with a little snap, then hold it there
+        // wind up into Zornhut (hilt forward, blade back over the shoulder) with a little snap, then hold it there
         m_focusTime += tick;   // real time: the breath does not slow down
-        m_swordPose = LerpPose(m_swordFrom, SwingPose(WIND_THETA, m_slashDir), EaseOutBack(m_focusTime / RAISE_SEC, RAISE_OVERSHOOT));
+        m_swordPose = LerpPose(m_swordFrom, WindPose(), EaseOutBack(m_focusTime / RAISE_SEC, RAISE_OVERSHOOT));
         // the breath: drawn in = restless (1), let out = still (0); tiring arms push it back up
         const float breath = 0.5f + 0.5f * cosf(XM_2PI * m_focusTime / BREATH_SEC);
         const float tire   = Clamp01((m_focusTime - TIRE_START_SEC) / TIRE_RAMP_SEC);
@@ -746,8 +807,9 @@ void SceneForge::UpdateTestCutStation(float tick, bool inputOn)
         ++m_cutStrikes;
         Audio::Play(Audio::SE_SWING, SWING_VOLUME, SWING_PITCH);
         m_trailDir   = m_slashDir;
-        m_trailHead  = m_trailTail = WIND_THETA;
+        m_trailHead  = m_trailTail = XMConvertToRadians(m_windDeg);
         m_trailAlpha = 1.0f;
+        PlanStrike();   // where it will cut and whether it gets through -- decided now, at the release
         BeginSlashPhase(SlashPhase::Swing);
         break;
     }
@@ -755,14 +817,16 @@ void SceneForge::UpdateTestCutStation(float tick, bool inputOn)
     case SlashPhase::Swing:
     {
         m_slashT += dt / SWING_SEC;
-        const float theta = SwingTheta(m_slashT);
+        const float theta = SwingTheta(m_slashT, XMConvertToRadians(m_windDeg));
         m_swordPose = LerpPose(m_swordFrom, SwingPose(theta, m_slashDir), Ease(m_slashT / SWING_BLEND_FRAC));
         m_trailHead = theta;
-        m_trailTail = fmaxf(WIND_THETA, theta - TRAIL_ARC);
-        if (!m_slashStruck && theta >= 0.0f)   // the blade passes straight in front: the hit
+        m_trailTail = fmaxf(XMConvertToRadians(m_windDeg), theta - TRAIL_ARC);
+        // the hit: where the blade stops (not strong enough) or as it passes straight in front (it cuts / a whiff)
+        const bool stops = m_plan.reach && m_plan.judged.hit && m_plan.judged.stuck;
+        if (!m_slashStruck && theta >= (stops ? m_plan.thetaStop : 0.0f))
         {
             m_slashStruck = true;
-            StrikeAtCrosshair();                       // may switch to Recoil (bounced)
+            ApplyStrike();                             // may switch to Stuck
             m_focusAim = XMFLOAT2(0, 0);               // the aim was spent on this strike
             if (m_slashPhase != SlashPhase::Swing) break;
         }
@@ -771,12 +835,35 @@ void SceneForge::UpdateTestCutStation(float tick, bool inputOn)
         break;
     }
 
-    case SlashPhase::Recoil:
-        m_slashT += dt / RECOIL_SEC;
-        m_swordPose = LerpPose(m_swordFrom, SwingPose(RECOIL_THETA, m_slashDir), Ease(m_slashT));
+    case SlashPhase::Stuck:
+    {
+        // the blade sits in the straw and quivers across the cut, dying away (the world holds it, not the view)
+        m_stuckTime += dt;
+        const float q = STUCK_QUIVER_AMP * expf(-STUCK_QUIVER_DECAY * m_stuckTime) * sinf(XM_2PI * STUCK_QUIVER_HZ * m_stuckTime);
+        m_swordPose = FollowDummy(m_stuckPose, 1.0f);   // the blade is held by the straw: it moves with the swaying dummy
+        const XMFLOAT3& n = m_plan.aim.normal;
+        m_swordPose.guard = XMFLOAT3(m_swordPose.guard.x + n.x * q, m_swordPose.guard.y + n.y * q, m_swordPose.guard.z + n.z * q);
+        if (m_stuckTime < STUCK_HOLD_SEC) break;
+        // pull it back out along the way it came in
+        Audio::Play(Audio::SE_SWING, PULL_VOLUME, PULL_PITCH);
+        m_cutTarget.Push(XMFLOAT3(-m_plan.fwd.x * PULL_IMPULSE, -m_plan.fwd.y * PULL_IMPULSE, -m_plan.fwd.z * PULL_IMPULSE), m_plan.judged.entry);
+        m_particles.SpawnStraw(m_plan.judged.entry, XMFLOAT3(-m_plan.fwd.x, -m_plan.fwd.y, -m_plan.fwd.z), STRAW_SPREAD, STRAW_PULL,
+                               STRAW_SPEED_MIN, STRAW_SPEED_MAX, m_walkFloorY);
+        BeginSlashPhase(SlashPhase::PullOut);
+        break;
+    }
+
+    case SlashPhase::PullOut:
+    {
+        // back along the arc to just outside where it went in: slow while the straw grips, then free
+        m_slashT += dt / PULL_SEC;
+        const float u = powf(Clamp01(m_slashT), PULL_EASE_POW);
+        // still in the straw at first (moves with the dummy), free of it at the end
+        m_swordPose = FollowDummy(SwingPose(Lerp::Linear(m_plan.thetaStop, m_plan.thetaEntry - PULL_CLEAR, u), m_slashDir), 1.0f - u);
         if (m_slashT < 1.0f) break;
         BeginSlashPhase(SlashPhase::Recover);
         break;
+    }
 
     case SlashPhase::Recover:
     {
@@ -785,29 +872,35 @@ void SceneForge::UpdateTestCutStation(float tick, bool inputOn)
         SwordPose low = LowGuardPose();
         AvoidDummy(low);
         m_swordPose = LerpPose(m_swordFrom, low, Ease(m_slashT));
-        if (m_slashT >= 1.0f) m_slashPhase = SlashPhase::Idle;
+        if (m_slashT >= 1.0f) { m_slashPhase = SlashPhase::Idle; m_plan.valid = false; }   // the strike is over: the sword follows the view again
         break;
     }
     }
 }
 
-//--- The blade passes straight in front: cut along the crosshair with a plane that contains the line
-//    of sight and the swing direction (so the cut runs through the crosshair, along the swing).
-void SceneForge::StrikeAtCrosshair()
+//--- The release: plan the strike along the crosshair -- a plane that contains the line of sight and
+//    the swing direction (so the cut runs through the crosshair, along the swing), the strength, and
+//    what it will do (CutTarget::Judge: cut through, or stop inside at which depth). The swing arc is then
+//    laid along THIS line of sight, so the blade really passes where it was aimed (2026-10-29: needed now
+//    that the blade must stop exactly in its notch, and a second slash must find the same notch).
+void SceneForge::PlanStrike()
 {
+    m_plan = StrikePlan{};
     CameraBase* cam = GetObj<CameraBase>("Camera");
     if (!cam) return;
     const XMFLOAT3 eye = cam->GetPos(), look = cam->GetLook();
     const XMVECTOR F = XMVector3Normalize(XMVectorSubtract(XMLoadFloat3(&look), XMLoadFloat3(&eye)));
     const XMVECTOR R = XMVector3Normalize(XMVector3Cross(XMVectorSet(0, 1, 0, 0), F));   // left-handed: up x fwd = right
     const XMVECTOR U = XMVector3Cross(F, R);
-    XMFLOAT3 fwd; XMStoreFloat3(&fwd, F);
+    m_plan.valid = true;
+    m_plan.eye = eye;
+    XMStoreFloat3(&m_plan.fwd, F);
     // Did the swing reach the dummy? The blade sweeps a long arc, not a thin line: the crosshair ray
     // hitting the dummy counts, and so does the dummy being within reach and roughly in front
     // (inside STRIKE_CONE of the view). 2026-10-22 F5: judging by the thin ray alone, a swing that
     // visibly went through the dummy missed when the crosshair was just beside it.
     float t = 0.0f;
-    if (!m_cutTarget.RayHit(eye, fwd, t) || t > m_cutReach)
+    if (!m_cutTarget.RayHit(eye, m_plan.fwd, t) || t > m_cutReach)
     {
         XMFLOAT3 mn, mx;
         if (!m_cutTarget.WorldBox(mn, mx)) return;
@@ -818,34 +911,85 @@ void SceneForge::StrikeAtCrosshair()
         if (along <= 0.0f || dist > m_cutReach || along < dist * cosf(STRIKE_CONE)) return;   // a whiff: nothing in reach
         t = along;   // the point straight ahead at the dummy's depth (it lies on the cut plane)
     }
+    m_plan.reach = true;
 
     const XMVECTOR s = R * m_slashDir.x + U * m_slashDir.y;
-    XMFLOAT3 hit, n, sw;
-    XMStoreFloat3(&hit, XMLoadFloat3(&eye) + F * t);
-    XMStoreFloat3(&n, XMVector3Normalize(XMVector3Cross(F, s)));
-    XMStoreFloat3(&sw, s);
-    // strength = the move x how well the sword was made (the whole-forge grade)
+    CutTarget::Aim& aim = m_plan.aim;
+    XMStoreFloat3(&aim.point, XMLoadFloat3(&eye) + F * t);
+    XMStoreFloat3(&aim.normal, XMVector3Normalize(XMVector3Cross(F, s)));
+    XMStoreFloat3(&aim.swingDir, s);
+    aim.eye = eye;
+    aim.viewDir = m_plan.fwd;
+    // strength = the move x how well the sword was made (the whole-forge grade) x how still the release was
     const float quality = fmaxf(GradeScore(), CUT_MIN_QUALITY);
     const float focus   = Lerp::Linear(FOCUS_POWER_MIN, 1.0f, m_focusQuality);   // a still release cuts deeper
-    const float damage  = m_cutStrikeDamage * quality * focus;
+    m_plan.damage = m_cutStrikeDamage * quality * focus;
+    m_plan.judged = m_cutTarget.Judge(aim, m_plan.damage);
+    if (!m_plan.judged.hit) return;
+    // where on the arc the blade comes in and (if it is not enough) where it stops; never inside the
+    // part of the swing that still blends out of the wind-up (the blade is not on the arc there yet)
+    const float onArc = SwingTheta(SWING_BLEND_FRAC, XMConvertToRadians(m_windDeg));
+    m_plan.thetaEntry = fmaxf(ThetaAtOffset(m_plan.judged.entryOffset, m_plan.judged.depthAlongView), onArc);
+    m_plan.thetaStop  = fmaxf(ThetaAtOffset(m_plan.judged.stopOffset,  m_plan.judged.depthAlongView), onArc);
+}
+
+//--- A pose carried along with the dummy's sway since the blade stopped in it (weight 1 = fully, 0 = not at all).
+//    The blade is held by the straw, so it rocks with the dummy instead of hanging still in the air.
+SceneForge::SwordPose SceneForge::FollowDummy(const SwordPose& p, float weight)
+{
+    if (weight <= 0.0f) return p;
+    const XMMATRIX delta = XMMatrixInverse(nullptr, XMLoadFloat4x4(&m_stuckDummyWorld)) * m_cutTarget.World();
+    SwordPose moved;
+    XMStoreFloat3(&moved.guard, XMVector3TransformCoord(XMLoadFloat3(&p.guard), delta));
+    XMStoreFloat3(&moved.dir,   XMVector3Normalize(XMVector3TransformNormal(XMLoadFloat3(&p.dir), delta)));
+    XMStoreFloat3(&moved.edge,  XMVector3Normalize(XMVector3TransformNormal(XMLoadFloat3(&p.edge), delta)));
+    return (weight >= 1.0f) ? moved : LerpPose(p, moved, weight);
+}
+
+//--- The swing angle at which the blade, at 'depth' (m) from the eye along the line of sight, is 'offset'
+//    (m) along the swing from it. The arc is monotonic there (the blade sweeps one way), so bisection.
+float SceneForge::ThetaAtOffset(float offset, float depth)
+{
+    const XMVECTOR E = XMLoadFloat3(&m_plan.eye), F = XMLoadFloat3(&m_plan.fwd), s = XMLoadFloat3(&m_plan.aim.swingDir);
+    const float SMALL = 1e-4f;
+    auto offsetAt = [&](float theta)
+    {
+        const SwordPose p = SwingPose(theta, m_slashDir);
+        const XMVECTOR g = XMLoadFloat3(&p.guard), d = XMLoadFloat3(&p.dir);
+        const float dF = fmaxf(XMVectorGetX(XMVector3Dot(d, F)), SMALL);
+        const float k  = (depth - XMVectorGetX(XMVector3Dot(XMVectorSubtract(g, E), F))) / dF;   // along the blade to that depth
+        return XMVectorGetX(XMVector3Dot(XMVectorSubtract(XMVectorAdd(g, XMVectorScale(d, k)), E), s));
+    };
+    float lo = -THETA_SEARCH_LIMIT, hi = THETA_SEARCH_LIMIT;
+    for (int i = 0; i < THETA_BISECT_STEPS; ++i)
+    {
+        const float mid = 0.5f * (lo + hi);
+        if (offsetAt(mid) < offset) lo = mid; else hi = mid;
+    }
+    return 0.5f * (lo + hi);
+}
+
+//--- The blade arrives (it stops in the notch, or passes straight in front): do what was planned.
+void SceneForge::ApplyStrike()
+{
+    if (!m_plan.reach) return;                   // nothing in reach: a whiff
     const SeverTier& tier = TierFor(m_cutHits + 1);   // what a clean cut in two would look like on this stroke
-    const CutTarget::StrikeResult r = m_cutTarget.Strike(hit, n, sw, damage, PUSH_SCALE, tier.holdSec);
+    const CutTarget::StrikeResult r = m_cutTarget.Strike(m_plan.aim, m_plan.damage, PUSH_SCALE, tier.holdSec);
     if (!r.hit) return;                          // the plane passed beside the dummy: a whiff
     ++m_cutHits;                                 // a stroke that touched the dummy
-
-    if (r.armorHit)   // sparks fly off the armor whether it gives or not
-        m_particles.SpawnSparksDir(hit, sw, SPARK_SPREAD, r.cut ? SPARKS_CUT : SPARKS_BOUNCE,
-                                   SPARK_SPEED_MIN, SPARK_SPEED_MAX);
+    const XMFLOAT3& sw = m_plan.aim.swingDir;
+    const XMFLOAT3 back(-m_plan.fwd.x, -m_plan.fwd.y, -m_plan.fwd.z);   // out of the cut, toward the player
 
     if (r.cut)
     {
         m_slashHitstop = HITSTOP_CUT_SEC;
         m_shake = fmaxf(m_shake, CUT_SHAKE);
-        const float kick = KICK_CUT;
-        m_cutKick = XMFLOAT2(m_slashDir.x * kick, m_slashDir.y * kick);   // the view follows the blade through
+        m_cutKick = XMFLOAT2(m_slashDir.x * KICK_CUT, m_slashDir.y * KICK_CUT);   // the view follows the blade through
         m_cutFovPunch = fmaxf(m_cutFovPunch, FOV_PUNCH_CUT);
         Haptics::Pulse(RUMBLE_CUT, RUMBLE_CUT_SEC);
-        Audio::PlayAt(Audio::SE_COLD, hit, CUT_VOLUME, CUT_PITCH);
+        Audio::PlayAt(Audio::SE_COLD, m_plan.aim.point, CUT_VOLUME, CUT_PITCH);
+        m_particles.SpawnStraw(m_plan.aim.point, sw, STRAW_SPREAD, STRAW_CUT, STRAW_SPEED_MIN, STRAW_SPEED_MAX, m_walkFloorY);
+        m_cutTarget.Push(XMFLOAT3(sw.x * CUT_IMPULSE, sw.y * CUT_IMPULSE, sw.z * CUT_IMPULSE), m_plan.aim.point);   // the stump rocks
         if (r.severed && !m_cutSevered)
         {
             // cut in two: the payoff, by how many strokes it took
@@ -864,31 +1008,30 @@ void SceneForge::StrikeAtCrosshair()
     }
     else
     {
-        // stopped: the blade bounces back
-        const CutTarget::PartDef& part = m_cutTarget.Part(r.stoppedBy);
-        const bool metal = (part.kind == CutTarget::PartKind::Armor);
-        m_slashHitstop = HITSTOP_BOUNCE_SEC;
-        m_shake = fmaxf(m_shake, BOUNCE_SHAKE);
-        m_cutKick = XMFLOAT2(-m_slashDir.x * KICK_BOUNCE, -m_slashDir.y * KICK_BOUNCE);  // thrown back against the swing
-        Haptics::Pulse(RUMBLE_BOUNCE, RUMBLE_BOUNCE_SEC);
-        if (metal) Audio::PlayAt(Audio::SE_ANVIL1, hit, CLANG_VOLUME, CLANG_PITCH);
-        else       Audio::PlayAt(Audio::SE_COLD,   hit, THUD_VOLUME,  THUD_PITCH);
-        m_trailHead = 0.0f;                          // the streak stops where the blade did
-        BeginSlashPhase(SlashPhase::Recoil);
-        if (metal && m_focusQuality < STILL_RELEASE) NoteLessonMistake(LessonId::Slash);   // bounced off the armor after a restless release -> remind how to focus
-        // The tempering shows on metal (decided 2026-10-20): too hard -> the edge chips, too soft -> it rolls.
-        //   Well tempered: nothing to say.
-        if (metal)
-        {
-            const float temper = TemperAvg();
-            if (temper < TEMPER_IDEAL_MIN)      Say((const char*)u8"刃が欠けた…硬すぎて脆い", VOICE_COL);
-            else if (temper > TEMPER_IDEAL_MAX) Say((const char*)u8"刃がまくれた…柔らかすぎる", VOICE_COL);
-        }
+        // not strong enough: the blade bites in and stops dead in the notch (it will be pulled out)
+        m_slashHitstop = HITSTOP_STUCK_SEC;
+        m_shake = fmaxf(m_shake, STUCK_SHAKE);
+        m_cutKick = XMFLOAT2(m_slashDir.x * KICK_STUCK, m_slashDir.y * KICK_STUCK);
+        Haptics::Pulse(RUMBLE_STUCK, RUMBLE_STUCK_SEC);
+        Audio::PlayAt(Audio::SE_COLD, r.stop, THUD_VOLUME, THUD_PITCH);
+        m_particles.SpawnStraw(r.stop, back, STRAW_SPREAD, STRAW_STUCK, STRAW_SPEED_MIN, STRAW_SPEED_MAX, m_walkFloorY);
+        m_trailHead  = m_plan.thetaStop;             // the streak stops where the blade did
+        m_stuckPose  = m_swordPose;
+        XMStoreFloat4x4(&m_stuckDummyWorld, m_cutTarget.World());   // where the dummy stood when the blade stopped (FollowDummy)
+        m_cutTarget.Push(XMFLOAT3(sw.x * BITE_IMPULSE, sw.y * BITE_IMPULSE, sw.z * BITE_IMPULSE), r.stop);
+        m_stuckTime  = 0.0f;
+        BeginSlashPhase(SlashPhase::Stuck);
+        if (m_focusQuality < STILL_RELEASE) NoteLessonMistake(LessonId::Slash);   // stopped after a restless release -> remind how to focus
+        // The tempering shows in the edge (decided 2026-10-20 for the armor; kept for the stuck blade 2026-10-29):
+        //   too hard -> it chips, too soft -> it rolls. Well tempered: nothing to say.
+        const float temper = TemperAvg();
+        if (temper < TEMPER_IDEAL_MIN)      Say((const char*)u8"刃が欠けた…硬すぎて脆い", VOICE_COL);
+        else if (temper > TEMPER_IDEAL_MAX) Say((const char*)u8"刃がまくれた…柔らかすぎる", VOICE_COL);
     }
 
-    // Missed the armor (only the post / straw): it counts as a stroke, but it does not test the sword.
+    // Missed the torso (only the post / hips / head): it counts as a stroke, but it does not test the sword.
     //   A fresh dummy is stood up after a moment.
-    if (!r.armorHit && !m_cutSevered)
+    if (!r.coreHit && !m_cutSevered)
     {
         m_cutRetryAt = m_time + RETRY_DELAY_SEC;
         Say((const char*)u8"胴を狙え", VOICE_COL);
@@ -1119,12 +1262,14 @@ void SceneForge::DrawTestCut()
     (&grip.x)[la] = (sign > 0) ? (&m_wpFinMin.x)[la] : (&m_wpFinMax.x)[la];
     auto axis = [](int a) { return XMVectorSet(a == 0 ? 1.0f : 0.0f, a == 1 ? 1.0f : 0.0f, a == 2 ? 1.0f : 0.0f, 0.0f); };
     const XMMATRIX W = WeaponWorld();
-    const XMVECTOR o = XMVector3TransformCoord(XMLoadFloat3(&grip), W);
     const XMVECTOR d = XMVector3Normalize(XMVector3TransformNormal(XMVectorScale(axis(la), (float)sign), W));
+    // seated a little up the blade: the guard covers the blade's root (2026-10-29 user: the blade met
+    // the guard at a single point; real hilts sit over the tang and the shoulders of the blade)
+    const XMVECTOR o = XMVector3TransformCoord(XMLoadFloat3(&grip), W) + d * m_hiltSeat;
     const XMVECTOR e = Orthonormal(XMVector3TransformNormal(axis(wa), W), d);
     const XMVECTOR t = XMVector3Cross(e, d);
     const XMMATRIX hilt(e, d, t, XMVectorSetW(o, 1.0f));
-    std::shared_ptr<Texture> iron = TextureCache::Get(IRON_TEX), wood = TextureCache::Get(WOOD_TEX);
+    std::shared_ptr<Texture> iron = TextureCache::Get(HILT_METAL_TEX), wood = TextureCache::Get(HILT_GRIP_TEX);
     LitRender::DrawMesh(m_hiltMetal.get(), iron.get(), hilt, cam, PropMaterials::Find(HILT_METAL_KEY));
     LitRender::DrawMesh(m_hiltGrip.get(),  wood.get(), hilt, cam, PropMaterials::Find(HILT_GRIP_KEY));
 }

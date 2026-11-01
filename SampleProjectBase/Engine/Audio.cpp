@@ -628,7 +628,8 @@ namespace Audio
 			"Assets/Sound/SE/seg_done.wav",	// SE_SEG_DONE(研ぎの区域が仕上がった。無ければ合成音)
 			"Assets/Sound/SE/bellows_pump.wav",	// SE_BELLOWS_PUMP(ふいごを1回踏んだ。無ければ合成音)
 			"Assets/Sound/BGM/title_bgm.wav",	// BGM_TITLE(工場環境音。無ければ無音)
-			"Assets/Sound/BGM/play_bgm.wav",	// BGM_PLAY(medieval。無ければ無音)
+			"Assets/Sound/BGM/Crusade_Kevin_MacLeod.wav",		// BGM_PLAY(Kevin MacLeod, CC BY 4.0。無ければ無音)
+			"Assets/Sound/BGM/Five_Armies_Kevin_MacLeod.wav",	// BGM_PLAY_2(Kevin MacLeod, CC BY 4.0。無ければ無音)
 			"Assets/Sound/BGM/result_bgm.wav",	// BGM_RESULT(無ければ無音)
 		};
 		for (int i = 0; i < SE_MAX; ++i)

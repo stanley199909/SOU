@@ -62,6 +62,12 @@ public:
     void SpawnSplash(const DirectX::XMFLOAT3& a, const DirectX::XMFLOAT3& b, int count,
                      float speed, float surfaceY);
 
+    // Straw bits knocked out of a test-cut dummy (the blade bit in): light chaff thrown in a cone,
+    // slowed hard by the air (it flutters down rather than flies), gone when it reaches floorY.
+    // Not glowing (drawn with the steam: plain alpha billboards, SceneForge::DrawSteam).
+    void SpawnStraw(const DirectX::XMFLOAT3& origin, const DirectX::XMFLOAT3& dir, float spread,
+                    int count, float speedMin, float speedMax, float floorY);
+
     // Advance all pools: sparks (gravity + ground bounce), embers (buoyancy + drift + fade),
     // steam (buoyancy + air drag + growth). `time` drives the embers' sideways shimmer.
     void Update(float dt, float time);
@@ -73,12 +79,14 @@ public:
     const std::vector<Particle>& Embers() const { return m_embers; }
     const std::vector<Particle>& Steam()  const { return m_steam; }
     const std::vector<Particle>& Splash() const { return m_splash; }
+    const std::vector<Particle>& Straw()  const { return m_straw; }
 
     static const int MAX_SPARKS = 3000;
     static const int MAX_BURN   = 600;
     static const int MAX_EMBERS = 500;
     static const int MAX_STEAM  = 800;
     static const int MAX_SPLASH = 400;
+    static const int MAX_STRAW  = 400;
 
     // Tunable physics constants. Defaults reproduce the original hardcoded behaviour,
     // so callers that ignore this (the game) are unchanged; the Particle Lab scene edits
@@ -130,6 +138,11 @@ public:
         float splashUpMin    = 0.5f, splashUpMax = 1.0f;   // upward speed (x the caller's speed)
         float splashSide     = 0.35f;      // sideways speed (x the caller's speed)
         float splashGravity  = 9.8f;
+        // -- straw bits (SpawnStraw / Update) --
+        float strawLifeMin  = 0.8f, strawLifeMax = 1.6f;
+        float strawSizeMin  = 0.008f, strawSizeMax = 0.020f;
+        float strawGravity  = 4.0f;      // chaff is light: falls slower than a stone
+        float strawDrag     = 3.5f;      // 1/s: the air stops it quickly (frame-rate independent exp decay)
     };
     Tune tune;
 
@@ -143,6 +156,8 @@ private:
     std::vector<Particle> m_burnBranches; // scratch: branches born this frame (kept to reuse its memory)
     std::vector<Particle> m_splash;
     float m_splashSurfaceY = 0.0f; // droplets below this (falling) have landed back in the water
+    std::vector<Particle> m_straw;
+    float m_strawFloorY = 0.0f;   // straw bits below this have landed (gone)
     float m_emberSpawn = 0.0f; // fractional ember count carried to the next frame
     float m_steamSpawn = 0.0f; // fractional steam count carried to the next frame
 };

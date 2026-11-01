@@ -1,0 +1,264 @@
+{
+  "objects": {
+    "Post": {
+      "vertices": 1826,
+      "triangles": 3732,
+      "boundary_edges": 0,
+      "non_manifold_edges": 0,
+      "inconsistent_edges": 0,
+      "dimensions_m": [
+        0.5646539926528931,
+        0.5525180101394653,
+        0.5649210214614868
+      ],
+      "minimum": [
+        -0.2823379933834076,
+        0.0,
+        -0.28250300884246826
+      ],
+      "maximum": [
+        0.2823159992694855,
+        0.5525180101394653,
+        0.28241801261901855
+      ],
+      "volume": 0.054702846806890436,
+      "exported_uv_and_normal_indices_present": true
+    },
+    "Torso": {
+      "vertices": 1344,
+      "triangles": 2680,
+      "boundary_edges": 0,
+      "non_manifold_edges": 0,
+      "inconsistent_edges": 0,
+      "dimensions_m": [
+        0.9124350249767303,
+        0.7057589888572693,
+        0.3829070031642914
+      ],
+      "minimum": [
+        -0.4562320113182068,
+        0.764378011226654,
+        -0.2016260027885437
+      ],
+      "maximum": [
+        0.45620301365852356,
+        1.4701370000839233,
+        0.18128100037574768
+      ],
+      "volume": 0.08981120653699372,
+      "exported_uv_and_normal_indices_present": true
+    },
+    "Head": {
+      "vertices": 143,
+      "triangles": 282,
+      "boundary_edges": 0,
+      "non_manifold_edges": 0,
+      "inconsistent_edges": 0,
+      "dimensions_m": [
+        0.27685000002384186,
+        0.3278629779815674,
+        0.23396199941635132
+      ],
+      "minimum": [
+        -0.13843999803066254,
+        1.4721369743347168,
+        -0.11702600121498108
+      ],
+      "maximum": [
+        0.13841000199317932,
+        1.7999999523162842,
+        0.11693599820137024
+      ],
+      "volume": 0.01301945973022627,
+      "exported_uv_and_normal_indices_present": true
+    },
+    "Hips": {
+      "vertices": 651,
+      "triangles": 1306,
+      "boundary_edges": 0,
+      "non_manifold_edges": 0,
+      "inconsistent_edges": 0,
+      "dimensions_m": [
+        0.405129998922348,
+        0.20785999298095703,
+        0.2924260050058365
+      ],
+      "minimum": [
+        -0.20500800013542175,
+        0.5545179843902588,
+        -0.14711099863052368
+      ],
+      "maximum": [
+        0.20012199878692627,
+        0.7623779773712158,
+        0.1453150063753128
+      ],
+      "volume": 0.0122854584483942,
+      "exported_uv_and_normal_indices_present": true
+    },
+    "Grip": {
+      "vertices": 176,
+      "triangles": 348,
+      "boundary_edges": 0,
+      "non_manifold_edges": 0,
+      "inconsistent_edges": 0,
+      "dimensions_m": [
+        0.04505600035190582,
+        0.2525300122797489,
+        0.0274020005017519
+      ],
+      "minimum": [
+        -0.02252800017595291,
+        -0.2731130123138428,
+        -0.01370100025087595
+      ],
+      "maximum": [
+        0.02252800017595291,
+        -0.020583000034093857,
+        0.01370100025087595
+      ],
+      "volume": 0.00018548550763854905,
+      "exported_uv_and_normal_indices_present": true
+    },
+    "Pommel": {
+      "vertices": 282,
+      "triangles": 560,
+      "boundary_edges": 0,
+      "non_manifold_edges": 0,
+      "inconsistent_edges": 0,
+      "dimensions_m": [
+        0.05874999985098839,
+        0.05875101685523987,
+        0.020961999893188477
+      ],
+      "minimum": [
+        -0.029374999925494194,
+        -0.326539009809494,
+        -0.010480999946594238
+      ],
+      "maximum": [
+        0.029374999925494194,
+        -0.26778799295425415,
+        0.010480999946594238
+      ],
+      "volume": 4.2662657983369795e-05,
+      "exported_uv_and_normal_indices_present": true
+    },
+    "Guard": {
+      "vertices": 80,
+      "triangles": 156,
+      "boundary_edges": 0,
+      "non_manifold_edges": 0,
+      "inconsistent_edges": 0,
+      "dimensions_m": [
+        0.2508639991283417,
+        0.02094700001180172,
+        0.021784000098705292
+      ],
+      "minimum": [
+        -0.12543199956417084,
+        -0.02094700001180172,
+        -0.010892000049352646
+      ],
+      "maximum": [
+        0.12543199956417084,
+        0.0,
+        0.010892000049352646
+      ],
+      "volume": 4.197153624385833e-05,
+      "exported_uv_and_normal_indices_present": true
+    },
+    "Medieval_Sword_Blade": {
+      "vertices": 141,
+      "triangles": 278,
+      "boundary_edges": 0,
+      "non_manifold_edges": 0,
+      "inconsistent_edges": 0,
+      "dimensions_m": [
+        0.0495540015399456,
+        0.8935940265655518,
+        0.0062939999625086784
+      ],
+      "minimum": [
+        -0.0247770007699728,
+        0.0,
+        -0.0031469999812543392
+      ],
+      "maximum": [
+        0.0247770007699728,
+        0.8935940265655518,
+        0.0031469999812543392
+      ],
+      "volume": 0.00019308570179907096,
+      "exported_uv_and_normal_indices_present": true
+    },
+    "stage_0": {
+      "vertices": 141,
+      "triangles": 278,
+      "boundary_edges": 0,
+      "non_manifold_edges": 0,
+      "inconsistent_edges": 0,
+      "dimensions_m": [
+        0.027254000306129456,
+        0.8042349815368652,
+        0.027254000306129456
+      ],
+      "minimum": [
+        -0.013627000153064728,
+        0.044679999351501465,
+        -0.013627000153064728
+      ],
+      "maximum": [
+        0.013627000153064728,
+        0.8489149808883667,
+        0.013627000153064728
+      ],
+      "volume": 0.00035098629227968127,
+      "exported_uv_and_normal_indices_present": true
+    }
+  },
+  "notes": [
+    "Source image unavailable: //..\\..\\materials\\reflection\\cloudy_mountains.jpg",
+    "Sword mesh local +Y points to tip; object +90deg X rotation compensates default OBJ axes. Exported sword +Y points to tip, root at Y=0.",
+    "Original sword.blend and old OBJ/MTL/FBX outputs are copied to old_chatgpt_blade; originals preserved. Downloaded source blends unchanged.",
+    "Original UV layers retained; Post was decimated to meet 8000 triangles, interpolating affected UVs. New cap faces need artistic texture review.",
+    "Non-planar base metal straps closed with inward 1 mm thickness. Sleeve rims flattened by <0.2 mm; tiny boolean slivers repaired. Exact Union used for every group."
+  ],
+  "dummy_source_group_counts": {
+    "Post": 47,
+    "Hips": 3,
+    "Torso": 7,
+    "Head": 1
+  },
+  "dummy": {
+    "triangles": 8000,
+    "exported_y_ranges": {
+      "Post": [
+        0.0,
+        0.5525180101394653
+      ],
+      "Hips": [
+        0.5545179843902588,
+        0.7623779773712158
+      ],
+      "Torso": [
+        0.764378011226654,
+        1.4701370000839233
+      ],
+      "Head": [
+        1.4721369743347168,
+        1.7999999523162842
+      ]
+    },
+    "gaps_m": [
+      0.001999974250793457,
+      0.0020000338554382324,
+      0.001999974250793457
+    ]
+  },
+  "stages": {
+    "final_vertices": 141,
+    "rough_vertices": 141,
+    "identical_face_indices": true
+  }
+}

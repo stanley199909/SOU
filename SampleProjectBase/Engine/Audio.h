@@ -32,7 +32,8 @@ namespace Audio
 		SE_BELLOWS_PUMP,	// ふいごを1回踏んだ「フッ」(押す毎に1回。炉火の唸りの上に乗る)。Assets/Sound/SE/bellows_pump.wav があればそれ、無ければ合成音
 		// ※BGM_* は必ず最後にまとめる(IsBgm が BGM_TITLE..BGM_RESULT の範囲で判定する)
 		BGM_TITLE,	// タイトル画面BGM(TITLE状態でループ)
-		BGM_PLAY,	// ゲーム中BGM(PLAY状態でループ)
+		BGM_PLAY,	// ゲーム中BGM その1(PLAY状態でループ)。2026-10-29: Kevin MacLeod "Crusade"
+		BGM_PLAY_2,	// ゲーム中BGM その2。Kevin MacLeod "Five Armies"。遊ぶ毎にその1とランダムに選ぶ(SceneForge::FinishIntro)
 		BGM_RESULT,	// 結果画面BGM(RESULT状態でループ)
 		SE_MAX
 	};

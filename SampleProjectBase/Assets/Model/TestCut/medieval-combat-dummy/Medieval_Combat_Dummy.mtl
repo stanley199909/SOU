@@ -1,0 +1,14 @@
+# Blender 5.1.0 Beta MTL File: 'Dummy_prepared.blend'
+# www.blender.org
+
+newmtl dummy
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Kd textures/Dummy_BaseColor_compressed.jpg
+map_Ns textures/Dummy_Roughness_compressed.jpg
+map_refl textures/Dummy_Metallic_compressed.jpg
+map_Bump -bm 1.000000 textures/Dummy_Normal_compressed.jpg

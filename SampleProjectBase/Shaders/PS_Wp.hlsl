@@ -28,12 +28,10 @@ cbuffer WpParam : register(b0)
     float4   scale2;     // x already fallen off at progress 0, y draw reflection (debug), z draw glow (debug), w has normal map
     float4   temperKey[8];   // tempering color table from the CPU (SceneForge::TEMPER_COLOR_TABLE): xyz color, w position
     float4   temperFilm;     // x position where the oxide film counts as fully formed
-    float4   jag;            // edge chipping before grinding: x depth (fraction of the half width, 0 = off), y teeth per length cell
-    float4   jagCell[5];     // chipping left per length cell 0..1 (= 1 - mean grind progress of both bevels), 4 cells per float4
 };
 #include "SunShadow.hlsli"
 #include "Lighting.hlsli"
-struct PIN { float4 pos:SV_POSITION; float3 nrm:TEXCOORD0; float2 uv:TEXCOORD3; float4 col:TEXCOORD1; float3 wp:TEXCOORD2; float work:TEXCOORD5; float temper:TEXCOORD6; float2 edge:TEXCOORD7; };
+struct PIN { float4 pos:SV_POSITION; float3 nrm:TEXCOORD0; float2 uv:TEXCOORD3; float4 col:TEXCOORD1; float3 wp:TEXCOORD2; float work:TEXCOORD5; float temper:TEXCOORD6; float polish:TEXCOORD7; };
 
 static const float3 SCALE_COLD_COL = float3(0.06, 0.055, 0.05);   // cold forge scale = sooty near-black
 static const float  SCALE_ROUGH    = 1.0;                         // forge scale is matte
@@ -88,55 +86,8 @@ float3 TemperTint(float t)
     return temperKey[TEMPER_KEYS - 1].rgb;
 }
 
-// --- edge chipping before grinding (2026-10-26) ---
-// Teeth cut out of the cutting edge per pixel (alpha test = clip). Done here, not by moving vertices: the blade
-// mesh has few vertices along the edge, so displaced vertices only made big waves.
-// Shape: 1D value noise with LINEAR interpolation between random heights at integer points = sharp, irregular
-// teeth (smooth interpolation would only make waves). Same x -> same value every frame (no shimmer).
-// Search: "1D value noise", "integer hash", "alpha test clip".
-static const uint JAG_SEED_PLUS  = 0x9E3779B9u;   // one cutting edge
-static const uint JAG_SEED_MINUS = 0x7F4A7C15u;   // the other cutting edge gets a different shape
-static const int  JAG_CELLS      = 20;            // length cells (= ForgingSim::NL)
-float JagHash(int i, uint seed)   // integer -> 0..1 (integer hash, black box)
+float4 main(PIN i) : SV_TARGET
 {
-    uint h = (uint)i * 0x27d4eb2du ^ seed;
-    h ^= h >> 15; h *= 0x85ebca6bu; h ^= h >> 13; h *= 0xc2b2ae35u; h ^= h >> 16;
-    return (h & 0xFFFFu) / 65535.0;
-}
-float JagNoise(float x, uint seed)
-{
-    float f = floor(x);
-    return lerp(JagHash((int)f, seed), JagHash((int)f + 1, seed), x - f);
-}
-float JagLeft(float lenCoord)     // chipping left at this length position, blended between cell centres
-{
-    float c = clamp(lenCoord - 0.5, 0.0, JAG_CELLS - 1.0);
-    int   a = (int)floor(c);
-    int   b = min(a + 1, JAG_CELLS - 1);
-    return lerp(jagCell[a >> 2][a & 3], jagCell[b >> 2][b & 3], c - a);
-}
-
-// Inner wall seen through a chip (2026-10-26): the blade mesh is a hollow shell, so through a chip the INSIDE of
-// the opposite skin shows (looking at an angle, the far skin is seen a little deeper in, outside the chip).
-// Lit as an ordinary surface it came out black (a dark "cross-section" line when the blade is turned over);
-// shaded as solid steel it filled the chips back in (user: "the chips are gone"). So near the edge the inside is
-// simply not drawn: a chip shows what is behind the blade, like a real notch through a thin edge.
-// Back faces of a closed mesh are only ever seen through holes, so this cannot remove a visible outer surface.
-// Search: "SV_IsFrontFace", "alpha test hole back face".
-static const float CHIP_WALL_REACH = 1.5;   // how far in from the edge (x the chip depth) the inside is hidden
-
-float4 main(PIN i, bool frontFace : SV_IsFrontFace) : SV_TARGET
-{
-    if (jag.x > 0)
-    {
-        float fromEdge = 1.0 - abs(i.edge.y);   // 0 at the cutting edge .. 1 at the centre line
-        if (fromEdge < jag.x)
-        {
-            float depth = JagNoise(i.edge.x * jag.y, i.edge.y >= 0 ? JAG_SEED_PLUS : JAG_SEED_MINUS) * jag.x * JagLeft(i.edge.x);
-            clip(fromEdge - depth);              // inside a chip -> no pixel
-        }
-        if (!frontFace && fromEdge < jag.x * CHIP_WALL_REACH) discard;   // the shell's inside, seen through a chip
-    }
     float3 v = normalize(eye.xyz - i.wp);
     float3 geometryN = normalize(i.nrm);
     // Two-sided: the blade is a thin plate seen from either face (and it is flipped over while forging).
@@ -154,7 +105,7 @@ float4 main(PIN i, bool frontFace : SV_IsFrontFace) : SV_TARGET
     // --- steel: PBR reflection ---
     // (2026-10-26: the ground-edge band was removed -- seen edge-on at the grindstone it read as a glowing line,
     //  not as progress. Grinding progress is told by sparks / sound / the segment glint instead.)
-    float  polish = material.z;
+    float  polish = max(material.z, i.polish);   // polished before tempering, or ground on the stone (2026-11-01: the forged steel texture has dark stains; grinding takes them off)
     float3 steel = lerp(tex.Sample(samp, i.uv).rgb, BARE_STEEL, polish);   // polished = bright bare steel (the dark forged surface would hide the colors)
     steel *= TemperTint(i.temper);   // tempering oxide film (0 = none). The CPU makes the spine run ahead of the edges
     float  rough = clamp(lerp(material.x, POLISHED_ROUGH, polish), MIN_ROUGHNESS, 1);

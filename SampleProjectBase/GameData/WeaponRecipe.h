@@ -18,7 +18,7 @@ enum class StepName
     Grind,    // sharpen the edge on the grindstone (rough grind, before hardening)
     Quench,   // plunge the burning blade into water to harden it
     Temper,   // warm the hardened blade gently above the coals; stop when the edge shows the right oxide color
-    TestCut,  // fit a hilt and cut an armored straw dummy: the forged quality becomes the sword's cutting power
+    TestCut,  // fit a hilt and cut a straw dummy: the forged quality becomes the sword's cutting power
 };
 
 // Work places in the smithy. The player walks to one and presses E to work there;

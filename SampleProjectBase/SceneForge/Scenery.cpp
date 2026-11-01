@@ -686,7 +686,7 @@ void SceneForge::DrawEmbers()
 //    ※本番の蒸気の見た目(ソフトパーティクル等)は外観担当が差し替えてよい。発生/運動は Particles が持つ。
 void SceneForge::DrawSteam()
 {
-	if (m_particles.Steam().empty() && m_particles.Splash().empty()) return;
+	if (m_particles.Steam().empty() && m_particles.Splash().empty() && m_particles.Straw().empty()) return;
 	CameraBase*   cam = GetObj<CameraBase>("Camera");
 	VertexShader* vs  = GetObj<VertexShader>("VS_Forge");
 	PixelShader*  ps  = GetObj<PixelShader>("PS_Forge");
@@ -697,6 +697,8 @@ void SceneForge::DrawSteam()
 	const float    FADE_IN       = 0.15f;				// 寿命の最初この割合で濃くなる
 	const XMFLOAT3 SPLASH_COLOR(0.92f, 0.95f, 1.0f);	// 水しぶき: 光を受けた水滴(蒸気より白く、少し青み)
 	const float    SPLASH_OPACITY = 0.85f;				// 小さく濃い(蒸気の様に重ねて濃くする物ではない)
+	const XMFLOAT3 STRAW_COLOR(0.78f, 0.66f, 0.40f);	// 藁くず(試し切りで刃が食い込んだ時): 乾いた藁の色。光らない
+	const float    STRAW_OPACITY = 0.95f;
 
 	XMFLOAT3 camPos = cam->GetPos();
 	XMVECTOR vcam    = XMLoadFloat3(&camPos);
@@ -743,6 +745,8 @@ void SceneForge::DrawSteam()
 	}
 	for (const Particles::Particle& p : m_particles.Splash())	// 水へ落ちた瞬間に消える=薄れさせない
 		if (!addQuad(p, XMFLOAT4(SPLASH_COLOR.x, SPLASH_COLOR.y, SPLASH_COLOR.z, SPLASH_OPACITY))) break;
+	for (const Particles::Particle& p : m_particles.Straw())
+		if (!addQuad(p, XMFLOAT4(STRAW_COLOR.x, STRAW_COLOR.y, STRAW_COLOR.z, STRAW_OPACITY))) break;
 	if (v == 0) return;
 
 	SetBlendMode(BLEND_ALPHA);

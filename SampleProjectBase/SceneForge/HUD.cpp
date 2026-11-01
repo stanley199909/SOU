@@ -1514,8 +1514,12 @@ void SceneForge::DrawResultUI()
 	}
 	CenterTextWithIcons("PRESS  ", Action::Confirm, "  TO  RETURN", PROMPT_Y, PROMPT_SCALE, IM_COL32(240, 228, 205, 230), body);	// 暗い背景の上=影あり
 	// 素材のクレジット(CC BY は作者名の表示が使用条件。一覧は CREDITS.txt)。目立たない様に画面下端に小さく
-	const float CREDIT_Y = 0.95f, CREDIT_SCALE = 0.45f;
-	CenterText("Sound: ZijunSANG, soundslikewillem (freesound.org, CC BY-NC 4.0)", CREDIT_Y, CREDIT_SCALE, IM_COL32(200, 190, 170, 170), body);
+	const float CREDIT_Y = 0.95f, CREDIT_SCALE = 0.45f, CREDIT_LINE_GAP = 0.025f;	// 行の間隔(下から 音 / 音楽 / モデル)
+	const ImU32 CREDIT_COL = IM_COL32(200, 190, 170, 170);
+	CenterText("Models: \"Medieval Combat Dummy\" CaptainHC, \"Historical Swords set\" Clint Bellanger (sketchfab.com), CC BY 4.0",
+	           CREDIT_Y - 2.0f * CREDIT_LINE_GAP, CREDIT_SCALE, CREDIT_COL, body);
+	CenterText("Music: \"Crusade\", \"Five Armies\" Kevin MacLeod (incompetech.com), CC BY 4.0", CREDIT_Y - CREDIT_LINE_GAP, CREDIT_SCALE, CREDIT_COL, body);
+	CenterText("Sound: ZijunSANG, soundslikewillem (freesound.org, CC BY-NC 4.0)", CREDIT_Y, CREDIT_SCALE, CREDIT_COL, body);
 }
 
 //--- 羊皮紙の選択パネル(一時停止メニュー / タイトルのモード選択)。工程リストと同じ見た目。
@@ -2230,6 +2234,7 @@ void SceneForge::DrawUI()
 
 	if (m_toolsPanelOpen) DrawToolsPanel();	// F4: 検査ツール(見える化・工程へ飛ぶ・進み具合)
 	if (m_feelPanelOpen)  DrawFeelPanel();	// F5: 手感の調整(試遊の後に触る数値)
+	if (m_swordPanelOpen) DrawSwordPanel();	// F6: 剣の姿勢(構え・溜め・柄)
 	DrawGrassMapPreview();	// 草の踏み跡の貼图(F4 のチェックで ON。F4 を閉じて歩きながらも見られる)
 
 	m_fade.Draw();	// 最後に全画面の黒幕(前景層)を重ねる=遷移の淡入淡出
@@ -2252,6 +2257,7 @@ static const float TOOL_ITEM_RATIO   = 0.020f;	// 部品の文字
 static const float TOOL_SIDE_MARGIN  = 0.02f;	// 画面の端からの余白(画面幅比)
 static const float TOOLS_W_RATIO     = 0.30f;	// F4 の幅(画面幅比)。左に出す(F2 は右)
 static const float FEEL_W_RATIO      = 0.30f;	// F5 の幅。右に出す
+static const float SWORD_W_RATIO     = 0.30f;	// F6 の幅。左に出す(F4 と同じ側。両方を同時に開く事は少ない)
 // 墨の色(F3 の処理の重さパネルと同じ)
 static const ImVec4 TOOL_INK      (60 / 255.0f, 42 / 255.0f, 28 / 255.0f, 0.95f);
 static const ImVec4 TOOL_INK_HINT (60 / 255.0f, 42 / 255.0f, 28 / 255.0f, 0.55f);
@@ -2337,7 +2343,7 @@ void SceneForge::DrawToolsPanel()
 	ImGui::Checkbox((const char*)u8"影の範囲", &m_showShadowRange);	// 水色の正方形。線の外は影の計算をしない
 	ImGui::SameLine();
 	ImGui::TextDisabled((const char*)u8"（%s %.0fm）", ShadowCameraIndoors() ? (const char*)u8"屋内" : (const char*)u8"屋外", SunStage::Data().width);
-	ImGui::Checkbox((const char*)u8"切り株の断面（試し切り）", &m_showCutDebug);	// 断片が乗っている切り株の断面(橙の円)
+	ImGui::Checkbox((const char*)u8"切り株の断面・切り口（試し切り）", &m_showCutDebug);	// 断片が乗っている切り株の断面(橙の円) + 同じ切り口とみなす帯(黄)
 	ImGui::Checkbox((const char*)u8"反射の部屋の箱", &ReflectionProbe::ShowRoomBox());	// 橙の箱 = 映り込みを壁へ投影する部屋(壁の内面に合っているか)
 	ImGui::Checkbox((const char*)u8"試遊の計時（右下）", &m_showPlaytestTimer);	// 工程ごとの所要時間。調整値と一緒に保存
 	bool vsync = GetVSyncEnabled();
@@ -2494,16 +2500,63 @@ void SceneForge::DrawFeelPanel()
 	ImGui::SeparatorText((const char*)u8"研ぎ");
 	ImGui::SliderFloat((const char*)u8"片側を研ぐ時間（秒）", &m_forging.grindSecondsPerSide, 3.0f, 60.0f, "%.0f");
 	ImGui::SliderFloat((const char*)u8"研げる範囲（セル）", &m_forging.grindSpread, 0.3f, 4.0f, "%.2f");	// 砥石が当たった所から長手に広がる幅(小=当てた所だけ)
+	ImGui::SliderFloat((const char*)u8"研ぎの火花：奥へ", &m_grindSparkOff.x, -0.4f, 0.4f, "%.3f m");	// 砥石と刃の接点からのずれ
+	ImGui::SliderFloat((const char*)u8"研ぎの火花：横へ", &m_grindSparkOff.y, -0.4f, 0.4f, "%.3f m");
+	ImGui::SliderFloat((const char*)u8"研ぎの火花：上へ", &m_grindSparkOff.z, -0.4f, 0.4f, "%.3f m");
 	ImGui::SliderFloat((const char*)u8"1回踏んだ加速", &m_wheel.pedalImpulse, 0.5f, 6.0f,  "%.2f");
 	ImGui::SliderFloat((const char*)u8"最高回転",      &m_wheel.maxSpeed,     2.0f, 30.0f, "%.1f");
 	ImGui::SliderFloat((const char*)u8"空転の減速",    &m_wheel.friction,     0.05f, 2.0f, "%.2f");
-	ImGui::SliderFloat((const char*)u8"刃のギザギザ（深さ）",  &m_edgeJagAmp,  0.0f, 0.4f, "%.2f");	// 研ぐ前の刃先の欠けの深さ(刃の半分の幅に対する割合)
-	ImGui::SliderFloat((const char*)u8"刃のギザギザ（細かさ）", &m_edgeJagFreq, 0.5f, 20.0f, "%.1f");	// 長手セル1つあたりの山の数(画素で切るので細かくできる)
 
 	// --- 試し切り ---
 	ImGui::SeparatorText((const char*)u8"試し切り");
 	ImGui::SliderFloat((const char*)u8"切る強さ", &m_cutStrikeDamage, 0.1f, 3.0f, "%.2f");	// × 出来 × 集中 = 1太刀の強さ
+	ImGui::SliderFloat((const char*)u8"同じ切り口の幅", &m_cutTarget.notchTolerance, 0.005f, 0.15f, "%.3f m");	// 2太刀目がこの距離以内なら同じ切り口に重なる(大=当てやすい)
+	ImGui::SliderFloat((const char*)u8"藁人形の揺れ：硬さ k", &m_cutTarget.sway.stiffness, 300.0f, 8000.0f, "%.0f");	// 大=速く小さく揺れる(柱が硬い)
+	ImGui::SliderFloat((const char*)u8"藁人形の揺れ：減衰 c", &m_cutTarget.sway.damping, 0.0f, 400.0f, "%.0f");	// 大=すぐ止まる
 	ImGui::TextDisabled((const char*)u8"出来の倍率 %.2f", GradeScore());
+	ImGui::TextDisabled((const char*)u8"剣の構え・溜めの姿勢は F6");
+
+	EndToolWindow();
+}
+
+//--- F6 = 剣の姿勢: 試し切りの剣の構え(歩く時)・溜め(長押し)・柄の位置。2026-10-29 ユーザー: 見た目の姿勢は自分で合わせたい
+//   (Claude は画面を見られない)。全部 forge_tuning(swordhold / swordwind)に保存。距離は目から m。
+void SceneForge::DrawSwordPanel()
+{
+	BeginToolWindow("##swordF6", (const char*)u8"剣の姿勢", (const char*)u8"F6 で閉じる・終了時に自動で保存", TOOL_SIDE_MARGIN, SWORD_W_RATIO);
+	if (ImGui::Button((const char*)u8"今すぐ保存")) SaveTuning();
+
+	// --- 構え(歩く時・振っていない時): 鍔を画面の右下の外へ、刃を中央寄りへ斜めに立てる ---
+	ImGui::SeparatorText((const char*)u8"構え（歩く時）");
+	ImGui::SliderFloat((const char*)u8"手：前",   &m_holdHand.x, 0.15f, 0.80f, "%.2f m");
+	ImGui::SliderFloat((const char*)u8"手：右",   &m_holdHand.y, -0.40f, 0.50f, "%.2f m");
+	ImGui::SliderFloat((const char*)u8"手：上",   &m_holdHand.z, -0.60f, 0.10f, "%.2f m");
+	ImGui::SliderFloat((const char*)u8"刃の向き：前", &m_holdDir.x, -0.5f, 1.5f, "%.2f");	// 大=切っ先が奥へ倒れる
+	ImGui::SliderFloat((const char*)u8"刃の向き：右", &m_holdDir.y, -1.0f, 1.0f, "%.2f");	// 負=画面の中央へ傾く
+	ImGui::SliderFloat((const char*)u8"刃の向き：上", &m_holdDir.z,  0.0f, 1.5f, "%.2f");	// 大=立てる
+	ImGui::SliderFloat((const char*)u8"刃のねじり", &m_holdRollDeg, -90.0f, 90.0f, "%.0f 度");	// 0=平らな面が正面
+	ImGui::SliderFloat((const char*)u8"歩く揺れの速さ", &m_swordBobPerMeter, 0.1f, 1.6f, "%.2f 回/m");	// 1m 歩く間の揺れの回数(小=ゆっくり)
+	if (ImGui::Button((const char*)u8"構えを既定値に戻す"))
+	{
+		m_holdHand = HOLD_HAND_DEFAULT; m_holdDir = HOLD_DIR_DEFAULT; m_holdRollDeg = HOLD_ROLL_DEFAULT;
+	}
+
+	// --- 溜め(長押し = Zornhut: 柄を前・刃を肩越しに後ろ)。パネル中は長押しできないので、姿勢を止めて見せる ---
+	ImGui::SeparatorText((const char*)u8"溜め（長押し）");
+	ImGui::Checkbox((const char*)u8"溜めの姿勢で止めて見る", &m_previewWind);
+	ImGui::SliderFloat((const char*)u8"溜め：手：前", &m_windHand.x, 0.05f, 0.70f, "%.2f m");
+	ImGui::SliderFloat((const char*)u8"溜め：手：右", &m_windHand.y, -0.20f, 0.50f, "%.2f m");
+	ImGui::SliderFloat((const char*)u8"溜め：手：上", &m_windHand.z, -0.50f, 0.30f, "%.2f m");
+	ImGui::SliderFloat((const char*)u8"溜め：刃の角度", &m_windDeg, -175.0f, -60.0f, "%.0f 度");	// -90=真横に立つ / より負=後ろへ倒れる(見えにくくなる)
+	if (ImGui::Button((const char*)u8"溜めを既定値に戻す"))
+	{
+		m_windHand = WIND_HAND_DEFAULT; m_windDeg = WIND_DEG_DEFAULT;
+	}
+
+	// --- 柄: 刃の根元に対する鍔の位置 ---
+	ImGui::SeparatorText((const char*)u8"柄");
+	ImGui::SliderFloat((const char*)u8"柄の位置（刃に沿って）", &m_hiltSeat, -0.10f, 0.10f, "%.3f m");	// 正=切っ先の方へ(鍔が根元を覆う) / 負=根元から離す
+	if (ImGui::Button((const char*)u8"柄を既定値に戻す")) m_hiltSeat = HILT_SEAT_DEFAULT;
 
 	EndToolWindow();
 }

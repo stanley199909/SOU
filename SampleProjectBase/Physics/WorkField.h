@@ -5,7 +5,7 @@
 // The job (shaping one face / grinding one bevel) starts with 100% of its work left,
 // spread over N length cells (1 per cell). Work is only ever SUBTRACTED, by a fixed
 // amount per valid action decided by the caller, so the job always ends after a known
-// amount of valid work -- it cannot stop at 99%. How well the action was done (grade)
+// amount of valid work (a little less when a cell's last crumbs are finished off) -- it cannot stop at 99%. How well the action was done (grade)
 // is the caller's business (score), never the amount of work.
 //
 // Where the work is taken from is local: mostly the cells around the contact point

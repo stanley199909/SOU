@@ -212,7 +212,7 @@ void SceneForge::Init()
 
 	// 武器の鋼テクスチャ(BaseColor=冷鋼の地色)。発光は温度 m_forging.Heat() で駆動するので Emissive は直貼りしない。
 	{
-		m_wpTex = TextureCache::Get("Assets/MM_Blacksmith_Pack/Medieval_Sword_Blade/Blade_BaseColor.png");
+		m_wpTex = TextureCache::Get("Assets/Model/TestCut/historical-swords-set/textures/steel_diffuse.png");	// LongSword の刀身と同じ鋼(2026-10-29)
 		// 氧化皮マスクは「色」でなく「厚みのデータ」なので sRGB 変換をしない(false)=灰度がそのまま閾値と比べられる
 		m_wpScaleMask = TextureCache::Get("Assets/Model/weapon/forge_scale_mask.png", false);
 		// 法線マップも「データ」= sRGB 変換しない。OpenGL 式(緑+ = UV の V+)= PerturbNormal の規約そのまま
@@ -418,7 +418,7 @@ void SceneForge::Uninit()
 	// どの状態(TITLE/PLAY/RESULT)で抜けても対応する BGM が残るのを防ぐ。
 	// 残ると: 編集シーンへ切替→BGMが鳴りっぱなし、戻ると新旧BGMが二重再生になる。
 	Audio::Stop(Audio::BGM_TITLE);	// タイトルBGM
-	Audio::Stop(Audio::BGM_PLAY);	// ゲーム中BGM(PLAYで抜けた時)
+	Audio::Stop((Audio::SoundId)m_playBgm);	// ゲーム中BGM(PLAYで抜けた時)
 	Audio::Stop(Audio::BGM_RESULT);	// 結果BGM(RESULTで抜けた時)
 	if (m_heatSndOn) { Audio::Stop(Audio::SE_FORGE_LOOP); m_heatSndOn = false; }	// 加熱ループ音(Rを押しながら抜けた時)
 	if (m_burnSndOn)  { Audio::Stop(Audio::SE_BURN_LOOP);  m_burnSndOn  = false; }	// 燃焼ループ音
@@ -702,7 +702,7 @@ void SceneForge::ReturnToTitle(bool openCourses)
 			m_courseSel        = (nextCourse < (int)m_recipe->courses.size()) ? nextCourse : (int)m_recipe->courses.size();	// 次の課程(無ければ「戻る」)
 			m_courseRequest    = -1;
 		}
-		Audio::Stop(Audio::BGM_PLAY);
+		Audio::Stop((Audio::SoundId)m_playBgm);
 		Audio::PlayLoop(Audio::BGM_TITLE, TITLE_BGM_VOLUME);
 	});
 }
@@ -904,7 +904,7 @@ void SceneForge::FinishGame()
 {
 	// PLAY中のBGM/ループ音を止め、成功音→結果BGMへ切り替える
 	// (淬火の「ジュワ〜」と蒸気音は、刃を水に入れた瞬間に TryQuench が鳴らし済み)
-	Audio::Stop(Audio::BGM_PLAY);				// ゲーム中BGMを止める
+	Audio::Stop((Audio::SoundId)m_playBgm);				// ゲーム中BGMを止める
 	if (m_heatSndOn)  { Audio::Stop(Audio::SE_FORGE_LOOP); m_heatSndOn  = false; }
 	if (m_burnSndOn)  { Audio::Stop(Audio::SE_BURN_LOOP);  m_burnSndOn  = false; }
 	if (m_grindSndOn) { Audio::Stop(Audio::SE_GRIND_LOOP); m_grindSndOn = false; }
@@ -1621,7 +1621,10 @@ void SceneForge::UpdateGrind(float tick, bool inputOn)
 		if (n > 0)
 		{
 			const XMFLOAT3 away(-m_stationViewDir.x, GRIND_SPARK_DIP, -m_stationViewDir.z);
-			m_particles.SpawnGrindSparks(StationBase(Station::Grindstone), away, GRIND_SPARK_SPREAD, n, GRIND_SPARK_SPEED_MIN, GRIND_SPARK_SPEED_MAX, dull);
+			// the contact + the offset from F5 (toward the wheel's far side / along the axle / up)
+			const XMFLOAT3 c = StationBase(Station::Grindstone), v = m_stationViewDir, o = m_grindSparkOff;
+			const XMFLOAT3 sparkAt(c.x - v.x * o.x - v.z * o.y, c.y + o.z, c.z - v.z * o.x + v.x * o.y);
+			m_particles.SpawnGrindSparks(sparkAt, away, GRIND_SPARK_SPREAD, n, GRIND_SPARK_SPEED_MIN, GRIND_SPARK_SPEED_MAX, dull);
 		}
 	}
 	else m_grindSparkAcc = 0.0f;
@@ -2212,6 +2215,7 @@ void SceneForge::Update(float tick)
 	if (IsKeyTrigger(VK_F3)) m_profilerPanelOpen = !m_profilerPanelOpen;	// 設計者用: 処理の重さ(GPU 計時)。遊びながら見られる様に入力は止めない
 	if (IsKeyTrigger(VK_F4)) m_toolsPanelOpen = !m_toolsPanelOpen;	// 設計者用: 検査ツール(見える化・工程へ飛ぶ・進捗。HUD.cpp DrawToolsPanel)
 	if (IsKeyTrigger(VK_F5)) m_feelPanelOpen = !m_feelPanelOpen;	// 設計者用: 手感の調整(HUD.cpp DrawFeelPanel)
+	if (IsKeyTrigger(VK_F6)) m_swordPanelOpen = !m_swordPanelOpen;	// 設計者用: 剣の姿勢(HUD.cpp DrawSwordPanel)
 	if (IsKeyTrigger('H')) m_shotMode = (ShotMode)(((int)m_shotMode + 1) % (int)ShotMode::Count);	// 撮影用: 普通 → UI なし → UI なし+「一刀両断」なし → 普通
 	UpdateCursorVisibility();	// 一時停止中も決める(下で return する前に)
 

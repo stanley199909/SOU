@@ -9,6 +9,7 @@
 #include "SceneForge/SceneForge_Internal.h"
 #include "CameraBase.h"
 #include "Audio.h"
+#include <random>	// ゲーム BGM をランダムに選ぶ(FinishIntro)
 
 using namespace DirectX;
 
@@ -66,7 +67,12 @@ void SceneForge::UpdateIntro(float tick)
 void SceneForge::FinishIntro()
 {
 	Audio::Stop(Audio::BGM_TITLE);							// 淡出し切ったタイトル BGM を止める
-	Audio::PlayLoop(Audio::BGM_PLAY, PLAY_BGM_VOLUME);		// ゲーム BGM を正式に開始
+	// ゲーム BGM を正式に開始。2 曲(Crusade / Five Armies)から遊ぶ毎にランダムに1曲(1回の遊びの中は同じ曲をループ)
+	const Audio::SoundId PLAY_BGMS[] = { Audio::BGM_PLAY, Audio::BGM_PLAY_2 };
+	// rand() は srand していないので起動の度に同じ順になる → 起動毎に違う種を取る乱数(random_device)で選ぶ
+	static std::mt19937 bgmRng{ std::random_device{}() };
+	m_playBgm = PLAY_BGMS[std::uniform_int_distribution<int>(0, (int)_countof(PLAY_BGMS) - 1)(bgmRng)];
+	Audio::PlayLoop((Audio::SoundId)m_playBgm, PLAY_BGM_VOLUME);
 	m_introPhase = IntroPhase::None;
 }
 

@@ -127,8 +127,9 @@ void SceneForge::DrawViewmodel()
 //    位相を距離で進める=速さに比例して揺れが速くなり、止まれば位相も止まる(時間で進めると足踏みでも揺れる)。
 void SceneForge::UpdateCarryBob(float tick, float walked)
 {
-	const bool moving = m_carrying && walked > BOB_MOVE_EPS;
-	if (moving) m_bobPhase += walked * m_bobPerMeter;
+	// 手に持った物が揺れる時: 火钳で鉄を運ぶ時と、柄を付けた剣を持って歩く時(2026-10-29)
+	const bool moving = (m_carrying || SwordInHand()) && walked > BOB_MOVE_EPS;
+	if (moving) m_bobPhase += walked * (m_carrying ? m_bobPerMeter : m_swordBobPerMeter);
 	m_bobWeight = Lerp::Damp(m_bobWeight, moving ? 1.0f : 0.0f, BOB_FADE_LAMBDA, tick);	// 歩き出し/止まりは滑らかに
 }
 

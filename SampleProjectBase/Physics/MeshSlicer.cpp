@@ -217,7 +217,7 @@ namespace MeshSlicer
         return fabsf(six) / 6.0f;   // the sign only says which way the triangles are wound
     }
 
-    bool Slice(const Mesh& in, const XMFLOAT3& point, const XMFLOAT3& normalIn, Mesh& front, Mesh& back)
+    bool Slice(const Mesh& in, const XMFLOAT3& point, const XMFLOAT3& normalIn, Mesh& front, Mesh& back, const CapUv& capUv)
     {
         front = Mesh(); back = Mesh();
         const XMFLOAT3 n = Normalize(normalIn);
@@ -283,11 +283,14 @@ namespace MeshSlicer
         for (const std::vector<int>& loop : outline.Loops())
         {
             std::vector<XMFLOAT2> poly(loop.size());
+            XMFLOAT2 mid(0.0f, 0.0f);   // the loop's centre: the cap's uv is measured from here
             for (size_t k = 0; k < loop.size(); ++k)
             {
                 const XMFLOAT3& p = outline.points[loop[k]];
                 poly[k] = XMFLOAT2(Dot(p, u), Dot(p, v));
+                mid.x += poly[k].x; mid.y += poly[k].y;
             }
+            mid.x /= (float)loop.size(); mid.y /= (float)loop.size();
             std::vector<int> tris;
             EarClip(poly, tris);
             for (size_t t = 0; t + 2 < tris.size(); t += 3)
@@ -296,7 +299,10 @@ namespace MeshSlicer
                 for (int k = 0; k < 3; ++k)
                 {
                     c[k].pos = outline.points[loop[tris[t + k]]];
-                    c[k].uv  = poly[tris[t + k]];             // planar uv on the cut face
+                    // planar position on the cut face (m) from the loop's centre. 2026-10-29 F5: measured from the
+                    // origin instead, a cut 1.4 m up was shifted far across the atlas and part of it sampled black.
+                    const XMFLOAT2 q(poly[tris[t + k]].x - mid.x, poly[tris[t + k]].y - mid.y);
+                    c[k].uv  = XMFLOAT2(capUv.center.x + q.x * capUv.scale, capUv.center.y + q.y * capUv.scale);
                 }
                 // back side: cap faces +n (toward the front side); front side: cap faces -n.
                 // A CCW triangle faces +n geometrically; flip it when the mesh's winding

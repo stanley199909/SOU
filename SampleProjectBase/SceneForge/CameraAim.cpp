@@ -305,6 +305,15 @@ void SceneForge::SetupStationView(Station s)
 		if (flip) v = XMFLOAT3(-v.x, 0.0f, -v.z);
 		m_stationViewDir = v;
 	}
+	if (s == Station::TestCut)
+	{
+		// 藁人形: いつも正面から斬る(2026-10-29 ユーザー: 横から入ると横からしか斬れなかった)。
+		//   正面 = 横木(腕)に直交する向き = 人形のローカル ±Z。前後は同じ形なので、近づいた側に近い方を選ぶ
+		//   (回り込む距離が短い)。回り込みは過渡のカメラが人形の周りを円弧で歩く(ApplyTransCamera)。
+		XMFLOAT3 v(sinf(m_cutYaw), 0.0f, cosf(m_cutYaw));
+		if (v.x * m_stationViewDir.x + v.z * m_stationViewDir.z < 0.0f) v = XMFLOAT3(-v.x, 0.0f, -v.z);
+		m_stationViewDir = v;
+	}
 	if (s == Station::Grindstone)
 	{
 		m_stationViewDir = GrindViewDir();	// 近づいた側に関係なく固定(刃の位置が毎回同じになる)
@@ -395,6 +404,26 @@ void SceneForge::ApplyTransCamera()
 	FwdToAngles(toFwd, y1, p1);
 	float yaw   = y0 + WrapPi(y1 - y0) * s;					// 最短方向へ振り向く
 	float pitch = p0 + (p1 - p0) * s;
+
+	// 藁人形の正面へ入る時は、真っ直ぐでなく人形の周りを円弧で歩いて回り込む(横・後ろから入っても人形を
+	//   突き抜けない)。角度と距離を補間する = 極座標での補間。歩いている間は人形を見ている(SmoothStep で目を移す)。
+	if (m_modeTrans == ModeTrans::Enter && m_station == Station::TestCut)
+	{
+		const float cx = m_cutPosXZ[0], cz = m_cutPosXZ[1];
+		const float a0 = atan2f(m_transFromEye.x - cx, m_transFromEye.z - cz), a1 = atan2f(toEye.x - cx, toEye.z - cz);
+		const float r0 = sqrtf((m_transFromEye.x - cx) * (m_transFromEye.x - cx) + (m_transFromEye.z - cz) * (m_transFromEye.z - cz));
+		const float r1 = sqrtf((toEye.x - cx) * (toEye.x - cx) + (toEye.z - cz) * (toEye.z - cz));
+		const float a = a0 + WrapPi(a1 - a0) * s, r = r0 + (r1 - r0) * s;
+		eye.x = cx + sinf(a) * r;
+		eye.z = cz + cosf(a) * r;
+		XMFLOAT3 eyeT, tgt; StationView(Station::TestCut, eyeT, tgt);
+		XMFLOAT3 look; XMStoreFloat3(&look, XMVector3Normalize(XMVectorSet(tgt.x - eye.x, tgt.y - eye.y, tgt.z - eye.z, 0.0f)));
+		float ya, pa; FwdToAngles(look, ya, pa);
+		const float LOOK_AT_SHARE = 0.35f;	// 歩き始めのこの割合の間に、元の向きから人形の方へ目を移す
+		const float w = Lerp::SmoothStep(fminf(m_transTimer / (m_transDur * LOOK_AT_SHARE), 1.0f));
+		yaw   = y0 + WrapPi(ya - y0) * w;
+		pitch = p0 + (pa - p0) * w;
+	}
 	XMFLOAT3 f = AnglesToFwd(yaw, pitch);
 
 	cam->SetPos(eye);
@@ -917,8 +946,14 @@ void SceneForge::SaveTuning()
 	fprintf(fp, "transtime %.5f %.5f\n", m_transMinTime, m_transMaxTime);
 	fprintf(fp, "walkspeed %.5f\n", m_walkSpeed);
 	fprintf(fp, "cutdamage %.5f\n", m_cutStrikeDamage);
+	fprintf(fp, "swordbob %.5f\n", m_swordBobPerMeter);
+	fprintf(fp, "grindspark %.5f %.5f %.5f\n", m_grindSparkOff.x, m_grindSparkOff.y, m_grindSparkOff.z);
+	fprintf(fp, "cutnotch %.5f\n", m_cutTarget.notchTolerance);	// 同じ切り口とみなす幅(m, 2026-10-29)
+	fprintf(fp, "cutsway %.5f %.5f\n", m_cutTarget.sway.stiffness, m_cutTarget.sway.damping);	// 藁人形の揺れ(ばね k, 減衰 c)
+	fprintf(fp, "swordhold %.5f %.5f %.5f %.5f %.5f %.5f %.5f\n", m_holdHand.x, m_holdHand.y, m_holdHand.z,
+	        m_holdDir.x, m_holdDir.y, m_holdDir.z, m_holdRollDeg);	// 剣の構え(前/右/上, 向きの重み, ねじり。2026-10-29)
+	fprintf(fp, "swordwind %.5f %.5f %.5f %.5f %.5f\n", m_windHand.x, m_windHand.y, m_windHand.z, m_windDeg, m_hiltSeat);	// 振りかぶり(手の位置, 刃の角度) + 柄の差し込み(2026-10-29)
 	fprintf(fp, "grindspread %.5f\n", m_forging.grindSpread);	// 研ぎが当たった所から広がる幅(2026-10-26)
-	fprintf(fp, "edgejag %.5f %.5f\n", m_edgeJagAmp, m_edgeJagFreq);	// 研ぐ前の刃先のギザギザ(深さ, 細かさ)
 
 	fclose(fp);
 }
@@ -979,7 +1014,10 @@ void SceneForge::TuningRefs(std::vector<float*>& out)
 		&m_carryAvoidMaxRaise, &m_carryAvoidMargin, &m_carryAvoidLambda, &m_carryAvoidMaxPull,
 		// -- F5 pacing (flip beats / sequence speed / station move / walk / cut strength) --
 		&m_flipTongsOutTime, &m_flipGripTime, &m_flipPutBackTime, &m_seqTimeScale, &m_transMinTime, &m_transMaxTime,
-		&m_walkSpeed, &m_cutStrikeDamage, &m_forging.grindSpread, &m_edgeJagAmp, &m_edgeJagFreq,
+		&m_walkSpeed, &m_cutStrikeDamage, &m_cutTarget.notchTolerance, &m_swordBobPerMeter, &m_grindSparkOff.x, &m_grindSparkOff.y, &m_grindSparkOff.z, &m_cutTarget.sway.stiffness, &m_cutTarget.sway.damping, 
+		&m_holdHand.x, &m_holdHand.y, &m_holdHand.z, &m_holdDir.x, &m_holdDir.y, &m_holdDir.z, &m_holdRollDeg,
+		&m_windHand.x, &m_windHand.y, &m_windHand.z, &m_windDeg, &m_hiltSeat,
+		&m_forging.grindSpread, 
 	};
 	out.assign(r, r + _countof(r));
 }
@@ -1089,8 +1127,13 @@ void SceneForge::LoadTuning()
 		else if (strcmp(key, "transtime")  == 0) sscanf_s(v, "%f %f", &m_transMinTime, &m_transMaxTime);
 		else if (strcmp(key, "walkspeed")  == 0) sscanf_s(v, "%f", &m_walkSpeed);
 		else if (strcmp(key, "cutdamage")  == 0) sscanf_s(v, "%f", &m_cutStrikeDamage);
+		else if (strcmp(key, "swordbob")   == 0) sscanf_s(v, "%f", &m_swordBobPerMeter);
+		else if (strcmp(key, "grindspark") == 0) sscanf_s(v, "%f %f %f", &m_grindSparkOff.x, &m_grindSparkOff.y, &m_grindSparkOff.z);
+		else if (strcmp(key, "cutnotch")   == 0) sscanf_s(v, "%f", &m_cutTarget.notchTolerance);
+		else if (strcmp(key, "cutsway")    == 0) sscanf_s(v, "%f %f", &m_cutTarget.sway.stiffness, &m_cutTarget.sway.damping);
+		else if (strcmp(key, "swordhold")  == 0) sscanf_s(v, "%f %f %f %f %f %f %f", &m_holdHand.x, &m_holdHand.y, &m_holdHand.z, &m_holdDir.x, &m_holdDir.y, &m_holdDir.z, &m_holdRollDeg);
+		else if (strcmp(key, "swordwind")  == 0) sscanf_s(v, "%f %f %f %f %f", &m_windHand.x, &m_windHand.y, &m_windHand.z, &m_windDeg, &m_hiltSeat);
 		else if (strcmp(key, "grindspread") == 0) sscanf_s(v, "%f", &m_forging.grindSpread);
-		else if (strcmp(key, "edgejag")    == 0) sscanf_s(v, "%f %f", &m_edgeJagAmp, &m_edgeJagFreq);
 	}
 	fclose(fp);
 }

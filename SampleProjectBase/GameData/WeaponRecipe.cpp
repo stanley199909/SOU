@@ -57,6 +57,6 @@ const WeaponRecipe ShortSword = {
         { (const char*)u8"研ぎ",   (const char*)u8"足踏みの砥石で、刃の角度を合わせて両側を研ぐ",                       2, 2 },
         { (const char*)u8"焼入れ", (const char*)u8"刃を火花が散るまで熱し、水槽に沈めて揺する",                         3, 4 },
         { (const char*)u8"焼き戻し", (const char*)u8"焼入れした刃を炉の上で温め、刃先の色を見て取り出す",               5, 5 },
-        { (const char*)u8"試し切り", (const char*)u8"仕上げた剣で、鎧を着た藁人形を斬る。強い斬りと連続の斬りを覚える",   6, 6 },
+        { (const char*)u8"試し切り", (const char*)u8"仕上げた剣で藁人形を斬る。斬り切れなければ、同じ切り口にもう一太刀",   6, 6 },
     }
 };

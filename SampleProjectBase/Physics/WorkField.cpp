@@ -61,9 +61,11 @@ WorkField::Result WorkField::Apply(float coord, float amount, float spread, Spil
         m_left[best] -= take;
         rest         -= take;
     }
-    // Snap float dust to exactly 0 so "done" is exact.
-    const float DONE_EPS = 1e-4f;
-    for (int i = 0; i < N; ++i) if (m_left[i] < DONE_EPS) m_left[i] = 0.0f;
+    // Finish off what is practically done. Sharing by weight can leave a cell at 99%, and a strike beside it then
+    // reaches only finished cells: "already done" while the cell shows unfinished (2026-11-01 playtest). So a cell
+    // with less than one part of a strike left counts as done (this also snaps float dust, so "done" is exact).
+    const float FINISH_LEFT = 0.03f;
+    for (int i = 0; i < N; ++i) if (m_left[i] < FINISH_LEFT) m_left[i] = 0.0f;
     return Result::Worked;
 }
 

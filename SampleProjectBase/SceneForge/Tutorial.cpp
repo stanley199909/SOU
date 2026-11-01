@@ -56,7 +56,7 @@ const SceneForge::LessonDef SceneForge::LESSONS[] =
 	// --- 水槽(救急: 3 秒、2026-10-12 ユーザー決定) ---
 	{ LessonId::Plunge,   LessonAnim::PressKey,      Action::Use,      (const char*)u8"{Use}で、刃を水に入れる",                 1.0f,  3.0f,  0 },
 	{ LessonId::Stir,      LessonAnim::MouseVertical, NO_KEY,           (const char*)u8"{Hand}を上下に動かして、水の中で刃を揺する",   0.15f, 3.0f,  0 },
-	// --- 試し切り(2026-10-22 構えと集中の一太刀)。救急: 斬らずに 6 秒 / 落ち着かないまま離して鎧に 2 回弾かれたら ---
+	// --- 試し切り(2026-10-22 構えと集中の一太刀)。救急: 斬らずに 6 秒 / 落ち着かないまま離して 2 回止まったら ---
 	{ LessonId::Slash,     LessonAnim::StrikeHold,    NO_KEY,           (const char*)u8"{Use}長押しで構えて胴を狙い、照準の揺れが止まった瞬間に離して斬る", 1.0f, 6.0f, 2 },
 };
 

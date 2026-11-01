@@ -41,8 +41,13 @@ namespace MeshSlicer
     // Slice 'in' by the plane through 'point' with normal 'normal' (need not be unit).
     // front = the side the normal points to, back = the other side.
     // Returns false (and leaves front/back empty) if the plane misses the mesh.
+    // How the cut face (cap) gets its texture: uv = center + (planar position on the cut from the cut's own
+    // centre, metres) * scale.
+    // The default (0, 0) x 1 = plain planar uv. A model textured from an atlas points the cap at the
+    // part of the atlas that looks like its inside (straw, wood) with a small scale.
+    struct CapUv { DirectX::XMFLOAT2 center{ 0.0f, 0.0f }; float scale = 1.0f; };
     bool Slice(const Mesh& in, const DirectX::XMFLOAT3& point, const DirectX::XMFLOAT3& normal,
-               Mesh& front, Mesh& back);
+               Mesh& front, Mesh& back, const CapUv& capUv = CapUv());
 
     // Winding convention of a mesh: +1 if cross(b-a, c-a) points along the stored vertex
     // normals, -1 if against. Caps are emitted with the same convention as the input, so

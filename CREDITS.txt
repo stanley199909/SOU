@@ -47,15 +47,33 @@ FORGE - Credits / クレジット
   ※ OFL はフォントを同梱して配布する時にライセンス文の同梱が必要。
 - 日本語: Windows 標準のメイリオ / 游明朝 (OS のフォントを読むだけで、同梱はしていない)
 
+■ 3D モデル / 3D Models (要クレジット / attribution required)
+
+- "Medieval Combat Dummy" by CaptainHC (2026-10-29 入手)
+  https://sketchfab.com/3d-models/medieval-combat-dummy-0b3ab64360374a0e9ee3a5923c437995
+  License: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
+  使用箇所: 試し切りの藁人形 (Assets/Model/TestCut/medieval-combat-dummy/)
+  加工: 部品を4つ(柱/腰/胴/頭)に分割・穴埋めで閉じた立体に・横木を胴にブーリアン結合・1.8 m に縮小・OBJ 化
+
+- "Historical Swords set" by Clint Bellanger (2026-10-29 入手)
+  https://sketchfab.com/3d-models/historical-swords-set-3e2ceaa963f54f3aadc475e1940a2728
+  License: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
+  使用箇所: 剣 (Assets/Model/TestCut/historical-swords-set/)。LongSword の刀身 = 鍛える剣の完成形
+            (粗坯は同じ網格から Assets/Model/weapon/make_stages.py で作る)、柄(鍔・握り・柄頭) = 試し切りで付ける柄
+  加工: 刀身と柄を分割・穴埋め・網格の細分化・粗坯(stage_0)と研ぐ前の形(stage_1)を生成・OBJ 化
+  鋼・革の貼图 (steel_* / leather_*): Yughues 作の public domain 素材 (クレジット不要。感謝を込めて記載)
+
+※ CC BY の表記は、ゲーム内では結果画面の下端に出している (HUD.cpp DrawResultUI)。動画・作品集では概要欄に書く。
+
 ■ 自作 / 生成した素材 / Made for this project
 
 - 剣の粗坯・完成形 (Assets/Model/weapon/)、鍛冶小屋 (Medieval_Blacksmith_Cottage_Production)、
   窓の壁 (Blacksmith_Window_Wall_TestAsset)、屋外のメッシュ (Tools/build_outdoor.py で生成)
 - 温度ゲージの画像 (Assets/Ui/Heat_Gauge/): ChatGPT で生成
-- 試し切りの素材 (Assets/Model/TestCut/, 2026-10-21): ChatGPT で生成
-  鎧を着た藁人形 (Armored_Straw_Dummy.obj/.fbx) / 剣の柄 (Medieval_Sword_Hilt.obj/.fbx。FBX は assimp で読めず OBJ を使用) /
-  刀光の画像 (Sword_Trail.png, 今は未使用: 刀光は PS_Trail が式で描く) / 「一刀両断」の筆文字 (Ichitou_Ryoudan.png, 画像生成ツールで生成)
-  加工: なし (モデルの貼图は既存の小屋の素材を三平面投影で貼る)
+- 試し切りの素材 (2026-10-21): ChatGPT で生成
+  「一刀両断」の筆文字 (Assets/Model/TestCut/Ichitou_Ryoudan.png, 画像生成ツールで生成) = 使用中
+  鎧を着た藁人形 / 剣の柄 / 刀光の画像 = 2026-10-29 に上の Sketchfab のモデルへ差し替え。未使用 (Assets/Model/TestCut/old_chatgpt/ に保管)
+- 旧刀身 (ChatGPT で生成) = 2026-10-29 に LongSword の刀身へ差し替え。未使用 (Assets/Model/weapon/old_chatgpt_blade/ に保管)
 - 操作の案内の図 (Assets/UI/Lessons/v2/lesson_*.png): ChatGPT の画像生成で作成し、程序で背景を抜いて縮小
   2026-10-27 第4批を追加: 焼き戻し (lesson_temper_*) / 試し切り (lesson_slash_*)。依頼の仕様は REQUEST_batch4_temper_slash.md
 - 羊皮紙の画像 (Assets/Ui/parchment*.png 等): ネットで見つけた画像を ChatGPT で加工
@@ -96,5 +114,7 @@ See CC_BY_4.0_legalcode.txt for the license text and sources.json for provenance
 Credit the composer and link the license/source in the game credits and in the
 published video's description; keep a statement of any later edits.
 
-使用箇所: ゲームBGM候補（未接続）、Five Armies は FORGE 宣伝映像に使用。
+使用箇所: ゲーム中BGM (2026-10-29 接続: Crusade と Five Armies から遊ぶ毎にランダムに1曲をループ再生。旧 play_bgm.wav の代わり)。
+          Five Armies は FORGE 宣伝映像にも使用。
+※ CC BY 4.0 の表記はゲーム内では結果画面の下端に出している (HUD.cpp DrawResultUI)。動画では概要欄に書く。
 WAV: Assets/Sound/BGM/Crusade_Kevin_MacLeod.wav / Five_Armies_Kevin_MacLeod.wav

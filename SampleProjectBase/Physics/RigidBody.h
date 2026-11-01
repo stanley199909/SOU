@@ -39,12 +39,19 @@ public:
     // Something the body cannot pass through: the half-space behind a plane.
     // radius > 0 limits it to a disc around 'point' (the stump's cut face: once the
     // falling half slides past its edge, it drops to the ground). radius <= 0 = infinite (ground).
+    // outline (optional, 2026-10-29): the face's real shape as a convex polygon in the plane, in the
+    // (t1, t2) coordinates of PlaneBasis around 'point', counter-clockwise. When given it is used
+    // instead of the disc: a disc around a long, thin cut face also covered thin air beside it, and a
+    // chip could come to rest there, floating (F5).
     struct PlaneCollider
     {
         DirectX::XMFLOAT3 point;
         DirectX::XMFLOAT3 normal;   // points out of the solid side
         float radius;
+        std::vector<DirectX::XMFLOAT2> outline;
     };
+    // The two in-plane axes used for 'outline' (the same rule everywhere the outline is built or read).
+    static void PlaneBasis(const DirectX::XMFLOAT3& normal, DirectX::XMFLOAT3& t1, DirectX::XMFLOAT3& t2);
 
     // points: the body's vertices relative to its center of mass (body space).
     // halfExtents: half size of the body's bounding box (for the inertia tensor).

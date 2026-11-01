@@ -28,6 +28,8 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <map>
+#include <vector>
 #include "assimp/Importer.hpp"
 #include "assimp/scene.h"
 #include "assimp/postprocess.h"
@@ -171,9 +173,10 @@ void SceneForge::LoadWeaponStages()
 		char stem[32];
 		if (s == 0) strcpy_s(stem, "stage_0");
 		else        sprintf_s(stem, sizeof(stem), "stage_%d", s);
+		bool isFinal = false;
 		if (!findStage(stem, path))
 		{
-			if (s >= 1 && findStage("stage_final", path)) {}	// 最終段
+			if (s >= 1 && findStage("stage_final", path)) isFinal = true;	// 最終段
 			else break;
 		}
 
@@ -220,9 +223,109 @@ void SceneForge::LoadWeaponStages()
 			return;
 		}
 		m_wpStage.push_back(std::move(st));
+		if (isFinal) break;	// stage_final is the last (2026-11-01: without this it was read again for every stage number up to 8)
 	}
 
 	if (m_wpStage.size() < 2 || m_wpN <= 0) return;	// 最低2段必要
+
+	// Join identical vertices (2026-11-01). assimp's OBJ reader gives every triangle corner its own vertex, so a
+	//   13,000-triangle blade arrived with 40,000 vertices, all of them morphed on the CPU every frame. Two corners
+	//   are one vertex only if they match in EVERY stage (position + normal), and in UV: a corner on a hard edge or
+	//   a UV seam stays split, so the shading does not change. Not aiProcess_JoinIdenticalVertices: that looks at
+	//   one file at a time, and two stages could then join differently and lose the shared vertex order.
+	{
+		std::map<std::vector<float>, unsigned int> seen;
+		std::vector<unsigned int> remap(m_wpN);
+		std::vector<int> firstOf;	// new vertex -> the old vertex it came from
+		std::vector<float> key;
+		for (int i = 0; i < m_wpN; ++i)
+		{
+			key.clear();
+			key.push_back(m_wpStage[0].uv[i].x); key.push_back(m_wpStage[0].uv[i].y);
+			for (const WpStage& st : m_wpStage)
+			{
+				const XMFLOAT3& p = st.pos[i];
+				const XMFLOAT3& n = st.nrm[i];
+				key.push_back(p.x); key.push_back(p.y); key.push_back(p.z);
+				key.push_back(n.x); key.push_back(n.y); key.push_back(n.z);
+			}
+			auto it = seen.find(key);
+			if (it == seen.end())
+			{
+				it = seen.emplace(key, (unsigned int)firstOf.size()).first;
+				firstOf.push_back(i);
+			}
+			remap[i] = it->second;
+		}
+		for (unsigned int& ix : m_wpIdx) ix = remap[ix];
+		for (WpStage& st : m_wpStage)
+		{
+			WpStage packed;
+			for (int i : firstOf)
+			{
+				packed.pos.push_back(st.pos[i]);
+				packed.nrm.push_back(st.nrm[i]);
+				packed.uv.push_back(st.uv[i]);
+			}
+			st = std::move(packed);
+		}
+		m_wpN = (int)firstOf.size();
+	}
+
+	// 向きの正規化(2026-10-29): 武器のファイルがどの軸で作られていても、読み込んだ直後に
+	//   「長手 = Z(切っ先は -Z)/ 厚み = Y / 幅 = X」の標準の向きへ回す。配置(WeaponRot)・照準・研ぎは全部この向きが前提。
+	//   これで武器を増やしても軸の作り方を揃えなくてよい(LongSword は長手 = Y で入ってきて、金床の上で立ってしまった)。
+	//   軸は完成形の箱で決める: 一番長い = 長手、一番薄い = 厚み、残り = 幅。切っ先 = 長手の両端のうち幅が狭い方。
+	//   今までの刀身は元々この向きなので、回転は単位行列になり何も変わらない。
+	{
+		const std::vector<XMFLOAT3>& fin = m_wpStage.back().pos;
+		XMFLOAT3 mn(1e9f, 1e9f, 1e9f), mx(-1e9f, -1e9f, -1e9f);
+		for (const XMFLOAT3& p : fin)
+		{
+			mn.x = fminf(mn.x, p.x); mn.y = fminf(mn.y, p.y); mn.z = fminf(mn.z, p.z);
+			mx.x = fmaxf(mx.x, p.x); mx.y = fmaxf(mx.y, p.y); mx.z = fmaxf(mx.z, p.z);
+		}
+		const float ext[3] = { mx.x - mn.x, mx.y - mn.y, mx.z - mn.z };
+		int L = 0, T = 0;
+		for (int a = 1; a < 3; ++a) { if (ext[a] > ext[L]) L = a; if (ext[a] < ext[T]) T = a; }
+		const int W = 3 - L - T;
+		// 切っ先の側: 長手の両端それぞれ END_FRAC の範囲で、幅方向の広がりを比べる(狭い方が切っ先)
+		const float END_FRAC = 0.1f;
+		float endW[2] = { 0.0f, 0.0f };
+		for (const XMFLOAT3& p : fin)
+		{
+			const float* v = &p.x;
+			const float t = (v[L] - (&mn.x)[L]) / fmaxf(ext[L], 1e-6f);
+			if (t <= END_FRAC)        endW[0] = fmaxf(endW[0], fabsf(v[W] - ((&mn.x)[W] + (&mx.x)[W]) * 0.5f));
+			if (t >= 1.0f - END_FRAC) endW[1] = fmaxf(endW[1], fabsf(v[W] - ((&mn.x)[W] + (&mx.x)[W]) * 0.5f));
+		}
+		const float tipSign = (endW[1] < endW[0]) ? 1.0f : -1.0f;	// 切っ先が長手の + 側なら +1
+		// 新しい座標: x = s * 幅, y = 厚み, z = -tipSign * 長手(切っ先 → -Z)。s は回転(行列式 +1)になる様に選ぶ(鏡映すると表裏と巻き順が狂う)
+		float m[3][3] = {};
+		m[0][W] = 1.0f; m[1][T] = 1.0f; m[2][L] = -tipSign;
+		const float det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+		                + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+		if (det < 0.0f) m[0][W] = -1.0f;
+		auto apply = [&](XMFLOAT3& p)
+		{
+			const float v[3] = { p.x, p.y, p.z };
+			p = XMFLOAT3(m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2],
+			             m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2],
+			             m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2]);
+		};
+		for (WpStage& st : m_wpStage)
+		{
+			for (XMFLOAT3& p : st.pos) apply(p);
+			for (XMFLOAT3& n : st.nrm) apply(n);
+		}
+		// 粗坯の箱(配置のフィット・照準の区域)を回した後の座標で取り直す
+		m_wpMin = XMFLOAT3(1e9f, 1e9f, 1e9f); m_wpMax = XMFLOAT3(-1e9f, -1e9f, -1e9f);
+		for (const XMFLOAT3& p : m_wpStage[0].pos)
+		{
+			m_wpMin.x = fminf(m_wpMin.x, p.x); m_wpMin.y = fminf(m_wpMin.y, p.y); m_wpMin.z = fminf(m_wpMin.z, p.z);
+			m_wpMax.x = fmaxf(m_wpMax.x, p.x); m_wpMax.y = fmaxf(m_wpMax.y, p.y); m_wpMax.z = fmaxf(m_wpMax.z, p.z);
+		}
+	}
 
 	// 厚み軸 = 長軸以外の2軸のうち、完成形(stage_final)で一番薄い軸(刃の表裏を貫く方向)。
 	// 粗坯(鉄条)は幅と厚みが近く紛らわしいので、薄さがはっきりしている完成形で判定する。
@@ -473,7 +576,12 @@ void SceneForge::BuildWeaponMorph()
 	const bool  playing = (m_state == GAME_PLAY);
 	const int   segAim  = (playing && m_aimValid) ? AimSeg() : -1;	// 準心が鉄の上に無ければ高亮なし
 	const float pulse   = 0.5f + 0.5f * sinf(m_time * 8.0f);
-	XMFLOAT4 heat = HeatRGB(m_forging.Heat(), 0.0f);
+	// The finished sword (hilt fitted, in the hand for the test cut; 2026-10-29 user): it looks like the finished
+	//   steel, not still hot or showing the tempering colors -- the game only skips waiting for it to cool and
+	//   polishing it. The forging state itself (heat, temper cells for the grade) is left as it is.
+	const bool  finished  = SwordInHand();
+	const float bladeHeat = finished ? 0.0f : m_forging.Heat();
+	XMFLOAT4 heat = HeatRGB(bladeHeat, 0.0f);
 	const int NL = ForgingSim::NL;
 	// 打撃の跡の光: 打った所は少し熱い色(温度 + m_impactFlashHeat の HeatRGB)へ寄せ、時間で線形に戻す。
 	const float MIN_FLASH_TIME = 0.01f, MIN_FLASH_SPREAD = 0.1f;	// 0 割りの防止
@@ -481,16 +589,26 @@ void SceneForge::BuildWeaponMorph()
 	XMFLOAT4 flashCol = HeatRGB(fminf(m_forging.Heat() + m_impactFlashHeat, 1.0f), 0.0f);
 
 	// 進捗 p(0..1) → 段チェーン(stage_0..final)上の頂点 i の補間位置/法線(ローカル)。
-	auto morphAt = [&](int i, float p, XMVECTOR& outPos, XMVECTOR& outNrm)
+	//   Three or more stages (2026-11-01): the hammer runs stage_0 .. the stage before the last (the forged blade with its
+	//   rough, blunt edge), the grindstone runs that last step by 'ground' 0..1. Two stages: the hammer runs both, nothing to grind.
+	const int forgeSteps = (ns >= 3) ? ns - 2 : 1;
+	auto morphAt = [&](int i, float p, float ground, XMVECTOR& outPos, XMVECTOR& outNrm)
 	{
 		if (p < 0) p = 0; if (p > 1) p = 1;
-		float g = p * (ns - 1);
-		int   k = (int)g; if (k < 0) k = 0; if (k > ns - 2) k = ns - 2;
+		float g = p * forgeSteps;
+		int   k = (int)g; if (k < 0) k = 0; if (k > forgeSteps - 1) k = forgeSteps - 1;
 		float t = g - k; if (t < 0) t = 0; if (t > 1) t = 1;
 		const WpStage& A = m_wpStage[k];
 		const WpStage& B = m_wpStage[k + 1];
 		outPos = XMVectorLerp(XMLoadFloat3(&A.pos[i]), XMLoadFloat3(&B.pos[i]), t);
 		outNrm = XMVectorLerp(XMLoadFloat3(&A.nrm[i]), XMLoadFloat3(&B.nrm[i]), t);
+		if (ns >= 3)	// the grinding takes off what separates the last two stages, wherever the forging has got to
+		{
+			const WpStage& C = m_wpStage[ns - 2];
+			const WpStage& D = m_wpStage[ns - 1];
+			outPos = XMVectorAdd(outPos, XMVectorScale(XMVectorSubtract(XMLoadFloat3(&D.pos[i]), XMLoadFloat3(&C.pos[i])), ground));
+			outNrm = XMVectorAdd(outNrm, XMVectorScale(XMVectorSubtract(XMLoadFloat3(&D.nrm[i]), XMLoadFloat3(&C.nrm[i])), ground));
+		}
 	};
 
 	const int ta = m_wpThickAxis;
@@ -502,9 +620,13 @@ void SceneForge::BuildWeaponMorph()
 	const int wa = (ta >= 0) ? 3 - la - ta : -1;
 	const float* fmn = &m_wpFinMin.x;	// 完成形の箱(研ぐのは完成した刃なので、幅は完成形で正規化)
 	const float* fmx = &m_wpFinMax.x;
-	// 刃先の欠け(PS_Wp)用: 長手セルごとの今の幅(モーフ後の頂点の幅の座標の最小/最大)。ループで集め、後で正規化に使う
-	float cellLo[NL], cellHi[NL];
-	for (int c = 0; c < NL; ++c) { cellLo[c] = FLT_MAX; cellHi[c] = -FLT_MAX; }
+
+	// How far the grinding has got in a length cell. At the grindstone only the face being ground counts (2026-10-26 user:
+	//   the face is hidden on the stone, so the edge has to show what is left of THIS face); elsewhere both faces' mean.
+	const bool atGrind = (m_workAt == Station::Grindstone);
+	const int  grindSide = atGrind ? GrindSide() : 0;
+	auto groundOf = [&](int side, int c) { return m_forging.EdgeCellDoneOf(side, c) ? 1.0f : m_forging.EdgeCellProgOf(side, c); };
+	auto groundCell = [&](int c) { return atGrind ? groundOf(grindSide, c) : (groundOf(0, c) + groundOf(1, c)) * 0.5f; };
 
 	for (int i = 0; i < m_wpN; ++i)
 	{
@@ -514,6 +636,8 @@ void SceneForge::BuildWeaponMorph()
 		float pFront, pBack;	// この頂点位置での表(面0)/裏(面1)それぞれの進捗
 		float vFront, vBack;	// 同じく、氧化皮の剥がれ具合(未完成の区域は厚い皮が残る=どこが未完成か鉄を見て分かる)
 		float flash = 0.0f;					// 打撃の跡の光(0..1)
+		float gFront = 0.0f, gBack = 0.0f;	// the same, each face on its own: a ground face is bright bare steel (PS_Wp)
+		float ground = 0.0f;				// the grinding here 0..1 (morphAt)
 		float tEdge = 0.0f;					// 焼き戻しの刃先の色(このセル)
 		if (playing)
 		{
@@ -537,6 +661,9 @@ void SceneForge::BuildWeaponMorph()
 			};
 			vFront = scaleVis(0, ca) + (scaleVis(0, cb) - scaleVis(0, ca)) * ct;
 			vBack  = scaleVis(1, ca) + (scaleVis(1, cb) - scaleVis(1, ca)) * ct;
+			ground = groundCell(ca) + (groundCell(cb) - groundCell(ca)) * ct;
+			gFront = groundOf(0, ca) + (groundOf(0, cb) - groundOf(0, ca)) * ct;
+			gBack  = groundOf(1, ca) + (groundOf(1, cb) - groundOf(1, ca)) * ct;
 			// 打撃の跡の光: 打った長手位置からの距離でガウス減衰 × 時間で線形に消える。
 			if (flashLife > 0.0f)
 			{
@@ -547,12 +674,13 @@ void SceneForge::BuildWeaponMorph()
 			tEdge  = m_temperCell[ca] + (m_temperCell[cb] - m_temperCell[ca]) * ct;	// 焼き戻しの刃先の色(長手セルを隣とブレンド)
 			thisSeg = (int)AimSystem::SegCoordLocal(a0, m_wpMin, m_wpMax, NSEG); if (thisSeg >= NSEG) thisSeg = NSEG - 1;	// P の調試高亮用
 		}
-		else { pFront = pBack = m_forgeProg; vFront = vBack = m_forgeProg; thisSeg = -1; }
+		else { pFront = pBack = m_forgeProg; vFront = vBack = ground = m_forgeProg; thisSeg = -1; }
 
 		// ★軸分解モーフ: 輪郭(長さ/幅)は両面で共有 → 両面の平均進捗で動かす(翻しても輪郭が残る)。
 		//   厚み方向は「この頂点が属する面」の進捗で動かす(叩いた面だけ斜面が付き、裏はまだ平ら)。
 		const float pOutline = (pFront + pBack) * 0.5f;
 		float pFace = pOutline;
+		float gFace = (gFront + gBack) * 0.5f;
 		float vFace = (vFront + vBack) * 0.5f;	// 氧化皮用(面の重みは下で pFace と同じ物を使う)
 		if (ta >= 0)
 		{
@@ -567,30 +695,15 @@ void SceneForge::BuildWeaponMorph()
 			const float vPlus  = plusIsFront ? vFront : vBack;
 			const float vMinus = plusIsFront ? vBack  : vFront;
 			vFace = vMinus + (vPlus - vMinus) * wPlus;
+			gFace = (plusIsFront ? gBack : gFront) + ((plusIsFront ? gFront : gBack) - (plusIsFront ? gBack : gFront)) * wPlus;
 		}
 
 		XMVECTOR posO, nrmO, posF, nrmF;
-		morphAt(i, pOutline, posO, nrmO);
-		morphAt(i, pFace,    posF, nrmF);
+		morphAt(i, pOutline, ground, posO, nrmO);
+		morphAt(i, pFace,    ground, posF, nrmF);
 		// 輪郭側の位置を基に、厚み軸の成分だけ面側の値に差し替える。
 		XMFLOAT3 lp; XMStoreFloat3(&lp, posO);
 		if (ta >= 0) { XMFLOAT3 lf; XMStoreFloat3(&lf, posF); (&lp.x)[ta] = (&lf.x)[ta]; }
-
-		// ★研ぐ前の刃先の欠け(PS_Wp が画素ごとに切り欠く)に使う座標。頂点を動かすと刃先の頂点が粗くて大きな波にしか
-		//   ならなかった(2026-10-26)ので、形は画素で作り、頂点は座標だけを渡す(頂点の間は線形補間=画素ごとに正しい位置)。
-		//   x = 長手の位置(セル 0..NL。研ぎの進みのセルと同じ規約) / y = 幅の正規化座標(符号付き。±1 = 両側の刃先)
-		XMFLOAT2 edge(AimSystem::SegCoordLocal(a0, m_wpMin, m_wpMax, NL), 0.0f);
-		if (wa >= 0)
-		{
-			// ここでは幅の生の座標だけ入れ、全頂点を見た後で「その長手セルの今の幅」で -1..1 に直す(ループの後)。
-			//   2026-10-26: 箱(粗い鉄と完成形を進みで混ぜた物)で測ると、鍛造の途中の本当の幅とずれ、刃の中まで
-			//   刃先と見なして切り欠いた(中に穴=刃の裏側の暗い面が見え、翻す時に黒い線になった)。
-			edge.y = (&lp.x)[wa];
-			const int cell = (int)fminf(fmaxf(edge.x, 0.0f), (float)(NL - 1));
-			cellLo[cell] = fminf(cellLo[cell], edge.y);
-			cellHi[cell] = fmaxf(cellHi[cell], edge.y);
-		}
-		m_wpVtx[i].edge = edge;
 
 		// 焼き戻しの色: 刃の中央(背)ほど先に進み、両側の刃先が一番遅れる(差別焼き戻し)。刃先の値 = そのセルの m_temperCell。
 		//   wn = 幅の正規化座標(0 = 中央 / 1 = 刃先)。刃先の色がまだ 0 の所は色なし。
@@ -602,7 +715,8 @@ void SceneForge::BuildWeaponMorph()
 			const float wn = (wh > 1e-6f) ? fminf(fabsf((&lp.x)[wa] - wc) / wh, 1.0f) : 1.0f;
 			temper = tEdge * (1.0f + TEMPER_SPINE_LEAD * (1.0f - wn));
 		}
-		m_wpVtx[i].temper = fminf(temper, 1.0f);
+		m_wpVtx[i].temper = finished ? 0.0f : fminf(temper, 1.0f);
+		m_wpVtx[i].polish = gFace;
 		m_wpVtx[i].work  = vFace;	// PS へ: この頂点の面の氧化皮の剥がれ具合(刃先/側面は両面を混ぜた値。完成まで厚い皮が残る)
 
 		XMVECTOR pp = XMVector3TransformCoord(XMLoadFloat3(&lp), world);
@@ -628,23 +742,8 @@ void SceneForge::BuildWeaponMorph()
 			col.y = col.y + (1.0f - col.y) * b;
 			col.z = col.z + (1.0f - col.z) * b;
 		}
-		col.w = m_forging.Heat();			// PSへ温度スカラーを渡す(冷→熱のブレンドに使う)
+		col.w = bladeHeat;					// PSへ温度スカラーを渡す(冷→熱のブレンドに使う)
 		m_wpVtx[i].col = col;
-	}
-
-	// 刃先の欠けの幅の座標を、その長手セルの今の幅で -1..1 に直す(±1 = 今の形の両側の刃先)。
-	//   セルごとに測る = 鍛造の途中の形にも、細くなる切っ先にも合う
-	if (wa >= 0)
-	{
-		const float MIN_HALF_WIDTH = 1e-6f;
-		for (int i = 0; i < m_wpN; ++i)
-		{
-			XMFLOAT2& e = m_wpVtx[i].edge;
-			const int cell = (int)fminf(fmaxf(e.x, 0.0f), (float)(NL - 1));
-			const float wc = (cellLo[cell] + cellHi[cell]) * 0.5f;
-			const float wh = (cellHi[cell] - cellLo[cell]) * 0.5f;
-			e.y = (wh > MIN_HALF_WIDTH) ? fminf(fmaxf((e.y - wc) / wh, -1.0f), 1.0f) : 0.0f;
-		}
 	}
 }
 
@@ -674,26 +773,7 @@ void SceneForge::DrawWeapon()
 		XMFLOAT4 scale2;	// x 叩く前から剥がれている割合, y 反射を描く(診断), z 発光を描く(診断), w 法線マップ有り
 		XMFLOAT4 temperKey[TEMPER_KEYS];	// 焼き戻しの色の表(xyz = 色, w = 位置)。表は C++ が持つ=色見本(HUD)と刃が同じ色になる
 		XMFLOAT4 temperFilm;				// x 膜が「はっきり付いた」とみなす位置
-		XMFLOAT4 jag;						// 研ぐ前の刃先の欠け: x 深さ(刃の半分の幅に対する割合。0 = 出さない), y 細かさ(セル1つあたりの山の数)
-		XMFLOAT4 jagCell[ForgingSim::NL / 4];	// 長手セルごとの欠けの残り 0..1(= 1 − 両面の研ぎの平均)。4つずつ詰める
 	} wp{};
-	static_assert(ForgingSim::NL % 4 == 0, "jagCell packs 4 length cells per float4");
-	// 欠けは「叩いた所から」付く(2026-10-26 ユーザー: 鍛造が済んだ瞬間に全体へ出るのは、研ぎの為に作った様で順序が逆)。
-	//   叩くと金属が刃先の方へ押し出され、縁が不揃いに荒れる → 長手セルの鍛造の進みだけ欠けが深くなり、研いだ分だけ消える。
-	const bool jagOn = (m_state == GAME_PLAY);
-	wp.jag = { jagOn ? m_edgeJagAmp : 0.0f, m_edgeJagFreq, 0.0f, 0.0f };
-	// 砥石の上では「今研いでいる面」の進みだけで決める(2026-10-26 ユーザー: 片面が済んだ事が見て分からないと UI に頼るしかない)。
-	//   研ぐ面は下(砥石側)で見えない → 刃先の欠けを「今の面の残り」の印にする(物理の厳密さより読みやすさ)。
-	//   砥石以外(運んでいる・他の工位)では両面の平均。
-	const bool atGrind = (m_workAt == Station::Grindstone);
-	const int  grindSide = atGrind ? GrindSide() : 0;
-	for (int c = 0; c < ForgingSim::NL; ++c)
-	{
-		const float ground = atGrind ? m_forging.EdgeCellProgOf(grindSide, c)
-		                             : (m_forging.EdgeCellProgOf(0, c) + m_forging.EdgeCellProgOf(1, c)) * 0.5f;
-		const float hammered = fmaxf(m_forging.CellProgOf(0, c), m_forging.CellProgOf(1, c));	// どちらの面を叩いても縁は荒れる
-		(&wp.jagCell[c / 4].x)[c % 4] = hammered * (1.0f - ground);
-	}
 	for (int k = 0; k < TEMPER_KEYS; ++k)
 		wp.temperKey[k] = { TEMPER_COLOR_TABLE[k][1], TEMPER_COLOR_TABLE[k][2], TEMPER_COLOR_TABLE[k][3], TEMPER_COLOR_TABLE[k][0] };
 	wp.temperFilm = { TEMPER_FILM_FULL, 0.0f, 0.0f, 0.0f };

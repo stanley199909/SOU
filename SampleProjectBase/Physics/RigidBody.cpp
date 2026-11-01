@@ -3,6 +3,15 @@
 
 using namespace DirectX;
 
+void RigidBody::PlaneBasis(const XMFLOAT3& normal, XMFLOAT3& t1, XMFLOAT3& t2)
+{
+    const XMVECTOR n = XMVector3Normalize(XMLoadFloat3(&normal));
+    const XMVECTOR helper = (fabsf(XMVectorGetY(n)) < 0.9f) ? XMVectorSet(0, 1, 0, 0) : XMVectorSet(1, 0, 0, 0);
+    const XMVECTOR a = XMVector3Normalize(XMVector3Cross(helper, n));
+    XMStoreFloat3(&t1, a);
+    XMStoreFloat3(&t2, XMVector3Cross(n, a));
+}
+
 namespace
 {
     const float MIN_MASS       = 1e-4f;   // guards 1/m
@@ -111,16 +120,29 @@ void RigidBody::Update(float dt, const std::vector<PlaneCollider>& planes, const
         {
             const XMVECTOR n  = XMVector3Normalize(XMLoadFloat3(&pc.normal));
             const XMVECTOR p0 = XMLoadFloat3(&pc.point);
-            const XMVECTOR helper = (fabsf(XMVectorGetY(n)) < 0.9f) ? XMVectorSet(0, 1, 0, 0) : XMVectorSet(1, 0, 0, 0);
-            const XMVECTOR t1 = XMVector3Normalize(XMVector3Cross(helper, n));
-            const XMVECTOR t2 = XMVector3Cross(n, t1);
+            XMFLOAT3 b1, b2;
+            PlaneBasis(pc.normal, b1, b2);
+            const XMVECTOR t1 = XMLoadFloat3(&b1), t2 = XMLoadFloat3(&b2);
             for (const XMFLOAT3& lp : m_points)
             {
                 XMVECTOR wp = XMVector3TransformCoord(XMLoadFloat3(&lp), world);
                 XMVECTOR rel = XMVectorSubtract(wp, p0);
                 float depth = -XMVectorGetX(XMVector3Dot(rel, n));
                 if (depth <= 0.0f) continue;
-                if (pc.radius > 0.0f)                          // finite plane: only inside the disc
+                if (!pc.outline.empty())                       // finite plane: only inside its real shape
+                {
+                    const XMVECTOR inPlane = XMVectorAdd(rel, XMVectorScale(n, depth));
+                    const float u = XMVectorGetX(XMVector3Dot(inPlane, t1)), v = XMVectorGetX(XMVector3Dot(inPlane, t2));
+                    bool inside = true;   // convex, counter-clockwise: inside = left of every edge
+                    for (size_t k = 0; k < pc.outline.size() && inside; ++k)
+                    {
+                        const XMFLOAT2& a = pc.outline[k];
+                        const XMFLOAT2& b = pc.outline[(k + 1) % pc.outline.size()];
+                        if ((b.x - a.x) * (v - a.y) - (b.y - a.y) * (u - a.x) < 0.0f) inside = false;
+                    }
+                    if (!inside) continue;
+                }
+                else if (pc.radius > 0.0f)                     // finite plane: only inside the disc
                 {
                     XMVECTOR inPlane = XMVectorAdd(rel, XMVectorScale(n, depth));
                     if (XMVectorGetX(XMVector3Length(inPlane)) > pc.radius) continue;

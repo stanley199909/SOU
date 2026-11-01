@@ -4,7 +4,7 @@
 class SceneForge; // owner (forward declared; we only store a pointer)
 
 // Test cut step (search: "tameshigiri", JP: tameshigiri / shi-giri).
-// The finished blade gets a hilt and the player cuts an armored straw dummy outside.
+// The finished blade gets a hilt and the player cuts a straw dummy outside.
 // The forged quality (the whole-forge grade) is the sword's cutting power: a good
 // sword cuts the torso in two in one slash, a poor one needs several.
 // SceneForge owns the slashing (input, swing, damage, the dummy); this class only
