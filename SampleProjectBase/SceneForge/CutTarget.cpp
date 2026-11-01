@@ -92,14 +92,18 @@ bool CutTarget::WorldBox(XMFLOAT3& mn, XMFLOAT3& mx) const
 
 namespace
 {
-    // --- the slit (where the blade bit in), found by looking along the line of sight ---
+    // --- the slit (where the blade goes through), found by looking along the line of sight ---
     const float SLIT_RANGE      = 1.5f;    // m: offsets along the swing searched on each side of the line of sight
     const int   SLIT_SAMPLES    = 96;      // rays over that range (about 3 cm apart) ...
     const int   SLIT_REFINE     = 8;       // ... then the entry / far side refined by bisection
-    const float SLIT_STEP       = 0.01f;   // m between the decal strip's points
-    const float SLIT_HALF_W     = 0.006f;  // m: half the width of the dark slit
-    const float SLIT_LIFT       = 0.002f;  // m: lifted toward the eye off the surface (no z-fighting with it)
-    const char* const SLIT_MATERIAL = "CutNotch";
+    const int   AREA_STEPS      = 48;      // thickness samples along the cut (the cross-section's area)
+
+    // A cut that has not got through opens at most this share of the area. Deeper, the straw left could not
+    // hold the upper part up against gravity (2026-11-01 F5: a cut nearly through looked absurd).
+    const float WOUND_DEEPEST   = 0.6f;
+    // --- the wound's spring (the upper part sags into place and rocks a little) ---
+    const float WOUND_STIFFNESS = 60.0f;   // 1/s^2
+    const float WOUND_DAMPING   = 6.0f;    // 1/s (below critical = it overshoots once)
 
     XMFLOAT3 ToLocalPoint(const XMFLOAT3& w, FXMMATRIX inv) { XMFLOAT3 o; XMStoreFloat3(&o, XMVector3TransformCoord(XMLoadFloat3(&w), inv)); return o; }
     XMFLOAT3 ToLocalDir(const XMFLOAT3& w, FXMMATRIX inv)   { XMFLOAT3 o; XMStoreFloat3(&o, XMVector3Normalize(XMVector3TransformNormal(XMLoadFloat3(&w), inv))); return o; }
@@ -107,14 +111,22 @@ namespace
     float Dot(const XMFLOAT3& a, const XMFLOAT3& b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
 }
 
-bool CutTarget::RayMesh(const XMFLOAT3& o, const XMFLOAT3& d, float& tBest) const
+template<class F> void CutTarget::ForIntact(F visit) const
 {
-    // Moller-Trumbore ray / triangle test over every standing triangle; the nearest hit in front.
+    for (const Piece& p : m_standing) visit(p);
+    if (m_wound.open)
+        for (const Piece& p : m_debris.back().pieces) visit(p);
+}
+
+bool CutTarget::RayMesh(const XMFLOAT3& o, const XMFLOAT3& d, float& tBest, float* tFar) const
+{
+    // Moller-Trumbore ray / triangle test over every triangle; the nearest (and farthest) hit in front.
     const float PARALLEL_EPS = 1e-9f;
     bool any = false;
     tBest = FLT_MAX;
+    if (tFar) *tFar = 0.0f;
     const XMVECTOR O = XMLoadFloat3(&o), D = XMLoadFloat3(&d);
-    for (const Piece& p : m_standing)
+    ForIntact([&](const Piece& p)
     {
         const std::vector<MeshSlicer::Vertex>& v = p.mesh.verts;
         const std::vector<uint32_t>& ix = p.mesh.indices;
@@ -133,24 +145,24 @@ bool CutTarget::RayMesh(const XMFLOAT3& o, const XMFLOAT3& d, float& tBest) cons
             const float w = XMVectorGetX(XMVector3Dot(D, qv)) * inv;
             if (w < 0.0f || u + w > 1.0f) continue;
             const float t = XMVectorGetX(XMVector3Dot(e2, qv)) * inv;
-            if (t > 0.0f && t < tBest) { tBest = t; any = true; }
+            if (t <= 0.0f) continue;
+            if (t < tBest) { tBest = t; any = true; }
+            if (tFar && t > *tFar) *tFar = t;
         }
-    }
+    });
     return any;
 }
 
-CutTarget::StrikeResult CutTarget::Evaluate(const Aim& aim, float damage, int& notch) const
+CutTarget::StrikeResult CutTarget::Judge(const Aim& aim, float power, float needed) const
 {
     StrikeResult r;
-    notch = -1;
     // the plane, the swing and the line of sight in local space
     const XMMATRIX inv = XMMatrixInverse(nullptr, World());
     const XMFLOAT3 p = ToLocalPoint(aim.point, inv), n = ToLocalDir(aim.normal, inv);
     const XMFLOAT3 s = ToLocalDir(aim.swingDir, inv), eye = ToLocalPoint(aim.eye, inv), view = ToLocalDir(aim.viewDir, inv);
 
-    // which parts does the plane cross (a vertex on each side); the toughest one sets what the notch needs
-    float needed = 0.0f;
-    for (const Piece& piece : m_standing)
+    // does the plane cross any part (a vertex on each side)?
+    ForIntact([&](const Piece& piece)
     {
         bool pos = false, neg = false;
         for (const MeshSlicer::Vertex& v : piece.mesh.verts)
@@ -158,22 +170,16 @@ CutTarget::StrikeResult CutTarget::Evaluate(const Aim& aim, float damage, int& n
             if (PlaneDist(v.pos, p, n) > 0.0f) pos = true; else neg = true;
             if (pos && neg) break;
         }
-        if (!(pos && neg)) continue;
-        r.hit = true;
-        if (m_defs[piece.part].core) r.coreHit = true;
-        needed = fmaxf(needed, m_defs[piece.part].durability);
-    }
+        if (pos && neg) r.hit = true;
+    });
     if (!r.hit) return r;
 
-    // the same notch? (its plane passes close to this one and is turned the same way)
-    const float cosLimit = cosf(notchAngle);
-    for (size_t i = 0; i < m_notches.size(); ++i)
-    {
-        const Notch& k = m_notches[i];
-        if (fabsf(PlaneDist(p, k.point, k.normal)) < notchTolerance && fabsf(Dot(n, k.normal)) > cosLimit) { notch = (int)i; break; }
-    }
-    r.sameNotch = notch >= 0;
-    const float gathered = (notch >= 0 ? m_notches[notch].damage : 0.0f) + damage;
+    // the whole rule: through the middle of the torso = it counts; enough gathered = cut in two
+    r.coreHit = fabsf(PlaneDist(m_coreCenter, p, n)) < coreZone;
+    const float gathered = m_gathered + power;
+    r.cut   = r.coreHit && gathered >= needed;
+    r.depth = r.cut ? 1.0f : (r.coreHit ? gathered / needed * WOUND_DEEPEST : offBite);
+    r.stuck = !r.cut;
 
     // the slit: look along the line of sight from points shifted along the swing; the run of hits
     // around the line of sight (or nearest to it) is where the blade goes through
@@ -205,11 +211,35 @@ CutTarget::StrikeResult CutTarget::Evaluate(const Aim& aim, float damage, int& n
     const float uIn  = refine(-SLIT_RANGE + du * best0, -SLIT_RANGE + du * (best0 - 1));
     const float uOut = refine(-SLIT_RANGE + du * best1, -SLIT_RANGE + du * (best1 + 1));
 
-    r.cut   = gathered >= needed;
-    r.depth = r.cut ? 1.0f : gathered / needed;
-    r.stuck = !r.cut;
+    // Where the blade stops: the cutting energy is spent on the AREA it opens (fracture energy grows with
+    // the new surface), so the cross-section of the real mesh decides how far it gets. Rays along the line
+    // of sight lie in the cut plane: their length through the dummy is the section's thickness at that
+    // point; adding the thicknesses up along the cut (trapezoid rule) gives the area. The blade gets
+    // slower through the thick parts and stops where the share of the area it can open is used up.
+    float thick[AREA_STEPS + 1];
+    float area = 0.0f;
+    for (int i = 0; i <= AREA_STEPS; ++i)
+    {
+        float tNear, tFar;
+        const bool h = RayMesh(Along(eye, s, uIn + (uOut - uIn) * i / AREA_STEPS), view, tNear, &tFar);
+        thick[i] = h ? tFar - tNear : 0.0f;
+        if (i > 0) area += 0.5f * (thick[i - 1] + thick[i]);
+    }
+    const float spend = area * r.depth;
+    float opened = 0.0f;
+    r.reach = 1.0f;
+    for (int i = 0; i < AREA_STEPS; ++i)
+    {
+        const float slice = 0.5f * (thick[i] + thick[i + 1]);
+        if (opened + slice >= spend)
+        {
+            r.reach = (i + (slice > 0.0f ? (spend - opened) / slice : 0.0f)) / AREA_STEPS;
+            break;
+        }
+        opened += slice;
+    }
     r.entryOffset = uIn;
-    r.stopOffset  = uIn + (uOut - uIn) * r.depth;
+    r.stopOffset  = uIn + (uOut - uIn) * r.reach;
     // the two points on the surface (world)
     const XMMATRIX world = World();
     auto surface = [&](float u)
@@ -222,114 +252,85 @@ CutTarget::StrikeResult CutTarget::Evaluate(const Aim& aim, float damage, int& n
     };
     r.entry = surface(r.entryOffset);
     r.stop  = surface(r.stopOffset);
+    r.through = surface(uOut);
     r.depthAlongView = Dot(XMFLOAT3(r.stop.x - aim.eye.x, r.stop.y - aim.eye.y, r.stop.z - aim.eye.z), aim.viewDir);
     return r;
 }
 
-CutTarget::StrikeResult CutTarget::Judge(const Aim& aim, float damage) const
-{
-    int notch;
-    return Evaluate(aim, damage, notch);
-}
-
-void CutTarget::BuildSlit(Notch& k, const Aim& aim, float entryOffset, float upTo) const
+void CutTarget::OpenWound(const Aim& aim, const StrikeResult& r, float pushScale)
 {
     const XMMATRIX inv = XMMatrixInverse(nullptr, World());
-    const XMFLOAT3 s = ToLocalDir(aim.swingDir, inv), eye = ToLocalPoint(aim.eye, inv), view = ToLocalDir(aim.viewDir, inv);
-    const XMFLOAT3 across = k.normal;   // the plane's normal lies along the surface, across the slit
-    const XMFLOAT3 lift(-view.x * SLIT_LIFT, -view.y * SLIT_LIFT, -view.z * SLIT_LIFT);
-    const XMFLOAT3 faceN(-view.x, -view.y, -view.z);   // the strip faces the eye
-
-    MeshSlicer::Mesh m;
-    const int steps = (int)ceilf((upTo - entryOffset) / SLIT_STEP);
-    for (int i = 0; i <= steps; ++i)
-    {
-        const float u = fminf(entryOffset + SLIT_STEP * i, upTo);
-        float t;
-        if (!RayMesh(Along(eye, s, u), view, t)) continue;
-        const XMFLOAT3 c = Along(Along(eye, s, u), view, t);
-        for (int side = -1; side <= 1; side += 2)
-        {
-            MeshSlicer::Vertex v;
-            v.pos = XMFLOAT3(c.x + lift.x + across.x * SLIT_HALF_W * side, c.y + lift.y + across.y * SLIT_HALF_W * side,
-                             c.z + lift.z + across.z * SLIT_HALF_W * side);
-            v.normal = faceN;
-            v.uv = XMFLOAT2((float)i / (steps > 0 ? steps : 1), (side + 1) * 0.5f);
-            m.verts.push_back(v);
-        }
-    }
-    // quads between consecutive pairs, wound so the front face looks at the eye
-    for (uint32_t i = 0; i + 3 < (uint32_t)m.verts.size(); i += 2)
-    {
-        const uint32_t a = i, b = i + 1, c = i + 2, d = i + 3;
-        const XMVECTOR pa = XMLoadFloat3(&m.verts[a].pos), pb = XMLoadFloat3(&m.verts[b].pos), pc = XMLoadFloat3(&m.verts[c].pos);
-        const float facing = XMVectorGetX(XMVector3Dot(XMVector3Cross(XMVectorSubtract(pb, pa), XMVectorSubtract(pc, pa)), XMLoadFloat3(&faceN)));
-        // triangles (a, b, c) and (b, d, c); flipped when that winding faces away from the eye
-        const uint32_t front[6] = { a, b, c, b, d, c }, back[6] = { a, c, b, b, c, d };
-        const uint32_t* tri = (facing >= 0.0f) ? front : back;
-        m.indices.insert(m.indices.end(), tri, tri + 6);
-    }
-    if (m.indices.empty()) { k.slit.reset(); return; }
-    MeshBuffer::Description desc = {};
-    desc.pVtx = m.verts.data(); desc.vtxSize = sizeof(MeshSlicer::Vertex); desc.vtxCount = (UINT)m.verts.size();
-    desc.pIdx = m.indices.data(); desc.idxSize = sizeof(uint32_t); desc.idxCount = (UINT)m.indices.size();
-    desc.isWrite = false; desc.topology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-    k.slit = std::make_shared<MeshBuffer>(desc);
+    m_wound.aim.point    = ToLocalPoint(aim.point, inv);
+    m_wound.aim.normal   = ToLocalDir(aim.normal, inv);
+    m_wound.aim.swingDir = ToLocalDir(aim.swingDir, inv);
+    m_wound.aim.eye      = ToLocalPoint(aim.eye, inv);
+    m_wound.aim.viewDir  = ToLocalDir(aim.viewDir, inv);
+    m_wound.entry   = ToLocalPoint(r.entry, inv);
+    m_wound.through = ToLocalPoint(r.through, inv);
+    const XMFLOAT3 n = m_wound.aim.normal;
+    const bool standFront = PlaneDist(FOOT_ANCHOR, m_wound.aim.point, n) > 0.0f;
+    m_wound.side = standFront ? XMFLOAT3(-n.x, -n.y, -n.z) : n;
+    if (!Cut(aim.point, aim.normal, aim.swingDir, pushScale) || m_debris.empty()) return;
+    m_wound.open = true;
+    m_wound.depth = m_wound.speed = 0.0f;
 }
 
-CutTarget::StrikeResult CutTarget::Strike(const Aim& aim, float damage, float pushScale, float holdSevered)
+CutTarget::Aim CutTarget::WoundAim() const
 {
-    int ni = -1;
-    StrikeResult r = Evaluate(aim, damage, ni);
-    if (!r.hit) return r;
+    const XMMATRIX w = World();
+    const auto point = [&](const XMFLOAT3& l) { XMFLOAT3 o; XMStoreFloat3(&o, XMVector3TransformCoord(XMLoadFloat3(&l), w)); return o; };
+    const auto dir   = [&](const XMFLOAT3& l) { XMFLOAT3 o; XMStoreFloat3(&o, XMVector3Normalize(XMVector3TransformNormal(XMLoadFloat3(&l), w))); return o; };
+    return { point(m_wound.aim.point), dir(m_wound.aim.normal), dir(m_wound.aim.swingDir), point(m_wound.aim.eye), dir(m_wound.aim.viewDir) };
+}
+
+XMMATRIX CutTarget::WoundWorld() const
+{
+    // The turning point runs down the cut with its depth. The axis lies in the cut plane, across the
+    // swing; turning about h x s by a positive angle lifts the entry side toward h, so the wedge opens.
+    const XMVECTOR hinge = XMVectorLerp(XMLoadFloat3(&m_wound.entry), XMLoadFloat3(&m_wound.through), m_wound.depth);
+    const XMVECTOR h = XMLoadFloat3(&m_wound.side), s = XMLoadFloat3(&m_wound.aim.swingDir);
+    const XMVECTOR axis = XMVector3Normalize(XMVector3Cross(h, s));
+    // Depth squared: the less straw is left, the less it resists; a shallow cut barely opens.
+    return XMMatrixTranslationFromVector(XMVectorNegate(hinge)) * XMMatrixRotationAxis(axis, woundOpen * m_wound.depth * m_wound.depth)
+         * XMMatrixTranslationFromVector(hinge) * World();
+}
+
+XMMATRIX CutTarget::DebrisWorld(const Debris& d) const
+{
+    if (m_wound.open && &d == &m_debris.back()) return WoundWorld();
+    return XMMatrixTranslation(-d.com.x, -d.com.y, -d.com.z) * d.body.World();   // undo the center of mass, then the body's motion
+}
+
+void CutTarget::ReleaseWound()
+{
+    Debris& d = m_debris.back();
+    const XMMATRIX w = WoundWorld();
+    XMFLOAT3 comW;
+    XMStoreFloat3(&comW, XMVector3TransformCoord(XMLoadFloat3(&d.com), w));
+    XMFLOAT4 rot;
+    XMStoreFloat4(&rot, XMQuaternionRotationMatrix(w));
+    d.body.SetPose(comW, rot);   // it falls from where it hangs, at once: nothing holds it any more
+    m_wound.open = false;
+}
+
+CutTarget::StrikeResult CutTarget::Strike(const Aim& aim, float power, float needed, float pushScale, float holdSevered)
+{
+    StrikeResult r = Judge(aim, power, needed);
+    if (!r.hit || !r.coreHit) return r;   // off the middle: it counts for nothing and leaves nothing behind
+    m_gathered += power;
 
     if (r.stuck)
     {
-        // the blade bites in and stops: the notch gathers the damage, its slit grows to the new depth
-        if (ni < 0)
-        {
-            const XMMATRIX inv = XMMatrixInverse(nullptr, World());
-            Notch k;
-            k.point  = ToLocalPoint(aim.point, inv);
-            k.normal = ToLocalDir(aim.normal, inv);
-            m_notches.push_back(k);
-            ni = (int)m_notches.size() - 1;
-        }
-        m_notches[ni].damage += damage;
-        BuildSlit(m_notches[ni], aim, r.entryOffset, r.stopOffset);
-        const XMMATRIX inv = XMMatrixInverse(nullptr, World());
-        m_notches[ni].entry = ToLocalPoint(r.entry, inv);
-        m_notches[ni].stop  = ToLocalPoint(r.stop, inv);
+        // the blade bites in and stops: the wound opens down to the depth gathered so far
+        if (!m_wound.open) OpenWound(aim, r, pushScale);
+        m_wound.target = r.reach;
         return r;
     }
 
-    // How much of the torso stands before the cut (to tell "cut in two" from "a chip off it")
-    const float coreBefore = StandingVolume(true);
-    if (!Cut(aim.point, aim.normal, aim.swingDir, pushScale)) { r.cut = false; return r; }
-    m_notches.clear();   // the shape changed: a fresh surface (a later slash starts from zero)
-    r.coreCut = r.coreHit;
-    if (r.coreCut && coreBefore > 0.0f)
-    {
-        // The smaller of the two sides of the torso, as a share of the torso that stood before this cut.
-        //   Cut through the middle -> both sides are big. A slice off the side -> one side is tiny.
-        //   (2026-10-21 F5: measured against the ORIGINAL torso, a torso first trimmed by a few chips
-        //    could never be "cut in two" any more -- every later half was below the share.)
-        const float coreAfter = StandingVolume(true);
-        const float fell = coreBefore - coreAfter;
-        r.coreSplit = fminf(coreAfter, fell) / coreBefore;
-        r.severed = r.coreSplit >= severMinShare;
-        // cut in two: the falling half hangs a moment before it slides off (the "beat")
-        if (r.severed && !m_debris.empty()) m_debris.back().hold = holdSevered;
-    }
+    // cut in two: the falling half hangs a moment before it slides off (the "beat")
+    if (m_wound.open) ReleaseWound();
+    else if (!Cut(aim.point, aim.normal, aim.swingDir, pushScale, holdSevered)) r.cut = false;
     return r;
-}
-
-float CutTarget::StandingVolume(bool coreOnly) const
-{
-    float v = 0.0f;
-    for (const Piece& p : m_standing)
-        if (!coreOnly || m_defs[p.part].core) v += MeshSlicer::Volume(p.mesh);
-    return v;
 }
 
 void CutTarget::Upload(Piece& p)
@@ -350,7 +351,8 @@ void CutTarget::Upload(Piece& p)
 void CutTarget::Build(const PartDef* defs, int count, const std::vector<MeshSlicer::Mesh>* meshes)
 {
     m_defs.assign(defs, defs + count);
-    m_notches.clear();
+    m_wound = Wound{};
+    m_gathered = 0.0f;
     m_tilt = m_tiltVel = XMFLOAT3(0, 0, 0);   // a fresh dummy stands still
     m_standing.clear();
     m_debris.clear();
@@ -363,6 +365,18 @@ void CutTarget::Build(const PartDef* defs, int count, const std::vector<MeshSlic
         Upload(p);
         m_standing.push_back(p);
     }
+    // the center of the torso's bounding box: where a slash has to pass to count
+    XMFLOAT3 mn(FLT_MAX, FLT_MAX, FLT_MAX), mx(-FLT_MAX, -FLT_MAX, -FLT_MAX);
+    for (const Piece& p : m_standing)
+    {
+        if (!m_defs[p.part].core) continue;
+        for (const MeshSlicer::Vertex& v : p.mesh.verts)
+        {
+            mn.x = fminf(mn.x, v.pos.x); mn.y = fminf(mn.y, v.pos.y); mn.z = fminf(mn.z, v.pos.z);
+            mx.x = fmaxf(mx.x, v.pos.x); mx.y = fmaxf(mx.y, v.pos.y); mx.z = fmaxf(mx.z, v.pos.z);
+        }
+    }
+    m_coreCenter = XMFLOAT3((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f, (mn.z + mx.z) * 0.5f);
 }
 
 void CutTarget::SetPlacement(const XMFLOAT3& foot, float yaw)
@@ -400,12 +414,14 @@ void CutTarget::StandingBox(XMFLOAT3& mn, XMFLOAT3& mx) const
 {
     mn = XMFLOAT3(FLT_MAX, FLT_MAX, FLT_MAX);
     mx = XMFLOAT3(-FLT_MAX, -FLT_MAX, -FLT_MAX);
-    for (const Piece& p : m_standing)
+    ForIntact([&](const Piece& p)
+    {
         for (const MeshSlicer::Vertex& v : p.mesh.verts)
         {
             mn.x = fminf(mn.x, v.pos.x); mn.y = fminf(mn.y, v.pos.y); mn.z = fminf(mn.z, v.pos.z);
             mx.x = fmaxf(mx.x, v.pos.x); mx.y = fmaxf(mx.y, v.pos.y); mx.z = fmaxf(mx.z, v.pos.z);
         }
+    });
 }
 
 bool CutTarget::RayHit(const XMFLOAT3& origin, const XMFLOAT3& dir, float& t) const
@@ -563,8 +579,16 @@ void CutTarget::Update(float dt)
         m_tiltVel = XMFLOAT3(0, 0, 0);   // it hit the stop
     }
 
+    // the wound: the upper part sags toward the depth of the cut (same integration as the sway)
+    if (m_wound.open)
+    {
+        m_wound.speed += (WOUND_STIFFNESS * (m_wound.target - m_wound.depth) - WOUND_DAMPING * m_wound.speed) * dt;
+        m_wound.depth += m_wound.speed * dt;
+    }
+
     for (Debris& d : m_debris)
     {
+        if (m_wound.open && &d == &m_debris.back()) continue;   // still hanging in the wound
         if (d.hold > 0.0f) { d.hold -= dt; continue; }   // still hanging in place (the beat after a clean cut)
         if (d.impulse.x != 0.0f || d.impulse.y != 0.0f || d.impulse.z != 0.0f)
         {
@@ -587,17 +611,9 @@ void CutTarget::Draw(CameraBase* camera, float highlight)
     };
     const XMMATRIX world = World();
     for (const Piece& p : m_standing) drawPiece(p, world);
-    // the notches: dark slits where the blade bit in (decals on the surface, 2026-10-29)
-    if (!m_defs.empty())
-    {
-        std::shared_ptr<Texture> tex = TextureCache::Get(m_defs[0].texture);
-        for (const Notch& k : m_notches)
-            if (k.slit) LitRender::DrawMesh(k.slit.get(), tex.get(), world, camera, PropMaterials::Find(SLIT_MATERIAL), 0.0f);
-    }
     for (const Debris& d : m_debris)
     {
-        // local -> (undo the center of mass) -> the body's motion
-        const XMMATRIX w = XMMatrixTranslation(-d.com.x, -d.com.y, -d.com.z) * d.body.World();
+        const XMMATRIX w = DebrisWorld(d);
         for (const Piece& p : d.pieces) drawPiece(p, w);
     }
 }
@@ -628,7 +644,7 @@ void CutTarget::CollisionPoints(float footY, float stepY, float headY, std::vect
     {
         std::vector<XMFLOAT3> pts;
         float top = -FLT_MAX;
-        gather(d.pieces, XMMatrixTranslation(-d.com.x, -d.com.y, -d.com.z) * d.body.World(), pts, top);
+        gather(d.pieces, DebrisWorld(d), pts, top);
         if (top >= stepY && !pts.empty()) out.push_back(pts);
     }
 }
@@ -669,23 +685,33 @@ void CutTarget::DrawDebug(CameraBase* camera)
                 Geometory::AddLine(p0, p1);
             }
         }
-    // the notches: the band a later slash must land in to count as the same notch (yellow, +- notchTolerance)
+    // the middle of the torso (yellow circle facing the eye, radius coreZone): a slash counts when its
+    // cut line passes through this circle
     Geometory::SetColor(XMFLOAT4(1.0f, 0.9f, 0.1f, 1.0f));
-    const XMMATRIX world = World();
-    for (const Notch& k : m_notches)
     {
-        XMFLOAT3 c[4];
-        const float sides[4][2] = { { 0, -1 }, { 1, -1 }, { 1, 1 }, { 0, 1 } };   // (end: 0 entry / 1 stop, side)
-        for (int i = 0; i < 4; ++i)
+        const XMVECTOR c = XMVector3TransformCoord(XMLoadFloat3(&m_coreCenter), World());
+        const XMFLOAT3 eye = camera->GetPos();
+        const XMVECTOR toEye = XMVector3Normalize(XMVectorSubtract(XMLoadFloat3(&eye), c));
+        const XMVECTOR u = XMVector3Normalize(XMVector3Cross(XMVectorSet(0, 1, 0, 0), toEye));
+        const XMVECTOR v = XMVector3Cross(toEye, u);
+        for (int i = 0; i < DISC_SEGMENTS; ++i)
         {
-            const XMFLOAT3& e = sides[i][0] > 0.5f ? k.stop : k.entry;
-            const float o = sides[i][1] * notchTolerance;
-            const XMFLOAT3 l(e.x + k.normal.x * o, e.y + k.normal.y * o, e.z + k.normal.z * o);
-            XMStoreFloat3(&c[i], XMVector3TransformCoord(XMLoadFloat3(&l), world));
+            const float a0 = XM_2PI * i / DISC_SEGMENTS, a1 = XM_2PI * (i + 1) / DISC_SEGMENTS;
+            XMFLOAT3 p0, p1;
+            XMStoreFloat3(&p0, XMVectorAdd(c, XMVectorScale(XMVectorAdd(XMVectorScale(u, cosf(a0)), XMVectorScale(v, sinf(a0))), coreZone)));
+            XMStoreFloat3(&p1, XMVectorAdd(c, XMVectorScale(XMVectorAdd(XMVectorScale(u, cosf(a1)), XMVectorScale(v, sinf(a1))), coreZone)));
+            Geometory::AddLine(p0, p1);
         }
-        for (int i = 0; i < 4; ++i) Geometory::AddLine(c[i], c[(i + 1) % 4]);
     }
-    // drawn without the depth test (X-ray): the band lies on the surface and would hide in the straw
+    // the wound: the line the cut runs along (its turning point moves down it with the depth)
+    if (m_wound.open)
+    {
+        XMFLOAT3 a, b;
+        XMStoreFloat3(&a, XMVector3TransformCoord(XMLoadFloat3(&m_wound.entry), World()));
+        XMStoreFloat3(&b, XMVector3TransformCoord(XMLoadFloat3(&m_wound.through), World()));
+        Geometory::AddLine(a, b);
+    }
+    // drawn without the depth test (X-ray): these sit inside the straw
     SetDepthTest(DEPTH_DISABLE);
     Geometory::DrawLines();
     SetDepthTest(DEPTH_ENABLE_WRITE_TEST);

@@ -57,6 +57,7 @@ public:
     // halfExtents: half size of the body's bounding box (for the inertia tensor).
     void Init(const std::vector<DirectX::XMFLOAT3>& points, float mass, const DirectX::XMFLOAT3& halfExtents,
               const DirectX::XMFLOAT3& position, const DirectX::XMFLOAT4& orientation);
+    void SetPose(const DirectX::XMFLOAT3& position, const DirectX::XMFLOAT4& orientation) { m_pos = position; m_rot = orientation; }
     void ApplyImpulse(const DirectX::XMFLOAT3& impulse, const DirectX::XMFLOAT3& worldPoint);
     void Update(float dt, const std::vector<PlaneCollider>& planes, const Params& p);
     void Wake() { m_sleeping = false; m_stillTime = 0.0f; }

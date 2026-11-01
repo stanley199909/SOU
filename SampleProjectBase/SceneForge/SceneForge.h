@@ -1672,9 +1672,9 @@ private:
 	//   藁人形の前で E → 立つ位置へ。脚は固定・マウスで見回す。
 	//   左を長押し = 構え(Vom Tag: 剣を右肩の上に立てる)+ 集中: 照準が呼吸で揺れ、息を吐き切った瞬間が一番静か。
 	//   離す = 斬撃(Zornhau: 右上から左下へ斜めに斬り下ろす)一太刀だけ。連撃は無い(一刀両断の主題に合わせた, ユーザー決定 10-22)。
-	//   1太刀の強さ = 基本値 × 鍛えた出来(GradeScore) × 集中の良さ。藁人形の部品は耐久を持ち、届かなければ弾かれる。
+	//   規則(2026-11-01 ユーザー): 需要 = 等級の太刀数(S1 A2 B3 C4)。胴の真ん中を斬る度に 累積 += 力(放す時機で決まる)。累積 >= 需要 で両断。
 	//   胴を両断したら工程の完了(TestCutStep)。
-	//   「どう斬るか」(入力・振り・強さ)はここ、「何がどう切れるか」(形・耐久・切断・物理)は CutTarget に分けた
+	//   「どう斬るか」(入力・振り・力)はここ、「何がどう切れるか」(形・胴の真ん中・切断・物理)は CutTarget に分けた
 	//   =後で別の武器の動作(例: 日本刀の居合)へ替えても CutTarget はそのまま使える(デカップリング)。
 	CutTarget m_cutTarget;
 	static const CutTarget::PartDef CUT_PARTS[];	// 藁人形の部品の表(データ。TestCut.cpp)
@@ -1684,7 +1684,10 @@ private:
 	float m_cutReach    = 2.4f;				// この距離(m)より遠い所には刃が届かない(空振り)
 	float m_cutSlashTilt = 0.95f;			// 斬撃の斜めの傾き(rad。0 = 水平に薙ぐ / π/2 = 真上から)。Zornhau = 急な斜め
 	float m_cutStandDist = 1.5f;			// 構える位置: 藁人形の柱から何 m 手前に立つか(近すぎると構えた剣が藁人形に入る。2026-10-21 F5)
-	float m_cutStrikeDamage = 1.10f;		// 斬撃の基本の強さ(× 出来 × 集中 = 1太刀の強さ)。部品の耐久と比べる
+	float m_cutPowerMin = 0.5f;				// 1太刀の力: 一番悪い時機で放した時(F5。低すぎると悪い剣が何十太刀もかかる)
+	float m_cutPowerMax = 1.5f;				// 〃 一番静かな瞬間に放した時(F5)
+	float m_cutStuckSec = 0.6f;				// 斬り切れなかった刃が傷の中で止まっている秒(F5)
+	float m_cutPullSec  = 0.6f;				// その刃を引き抜く秒(F5)
 	// ---- 剣の姿勢(F6「剣の姿勢」で調整・forge_tuning の swordhold / swordwind に保存) ----
 	// 既定値は名前付き(F6 の「既定値に戻す」がここへ戻す。保存済みの値は起動時に上書きされる)
 	// 剣の構え(歩く時・振っていない時)。目からの距離(m): 前 / 右 / 上。2026-10-29 ユーザー: FPS の参考(Chivalry 2 / Valorant)の様に、
@@ -1708,10 +1711,9 @@ private:
 	bool  m_previewWind = false;	// F6: パネルを開いている間、剣を溜めの姿勢で止めて見せる(パネル中はゲーム入力が止まり、長押しできないため)
 	bool  m_showCutDebug = false;			// F4: 断片が乗っている切り株の断面(橙の円)
 	static constexpr float CUT_STEP_OVER = 0.15f;	// 落ちた断片の上端がこれ(m, 床から)より低ければ歩く時にぶつからない(跨いで通る)
-	static constexpr float CUT_MIN_QUALITY = 0.25f;	// 出来がこれより低くても、この値として斬る(何太刀でも必ずいつかは斬れる)
 	bool  m_cutNeedsBuild = true;			// 次の更新で藁人形を作り直す(ResetTestCut が立てる。GPU の作成は更新の中だけで行う)
 	// 1回の試し切りの記録(ResetTestCut で戻す)
-	int   m_cutHits      = 0;				// 藁人形に当たった太刀の数(空振りは数えない)
+	int   m_cutHits      = 0;				// 胴の真ん中を斬った太刀の数(それ以外は数えない)
 	bool  m_cutSevered   = false;			// 胴を両断した(工程の完了)
 	int   m_cutSeveredHits = 0;				// 両断した時の太刀の数(結果画面の「N 太刀で両断」)
 	int   m_cutStrikes   = 0;				// 振った回数(操作の案内の「できた」量)
@@ -1731,10 +1733,9 @@ private:
 		DirectX::XMFLOAT3 eye{ 0, 0, 0 }, fwd{ 0, 0, 1 };	// 離した瞬間の目と視線
 		bool  reach = false;				// 藁人形が届く所にいた(false = 空振り)
 		CutTarget::Aim aim{};
-		float damage = 0.0f;
+		float power = 0.0f;					// この太刀の力
 		CutTarget::StrikeResult judged;		// 斬った時に何が起きるか(CutTarget::Judge)
 		float thetaStop  = 0.0f;			// 止まる時: 刃が止まる振りの角度(rad)
-		float thetaEntry = 0.0f;			// 刃が藁人形に入る角度(引き抜く時はここより手前まで戻す)
 	};
 	StrikePlan m_plan;
 	SwordPose m_stuckPose{};				// 止まった時の剣の姿勢(ワールド。ここで震える)
@@ -1758,6 +1759,7 @@ private:
 	float m_focusFade    = 0.0f;			// 集中の画面効果(周りが暗く・視野が狭く)の濃さ 0..1
 	float m_heartbeatAt  = -1.0f;			// 最後に心臓の音を鳴らした時刻
 	float FocusQualityNow() const;			// 今離した時の集中の良さ(揺れが小さいほど 1)
+	float CutNeed() const;					// 両断に要る力の累積(剣の等級 = 太刀数)
 	// 刀光(ウェポントレイル): 振りの円弧を式で持っているので、残像は「尾の角度〜頭の角度」の円弧をその場で作る(フレームレートに依らず滑らか)
 	float m_trailHead = 0.0f, m_trailTail = 0.0f;	// 刀光の頭(=今の刃)と尾の角度(rad)
 	float m_trailAlpha = 0.0f;				// 刀光の濃さ(振り終わると薄れて消える)
@@ -1774,7 +1776,6 @@ private:
 	float m_cutSlowmo    = 0.0f;			// スローモーションの残り(実時間の秒)
 	float m_cutSlowmoScale = 1.0f;			// その間の時間の倍率
 	float m_chargeGlintAt = -1.0f;			// 一番静かな瞬間の切っ先の光芒の時刻
-	float m_cutRetryAt   = -1.0f;			// 胴を斬らなかった太刀: この時刻に新しい藁人形を立てる(-1 = 無し)
 	// 両断の札(1太刀 =「一刀両断」の筆文字 / それ以上 =「N太刀で両断」)
 	float m_cutBannerAt  = -1.0f;			// 出た時刻(-1 = 無し)
 	bool  m_cutBannerBrush = false;			// 筆文字の画像か(else 文字)

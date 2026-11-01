@@ -42,7 +42,6 @@ namespace
 		{ "Weapon",       0.35f, 1.0f, false, { 1.00f, 1.00f, 1.00f }, nullptr,  nullptr,  false },	// 鍛えている刀身(鋼)。描き方は専用(変形する)、材質と光はここと同じ
 		// 試し切りの藁人形(仮の箱。2026-10-20)。切ると断面ができる = UV が無い面 → 三平面投影(物の空間)で貼る
 		{ "CutDummy",     0.90f, 0.0f, false, { 1.00f, 1.00f, 1.00f }, nullptr,  nullptr,  false },	// 藁人形(2026-10-29 Sketchfab のモデル)。貼图集を UV で貼る。断面は PartDef::capUv が貼图集の藁/木の所を指す
-		{ "CutNotch",     1.00f, 0.0f, true,  { 0.10f, 0.08f, 0.05f }, nullptr,  nullptr,  false },	// 刃が食い込んだ切り口(貼り付ける細い帯=デカール)。暗い藁の奥
 		// 試し切りで刃に付ける仮の柄(2026-10-21)。鍔・柄頭 = 黒ずんだ鉄 / 握り = 木(革巻きの代わり)
 		{ "HiltMetal",    0.45f, 0.3f, false, { 1.00f, 1.00f, 1.00f }, nullptr,  nullptr,  false },	// LongSword の鍔・柄頭(鋼の貼图を UV で)。金属度は低め: 屋外では反射プローブ(小屋の中)が暗い
 		{ "HiltGrip",     0.80f, 0.0f, false, { 1.00f, 1.00f, 1.00f }, nullptr,  nullptr,  false },	// 握り(革の貼图を UV で)

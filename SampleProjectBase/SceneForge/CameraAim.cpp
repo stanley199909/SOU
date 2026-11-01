@@ -945,10 +945,11 @@ void SceneForge::SaveTuning()
 	fprintf(fp, "seqspeed %.5f\n", m_seqTimeScale);
 	fprintf(fp, "transtime %.5f %.5f\n", m_transMinTime, m_transMaxTime);
 	fprintf(fp, "walkspeed %.5f\n", m_walkSpeed);
-	fprintf(fp, "cutdamage %.5f\n", m_cutStrikeDamage);
+	fprintf(fp, "cutpower %.5f %.5f\n", m_cutPowerMin, m_cutPowerMax);	// 1太刀の力: 最低, 最高
 	fprintf(fp, "swordbob %.5f\n", m_swordBobPerMeter);
 	fprintf(fp, "grindspark %.5f %.5f %.5f\n", m_grindSparkOff.x, m_grindSparkOff.y, m_grindSparkOff.z);
-	fprintf(fp, "cutnotch %.5f\n", m_cutTarget.notchTolerance);	// 同じ切り口とみなす幅(m, 2026-10-29)
+	fprintf(fp, "cutzone %.5f\n", m_cutTarget.coreZone);	// 胴の真ん中とみなす幅(m, 2026-11-01)
+	fprintf(fp, "cutwound %.5f %.5f %.5f\n", m_cutTarget.woundOpen, m_cutStuckSec, m_cutPullSec);	// 傷の開き(rad), 刃が止まる秒, 引き抜く秒
 	fprintf(fp, "cutsway %.5f %.5f\n", m_cutTarget.sway.stiffness, m_cutTarget.sway.damping);	// 藁人形の揺れ(ばね k, 減衰 c)
 	fprintf(fp, "swordhold %.5f %.5f %.5f %.5f %.5f %.5f %.5f\n", m_holdHand.x, m_holdHand.y, m_holdHand.z,
 	        m_holdDir.x, m_holdDir.y, m_holdDir.z, m_holdRollDeg);	// 剣の構え(前/右/上, 向きの重み, ねじり。2026-10-29)
@@ -1014,7 +1015,7 @@ void SceneForge::TuningRefs(std::vector<float*>& out)
 		&m_carryAvoidMaxRaise, &m_carryAvoidMargin, &m_carryAvoidLambda, &m_carryAvoidMaxPull,
 		// -- F5 pacing (flip beats / sequence speed / station move / walk / cut strength) --
 		&m_flipTongsOutTime, &m_flipGripTime, &m_flipPutBackTime, &m_seqTimeScale, &m_transMinTime, &m_transMaxTime,
-		&m_walkSpeed, &m_cutStrikeDamage, &m_cutTarget.notchTolerance, &m_swordBobPerMeter, &m_grindSparkOff.x, &m_grindSparkOff.y, &m_grindSparkOff.z, &m_cutTarget.sway.stiffness, &m_cutTarget.sway.damping, 
+		&m_walkSpeed, &m_cutPowerMin, &m_cutPowerMax, &m_cutTarget.coreZone, &m_cutTarget.woundOpen, &m_cutStuckSec, &m_cutPullSec, &m_swordBobPerMeter, &m_grindSparkOff.x, &m_grindSparkOff.y, &m_grindSparkOff.z, &m_cutTarget.sway.stiffness, &m_cutTarget.sway.damping, 
 		&m_holdHand.x, &m_holdHand.y, &m_holdHand.z, &m_holdDir.x, &m_holdDir.y, &m_holdDir.z, &m_holdRollDeg,
 		&m_windHand.x, &m_windHand.y, &m_windHand.z, &m_windDeg, &m_hiltSeat,
 		&m_forging.grindSpread, 
@@ -1126,10 +1127,11 @@ void SceneForge::LoadTuning()
 		else if (strcmp(key, "seqspeed")   == 0) sscanf_s(v, "%f", &m_seqTimeScale);
 		else if (strcmp(key, "transtime")  == 0) sscanf_s(v, "%f %f", &m_transMinTime, &m_transMaxTime);
 		else if (strcmp(key, "walkspeed")  == 0) sscanf_s(v, "%f", &m_walkSpeed);
-		else if (strcmp(key, "cutdamage")  == 0) sscanf_s(v, "%f", &m_cutStrikeDamage);
+		else if (strcmp(key, "cutpower")   == 0) sscanf_s(v, "%f %f", &m_cutPowerMin, &m_cutPowerMax);
 		else if (strcmp(key, "swordbob")   == 0) sscanf_s(v, "%f", &m_swordBobPerMeter);
 		else if (strcmp(key, "grindspark") == 0) sscanf_s(v, "%f %f %f", &m_grindSparkOff.x, &m_grindSparkOff.y, &m_grindSparkOff.z);
-		else if (strcmp(key, "cutnotch")   == 0) sscanf_s(v, "%f", &m_cutTarget.notchTolerance);
+		else if (strcmp(key, "cutzone")    == 0) sscanf_s(v, "%f", &m_cutTarget.coreZone);
+		else if (strcmp(key, "cutwound")   == 0) sscanf_s(v, "%f %f %f", &m_cutTarget.woundOpen, &m_cutStuckSec, &m_cutPullSec);
 		else if (strcmp(key, "cutsway")    == 0) sscanf_s(v, "%f %f", &m_cutTarget.sway.stiffness, &m_cutTarget.sway.damping);
 		else if (strcmp(key, "swordhold")  == 0) sscanf_s(v, "%f %f %f %f %f %f %f", &m_holdHand.x, &m_holdHand.y, &m_holdHand.z, &m_holdDir.x, &m_holdDir.y, &m_holdDir.z, &m_holdRollDeg);
 		else if (strcmp(key, "swordwind")  == 0) sscanf_s(v, "%f %f %f %f %f", &m_windHand.x, &m_windHand.y, &m_windHand.z, &m_windDeg, &m_hiltSeat);

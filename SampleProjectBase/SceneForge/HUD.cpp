@@ -2343,7 +2343,7 @@ void SceneForge::DrawToolsPanel()
 	ImGui::Checkbox((const char*)u8"影の範囲", &m_showShadowRange);	// 水色の正方形。線の外は影の計算をしない
 	ImGui::SameLine();
 	ImGui::TextDisabled((const char*)u8"（%s %.0fm）", ShadowCameraIndoors() ? (const char*)u8"屋内" : (const char*)u8"屋外", SunStage::Data().width);
-	ImGui::Checkbox((const char*)u8"切り株の断面・切り口（試し切り）", &m_showCutDebug);	// 断片が乗っている切り株の断面(橙の円) + 同じ切り口とみなす帯(黄)
+	ImGui::Checkbox((const char*)u8"切り株の断面・胴の真ん中（試し切り）", &m_showCutDebug);	// 断片が乗っている切り株の断面(橙の円) + 数える範囲(黄の円。切り口がこの円を通れば数える)
 	ImGui::Checkbox((const char*)u8"反射の部屋の箱", &ReflectionProbe::ShowRoomBox());	// 橙の箱 = 映り込みを壁へ投影する部屋(壁の内面に合っているか)
 	ImGui::Checkbox((const char*)u8"試遊の計時（右下）", &m_showPlaytestTimer);	// 工程ごとの所要時間。調整値と一緒に保存
 	bool vsync = GetVSyncEnabled();
@@ -2509,11 +2509,15 @@ void SceneForge::DrawFeelPanel()
 
 	// --- 試し切り ---
 	ImGui::SeparatorText((const char*)u8"試し切り");
-	ImGui::SliderFloat((const char*)u8"切る強さ", &m_cutStrikeDamage, 0.1f, 3.0f, "%.2f");	// × 出来 × 集中 = 1太刀の強さ
-	ImGui::SliderFloat((const char*)u8"同じ切り口の幅", &m_cutTarget.notchTolerance, 0.005f, 0.15f, "%.3f m");	// 2太刀目がこの距離以内なら同じ切り口に重なる(大=当てやすい)
+	ImGui::SliderFloat((const char*)u8"1太刀の力：最低", &m_cutPowerMin, 0.1f, 1.5f, "%.2f");	// 一番悪い時機で放した時
+	ImGui::SliderFloat((const char*)u8"1太刀の力：最高", &m_cutPowerMax, 0.5f, 3.0f, "%.2f");	// 一番静かな瞬間に放した時
+	ImGui::SliderFloat((const char*)u8"胴の真ん中の幅", &m_cutTarget.coreZone, 0.02f, 0.40f, "%.3f m");	// 切り口が胴の中心からこの距離以内なら数える(大=当てやすい)
+	ImGui::SliderFloat((const char*)u8"傷の開き", &m_cutTarget.woundOpen, 0.05f, 0.80f, "%.2f rad");	// 切れかかった時に上半分が傾く角度(大=大きく開く)
+	ImGui::SliderFloat((const char*)u8"刃が止まる秒", &m_cutStuckSec, 0.1f, 1.5f, "%.2f");
+	ImGui::SliderFloat((const char*)u8"引き抜く秒", &m_cutPullSec, 0.1f, 1.5f, "%.2f");
 	ImGui::SliderFloat((const char*)u8"藁人形の揺れ：硬さ k", &m_cutTarget.sway.stiffness, 300.0f, 8000.0f, "%.0f");	// 大=速く小さく揺れる(柱が硬い)
 	ImGui::SliderFloat((const char*)u8"藁人形の揺れ：減衰 c", &m_cutTarget.sway.damping, 0.0f, 400.0f, "%.0f");	// 大=すぐ止まる
-	ImGui::TextDisabled((const char*)u8"出来の倍率 %.2f", GradeScore());
+	ImGui::TextDisabled((const char*)u8"等級 %c  累積 %.2f / 需要 %.0f", GradeLetter(), m_cutTarget.Gathered(), CutNeed());
 	ImGui::TextDisabled((const char*)u8"剣の構え・溜めの姿勢は F6");
 
 	EndToolWindow();

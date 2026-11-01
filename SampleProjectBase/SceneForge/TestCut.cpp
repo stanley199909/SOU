@@ -9,16 +9,16 @@
 //     hold  = wind up (Zornhut: hilt forward, blade back over the right shoulder) and FOCUS: the aim drifts with the
 //             breath; at the end of the out-breath it is stillest (a glint on the tip) -- release then
 //     release = the strike (Zornhau): one diagonal cut from the upper right to the lower left
-//   One strike's strength = base x the whole-forge grade (GradeScore) x how still the aim was.
 //
-// The dummy (user's design 2026-10-29, the armor is gone): a straw dummy on a post; the TORSO is what
-// tests the sword. A slash that is strong enough cuts through along its path. One that is not stops
-// INSIDE the dummy at the depth its strength reached, quivers, and is pulled back out along the way it
-// came in, leaving a notch. Only slashes that land in the SAME notch add up (harder, but real -- the
-// user's choice): the next slash has to be aimed at the slit. So:
-//   - a slash that misses the torso (post / hips / head only) still counts as a stroke, and after a
-//     moment a fresh dummy is stood up ("aim at the torso") -- no shortcut;
-//   - cutting the torso in two = the step is done. Fewer strokes = a better sword.
+// The rule (user 2026-11-01, one formula):
+//   needed = strokes by the sword's grade (S 1, A 2, B 3, C 4)
+//   each slash through the MIDDLE of the torso: gathered += power (0.5 .. 1.5, by how still the release was)
+//   gathered >= needed -> the dummy is cut in two, the step is done.
+// A slash short of that stops INSIDE the dummy, where its energy runs out against the real mesh's
+// cross-section (CutTarget::Judge: area opened), quivers, and is pulled back out along the way it came in. The wound really opens: the upper part tips about where the blade
+// stopped (CutTarget). There is one wound: later slashes that count go into it, wherever they were
+// aimed in the middle. A slash off the middle gathers nothing and is not counted ("aim at the torso").
+// The cut only ever happens through the middle, so it is never a chip.
 //
 // Feel (user 2026-10-21: "fast is not the same as satisfying" -- God of War (2018) / Capcom swords):
 //   the weight comes from CONTRAST and from the target's reaction, not from raw speed:
@@ -30,7 +30,7 @@
 //
 // Split of responsibilities:
 //   here (SceneForge) = HOW the player swings: input, the swing animation, the strength, feedback;
-//   CutTarget         = WHAT gets cut: shape, kinds, durability, slicing, falling pieces.
+//   CutTarget         = WHAT gets cut: shape, kinds, the middle of the torso, slicing, falling pieces.
 //
 // The swing is a procedural animation (no clips): a sword pose = where the guard (the hand) is +
 // where the blade points + where the edge faces, built from the camera's axes along an arc.
@@ -100,23 +100,17 @@ namespace
     const XMFLOAT2 WAIST_HALF(0.20f, 0.14f);
     const XMFLOAT2 TORSO_HALF(0.23f, 0.17f);
     const float HEAD_HALF_W = 0.13f;
-    // Durability = the damage one notch must gather before a slash goes through (the toughest part it crosses).
-    //   Balance: damage = strength x grade x focus. 1.10 x an S-grade sword (>= 0.9) x a still release >= 0.95 =
-    //   the torso in ONE slash; anything weaker stops inside and needs more slashes IN THE SAME NOTCH.
-    //   The post and the hips are soft, but a slash that cuts only them does not count (see the header).
-    const float POST_DURABILITY  = 0.35f;
-    const float HIPS_DURABILITY  = 0.30f;
-    const float TORSO_DURABILITY = 0.95f;
-    const float HEAD_DURABILITY  = 0.60f;
+    // Strokes a sword of each grade needs (the power that must gather, see the header).
+    const float NEED_STROKES_S = 1.0f, NEED_STROKES_A = 2.0f, NEED_STROKES_B = 3.0f, NEED_STROKES_C = 4.0f;
 
     using Kind = CutTarget::PartKind;
     // Box spanning y0..y1 (with the gap at the bottom).
     CutTarget::PartDef Stacked(const char* mesh, const char* material, const char* image, float y0, float y1,
-                               float halfX, float halfZ, float durability, Kind kind, bool core, const MeshSlicer::CapUv& capUv)
+                               float halfX, float halfZ, Kind kind, bool core, const MeshSlicer::CapUv& capUv)
     {
         const float b = y0 + PART_GAP;
         return { mesh, material, image, XMFLOAT3(0.0f, (b + y1) * 0.5f, 0.0f), XMFLOAT3(halfX, (y1 - b) * 0.5f, halfZ),
-                 durability, kind, core, capUv };
+                 kind, core, capUv };
     }
 
     // --- the strike (seconds). One decisive cut from the guard -- no combo (user 2026-10-22: the theme is
@@ -133,13 +127,14 @@ namespace
     const float HITSTOP_CUT_SEC    = 0.09f;   // the blade "catches" as it goes through (hit stop)
     // --- not strong enough: the blade stops INSIDE, quivers, and is pulled back out (2026-10-29, user's design) ---
     const float HITSTOP_STUCK_SEC  = 0.16f;   // the bite freezes a little longer than a clean cut (it stops dead)
-    const float STUCK_HOLD_SEC     = 0.28f;   // then it stays stuck this long ...
-    const float STUCK_QUIVER_AMP   = 0.006f;  // ... quivering across the cut (m) ...
+    // ... then it stays stuck for m_cutStuckSec ...
+    const float STUCK_QUIVER_AMP  = 0.006f;  // ... quivering across the cut (m) ...
     const float STUCK_QUIVER_HZ    = 14.0f;   // ... this fast ...
     const float STUCK_QUIVER_DECAY = 10.0f;   // ... dying away (1/s, exp)
-    const float PULL_SEC           = 0.30f;   // the pull back out along the swing's path
-    const float PULL_EASE_POW      = 2.0f;    // ease-in: slow while the straw holds the blade, then it comes free
-    const float PULL_CLEAR         = XMConvertToRadians(8.0f);   // pulled this far back past where it went in (clear of the dummy)
+    // ... and takes m_cutPullSec to be pulled back out along the swing's path
+    const float PULL_EASE_POW     = 2.0f;    // ease-in: slow while the straw holds the blade, then it comes free
+    const float PULL_CLEAR         = 0.15f;   // m: pulled this far past where it went in (clear of the dummy)
+    const float PULL_BACK          = 0.25f;   // m: the hands also draw back toward the body
     // --- the blade's push on the dummy (N s, CutTarget::Push -> it sways on its post) ---
     const float BITE_IMPULSE = 12.0f;   // the blade stops inside: all its momentum (~1.4 kg at ~9 m/s) goes into the dummy
     const float CUT_IMPULSE  = 4.0f;    // it goes through: only part of it
@@ -160,8 +155,7 @@ namespace
     const float TIRE_START_SEC   = 2.0f * BREATH_SEC;   // after two breaths the arms begin to tire ...
     const float TIRE_RAMP_SEC    = 1.5f;      // ... and the sway climbs to the maximum over this time ...
     const float BREAK_SEC        = TIRE_START_SEC + TIRE_RAMP_SEC + 1.0f;   // ... and the focus breaks here
-    const float FOCUS_POWER_MIN  = 0.6f;      // strength x this at the worst moment, x 1 at the stillest
-    const float STILL_RELEASE    = 0.7f;      // a release at least this still counts as "focused" (else the lesson reminds how)
+    const float STILL_RELEASE   = 0.7f;      // a release at least this still counts as "focused" (else the lesson reminds how)
     const float STILL_GLINT_SWAY = 0.08f;     // below this sway the tip glints once (the cue: now)
     const float HEARTBEAT_SEC    = 0.85f;     // a heartbeat while focusing
     const float HEARTBEAT_VOLUME = 0.35f, HEARTBEAT_PITCH = 0.45f;   // a dull, low thump
@@ -225,9 +219,6 @@ namespace
     // --- the stillest moment of the breath: a glint at the tip ---
     const float CHARGE_GLINT_SEC = 0.30f, CHARGE_GLINT_SIZE = 0.16f, CHARGE_GLINT_BRIGHT = 3.0f;
     const XMFLOAT4 CHARGE_GLINT_COL(1.0f, 0.95f, 0.85f, 1.0f);
-
-    // --- a slash that missed the torso: a fresh dummy after a moment ---
-    const float RETRY_DELAY_SEC = 1.6f;
 
     // --- feedback ---
     const float SWING_VOLUME = 0.8f, SWING_PITCH = 0.85f;      // the whoosh (low = heavy)
@@ -372,11 +363,11 @@ namespace
 
 // The dummy, local space: the foot of the post at the origin, y up, metres. Mesh names = the model's.
 const CutTarget::PartDef SceneForge::CUT_PARTS[] = {
-    //       mesh     material     image      bottom      top        half x        half z        durability        kind         core   cut face
-    Stacked("Post",  "CutDummy",  DUMMY_TEX, 0.0f,       POST_TOP,  POST_HALF_W,  POST_HALF_W,  POST_DURABILITY,  Kind::Stand, false, CAP_WOOD),    // holds it up
-    Stacked("Hips",  "CutDummy",  DUMMY_TEX, POST_TOP,   WAIST_TOP, WAIST_HALF.x, WAIST_HALF.y, HIPS_DURABILITY,  Kind::Body,  false, CAP_STRAW),   // the hips
-    Stacked("Torso", "CutDummy",  DUMMY_TEX, WAIST_TOP,  TORSO_TOP, TORSO_HALF.x, TORSO_HALF.y, TORSO_DURABILITY, Kind::Body,  true,  CAP_STRAW),   // the torso = the goal
-    Stacked("Head",  "CutDummy",  DUMMY_TEX, TORSO_TOP,  HEAD_TOP,  HEAD_HALF_W,  HEAD_HALF_W,  HEAD_DURABILITY,  Kind::Body,  false, CAP_STRAW),   // the head
+    //       mesh     material     image      bottom      top        half x        half z        kind         core   cut face
+    Stacked("Post",  "CutDummy",  DUMMY_TEX, 0.0f,       POST_TOP,  POST_HALF_W,  POST_HALF_W,  Kind::Stand, false, CAP_WOOD),    // holds it up
+    Stacked("Hips",  "CutDummy",  DUMMY_TEX, POST_TOP,   WAIST_TOP, WAIST_HALF.x, WAIST_HALF.y, Kind::Body,  false, CAP_STRAW),   // the hips
+    Stacked("Torso", "CutDummy",  DUMMY_TEX, WAIST_TOP,  TORSO_TOP, TORSO_HALF.x, TORSO_HALF.y, Kind::Body,  true,  CAP_STRAW),   // the torso = the goal
+    Stacked("Head",  "CutDummy",  DUMMY_TEX, TORSO_TOP,  HEAD_TOP,  HEAD_HALF_W,  HEAD_HALF_W,  Kind::Body,  false, CAP_STRAW),   // the head
 };
 const int SceneForge::NUM_CUT_PARTS = _countof(SceneForge::CUT_PARTS);
 
@@ -442,9 +433,20 @@ void SceneForge::ResetTestCut()
     m_trailAlpha   = 0.0f;
     m_cutKick      = XMFLOAT2(0.0f, 0.0f);
     m_cutLean = m_cutFovPunch = m_cutSlowmo = 0.0f;
-    m_cutRetryAt   = -1.0f;
     m_cutBannerAt  = -1.0f;
     m_chargeGlintAt = -1.0f;
+}
+
+//--- The power that must gather to cut the dummy in two: the sword's grade as a number of strokes.
+float SceneForge::CutNeed() const
+{
+    switch (GradeLetter())
+    {
+    case 'S': return NEED_STROKES_S;
+    case 'A': return NEED_STROKES_A;
+    case 'B': return NEED_STROKES_B;
+    default:  return NEED_STROKES_C;
+    }
 }
 
 //--- Time scale of the test cut (slow motion after a clean cut). Real seconds keep the slow-mo timer.
@@ -733,13 +735,6 @@ void SceneForge::UpdateTestCutStation(float tick, bool inputOn)
     m_cutFovPunch *= expf(-FOV_LAMBDA * tick);
     m_focusFade = Lerp::Damp(m_focusFade, (m_slashPhase == SlashPhase::Focus) ? 1.0f : 0.0f, FOCUS_FADE_LAMBDA, tick);
 
-    // A strike that missed the torso: stand a fresh dummy up (behind a fade). The strokes keep counting.
-    if (m_cutRetryAt >= 0.0f && m_time >= m_cutRetryAt && !m_fade.IsBusy())
-    {
-        m_cutRetryAt = -1.0f;
-        m_fade.Transition([this] { m_cutNeedsBuild = true; m_cutLookYaw = m_cutLookPitch = 0.0f; });
-    }
-
     if (!SwordInHand()) { m_slashPhase = SlashPhase::Idle; m_plan.valid = false; m_trailAlpha = 0.0f; m_cutLean = 0.0f; return; }
     const float dt = tick * TestCutTimeScale();   // the swing slows down with the slow motion too
     if (m_slashPhase != SlashPhase::Swing && m_trailAlpha > 0.0f)
@@ -754,7 +749,7 @@ void SceneForge::UpdateTestCutStation(float tick, bool inputOn)
                            : (m_slashPhase == SlashPhase::Stuck) ? m_cutLean : 0.0f;
     m_cutLean = Lerp::Damp(m_cutLean, leanTarget, LEAN_LAMBDA, dt);
 
-    const bool canInput = inputOn && SwordAtStation() && !m_cutSevered && !m_clearDecided && m_cutRetryAt < 0.0f;
+    const bool canInput = inputOn && SwordAtStation() && !m_cutSevered && !m_clearDecided;
     m_slashDir = XMFLOAT2(-cosf(m_cutSlashTilt), -sinf(m_cutSlashTilt));   // Zornhau: upper right -> lower left
     // hit stop: the pose holds still for a moment (the camera keeps moving)
     if (m_slashHitstop > 0.0f) { m_slashHitstop -= tick; return; }
@@ -817,12 +812,15 @@ void SceneForge::UpdateTestCutStation(float tick, bool inputOn)
     case SlashPhase::Swing:
     {
         m_slashT += dt / SWING_SEC;
-        const float theta = SwingTheta(m_slashT, XMConvertToRadians(m_windDeg));
+        // the hit: where the blade stops (not strong enough) or as it passes straight in front (it cuts / a whiff)
+        const bool stops = m_plan.reach && m_plan.judged.hit && m_plan.judged.stuck;
+        float theta = SwingTheta(m_slashT, XMConvertToRadians(m_windDeg));
+        // The blade moves tens of degrees per frame near the hit: never past the stop, or it would sit far
+        // beyond the end of the wound (2026-11-01 F5).
+        if (stops) theta = fminf(theta, m_plan.thetaStop);
         m_swordPose = LerpPose(m_swordFrom, SwingPose(theta, m_slashDir), Ease(m_slashT / SWING_BLEND_FRAC));
         m_trailHead = theta;
         m_trailTail = fmaxf(XMConvertToRadians(m_windDeg), theta - TRAIL_ARC);
-        // the hit: where the blade stops (not strong enough) or as it passes straight in front (it cuts / a whiff)
-        const bool stops = m_plan.reach && m_plan.judged.hit && m_plan.judged.stuck;
         if (!m_slashStruck && theta >= (stops ? m_plan.thetaStop : 0.0f))
         {
             m_slashStruck = true;
@@ -843,7 +841,7 @@ void SceneForge::UpdateTestCutStation(float tick, bool inputOn)
         m_swordPose = FollowDummy(m_stuckPose, 1.0f);   // the blade is held by the straw: it moves with the swaying dummy
         const XMFLOAT3& n = m_plan.aim.normal;
         m_swordPose.guard = XMFLOAT3(m_swordPose.guard.x + n.x * q, m_swordPose.guard.y + n.y * q, m_swordPose.guard.z + n.z * q);
-        if (m_stuckTime < STUCK_HOLD_SEC) break;
+        if (m_stuckTime < m_cutStuckSec) break;
         // pull it back out along the way it came in
         Audio::Play(Audio::SE_SWING, PULL_VOLUME, PULL_PITCH);
         m_cutTarget.Push(XMFLOAT3(-m_plan.fwd.x * PULL_IMPULSE, -m_plan.fwd.y * PULL_IMPULSE, -m_plan.fwd.z * PULL_IMPULSE), m_plan.judged.entry);
@@ -855,11 +853,16 @@ void SceneForge::UpdateTestCutStation(float tick, bool inputOn)
 
     case SlashPhase::PullOut:
     {
-        // back along the arc to just outside where it went in: slow while the straw grips, then free
-        m_slashT += dt / PULL_SEC;
+        // Drawn straight out: the blade keeps its angle and slides back the way the cut runs, the hands
+        // drawing toward the body. (2026-11-01 F5: rotating back along the swing's arc looked like the
+        // swing played in reverse.) Slow while the straw grips, then free.
+        m_slashT += dt / m_cutPullSec;
         const float u = powf(Clamp01(m_slashT), PULL_EASE_POW);
-        // still in the straw at first (moves with the dummy), free of it at the end
-        m_swordPose = FollowDummy(SwingPose(Lerp::Linear(m_plan.thetaStop, m_plan.thetaEntry - PULL_CLEAR, u), m_slashDir), 1.0f - u);
+        const float along = (m_plan.judged.stopOffset - m_plan.judged.entryOffset + PULL_CLEAR) * u;
+        const XMVECTOR back = XMLoadFloat3(&m_plan.aim.swingDir) * -along + XMLoadFloat3(&m_plan.fwd) * (-PULL_BACK * u);
+        SwordPose p = m_stuckPose;
+        XMStoreFloat3(&p.guard, XMLoadFloat3(&p.guard) + back);
+        m_swordPose = FollowDummy(p, 1.0f - u);   // still in the straw at first (moves with the dummy), free of it at the end
         if (m_slashT < 1.0f) break;
         BeginSlashPhase(SlashPhase::Recover);
         break;
@@ -920,17 +923,21 @@ void SceneForge::PlanStrike()
     XMStoreFloat3(&aim.swingDir, s);
     aim.eye = eye;
     aim.viewDir = m_plan.fwd;
-    // strength = the move x how well the sword was made (the whole-forge grade) x how still the release was
-    const float quality = fmaxf(GradeScore(), CUT_MIN_QUALITY);
-    const float focus   = Lerp::Linear(FOCUS_POWER_MIN, 1.0f, m_focusQuality);   // a still release cuts deeper
-    m_plan.damage = m_cutStrikeDamage * quality * focus;
-    m_plan.judged = m_cutTarget.Judge(aim, m_plan.damage);
+    m_plan.power  = Lerp::Linear(m_cutPowerMin, m_cutPowerMax, m_focusQuality);   // a still release cuts deeper
+    m_plan.judged = m_cutTarget.Judge(aim, m_plan.power, CutNeed());
+    if (m_plan.judged.coreHit && m_cutTarget.HasWound())
+    {
+        // there is one wound: this slash goes into it (the arc follows the slash that opened it)
+        aim = m_cutTarget.WoundAim();
+        m_plan.eye = aim.eye;
+        m_plan.fwd = aim.viewDir;
+        m_plan.judged = m_cutTarget.Judge(aim, m_plan.power, CutNeed());
+    }
     if (!m_plan.judged.hit) return;
-    // where on the arc the blade comes in and (if it is not enough) where it stops; never inside the
-    // part of the swing that still blends out of the wind-up (the blade is not on the arc there yet)
+    // where on the arc the blade stops (if it is not enough); never inside the part of the swing that
+    // still blends out of the wind-up (the blade is not on the arc there yet)
     const float onArc = SwingTheta(SWING_BLEND_FRAC, XMConvertToRadians(m_windDeg));
-    m_plan.thetaEntry = fmaxf(ThetaAtOffset(m_plan.judged.entryOffset, m_plan.judged.depthAlongView), onArc);
-    m_plan.thetaStop  = fmaxf(ThetaAtOffset(m_plan.judged.stopOffset,  m_plan.judged.depthAlongView), onArc);
+    m_plan.thetaStop  =fmaxf(ThetaAtOffset(m_plan.judged.stopOffset,  m_plan.judged.depthAlongView), onArc);
 }
 
 //--- A pose carried along with the dummy's sway since the blade stopped in it (weight 1 = fully, 0 = not at all).
@@ -973,10 +980,10 @@ float SceneForge::ThetaAtOffset(float offset, float depth)
 void SceneForge::ApplyStrike()
 {
     if (!m_plan.reach) return;                   // nothing in reach: a whiff
-    const SeverTier& tier = TierFor(m_cutHits + 1);   // what a clean cut in two would look like on this stroke
-    const CutTarget::StrikeResult r = m_cutTarget.Strike(m_plan.aim, m_plan.damage, PUSH_SCALE, tier.holdSec);
+    const SeverTier& tier = TierFor(m_cutHits + 1);   // what the cut in two would look like on this stroke
+    const CutTarget::StrikeResult r = m_cutTarget.Strike(m_plan.aim, m_plan.power, CutNeed(), PUSH_SCALE, tier.holdSec);
     if (!r.hit) return;                          // the plane passed beside the dummy: a whiff
-    ++m_cutHits;                                 // a stroke that touched the dummy
+    if (r.coreHit) ++m_cutHits;                  // only a stroke through the middle of the torso counts
     const XMFLOAT3& sw = m_plan.aim.swingDir;
     const XMFLOAT3 back(-m_plan.fwd.x, -m_plan.fwd.y, -m_plan.fwd.z);   // out of the cut, toward the player
 
@@ -990,25 +997,22 @@ void SceneForge::ApplyStrike()
         Audio::PlayAt(Audio::SE_COLD, m_plan.aim.point, CUT_VOLUME, CUT_PITCH);
         m_particles.SpawnStraw(m_plan.aim.point, sw, STRAW_SPREAD, STRAW_CUT, STRAW_SPEED_MIN, STRAW_SPEED_MAX, m_walkFloorY);
         m_cutTarget.Push(XMFLOAT3(sw.x * CUT_IMPULSE, sw.y * CUT_IMPULSE, sw.z * CUT_IMPULSE), m_plan.aim.point);   // the stump rocks
-        if (r.severed && !m_cutSevered)
-        {
-            // cut in two: the payoff, by how many strokes it took
-            m_cutSevered     = true;
-            m_cutSeveredHits = m_cutHits;
-            m_cutBannerAt    = m_time;
-            m_cutBannerBrush = tier.brush;
-            m_cutBannerSlam  = tier.slamFrom;
-            m_cutBannerShake = tier.slamShake;
-            m_cutBannerLanded = false;
-            m_slashHitstop   = fmaxf(m_slashHitstop, tier.hitstopSec);
-            m_cutSlowmo      = tier.slowmoSec;
-            m_cutSlowmoScale = tier.slowmoScale;
-            m_cutFovPunch    = fmaxf(m_cutFovPunch, FOV_PUNCH_SEVER);
-        }
+        // cut in two: the payoff, by how many strokes it took
+        m_cutSevered     = true;
+        m_cutSeveredHits = m_cutHits;
+        m_cutBannerAt    = m_time;
+        m_cutBannerBrush = tier.brush;
+        m_cutBannerSlam  = tier.slamFrom;
+        m_cutBannerShake = tier.slamShake;
+        m_cutBannerLanded = false;
+        m_slashHitstop   = fmaxf(m_slashHitstop, tier.hitstopSec);
+        m_cutSlowmo      = tier.slowmoSec;
+        m_cutSlowmoScale = tier.slowmoScale;
+        m_cutFovPunch    = fmaxf(m_cutFovPunch, FOV_PUNCH_SEVER);
     }
     else
     {
-        // not strong enough: the blade bites in and stops dead in the notch (it will be pulled out)
+        // short of enough (or off the middle): the blade bites in and stops dead (it will be pulled out)
         m_slashHitstop = HITSTOP_STUCK_SEC;
         m_shake = fmaxf(m_shake, STUCK_SHAKE);
         m_cutKick = XMFLOAT2(m_slashDir.x * KICK_STUCK, m_slashDir.y * KICK_STUCK);
@@ -1021,20 +1025,13 @@ void SceneForge::ApplyStrike()
         m_cutTarget.Push(XMFLOAT3(sw.x * BITE_IMPULSE, sw.y * BITE_IMPULSE, sw.z * BITE_IMPULSE), r.stop);
         m_stuckTime  = 0.0f;
         BeginSlashPhase(SlashPhase::Stuck);
+        if (!r.coreHit) { Say((const char*)u8"胴を狙え", VOICE_COL); return; }   // off the middle: it counts for nothing
         if (m_focusQuality < STILL_RELEASE) NoteLessonMistake(LessonId::Slash);   // stopped after a restless release -> remind how to focus
         // The tempering shows in the edge (decided 2026-10-20 for the armor; kept for the stuck blade 2026-10-29):
         //   too hard -> it chips, too soft -> it rolls. Well tempered: nothing to say.
         const float temper = TemperAvg();
         if (temper < TEMPER_IDEAL_MIN)      Say((const char*)u8"刃が欠けた…硬すぎて脆い", VOICE_COL);
         else if (temper > TEMPER_IDEAL_MAX) Say((const char*)u8"刃がまくれた…柔らかすぎる", VOICE_COL);
-    }
-
-    // Missed the torso (only the post / hips / head): it counts as a stroke, but it does not test the sword.
-    //   A fresh dummy is stood up after a moment.
-    if (!r.coreHit && !m_cutSevered)
-    {
-        m_cutRetryAt = m_time + RETRY_DELAY_SEC;
-        Say((const char*)u8"胴を狙え", VOICE_COL);
     }
 }
 
