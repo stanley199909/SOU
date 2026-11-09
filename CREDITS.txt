@@ -24,6 +24,18 @@ FORGE - Credits / クレジット
 
 ※ NC = 非営利のみ。商用化する場合は freesound の2つを差し替えること。
 
+- "Large piece of wood being dropped 04" by Jagadamba
+  https://freesound.org/people/Jagadamba/sounds/258051/
+  License: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
+  使用箇所: 「一刀両断」の札が叩き付けられる音 (Assets/Sound/SE/cut_slam.wav。暫定 2026-11-02)
+  加工: 公開 HQ MP3 プレビューを入手・44.1 kHz モノラル 16-bit WAV 化・音量正規化・末尾フェードアウト
+
+- "Large Anvil & Steel Hammer 2.wav" by Benboncan
+  https://freesound.org/people/Benboncan/sounds/103630/
+  License: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
+  使用箇所: 結算の称号が叩き付けられる音 (Assets/Sound/SE/result_slam.wav。暫定 2026-11-09)
+  加工: 公開 HQ MP3 プレビューを入手・44.1 kHz モノラル 16-bit WAV 化・音量正規化・末尾フェードアウト
+
 ■ クレジット不要の素材 / No attribution required (参考)
 
 - freesound.org (CC0): "Metal Grinding-Sharpening" by sentryx86 / "Writing Short with Pencil" by WaltzOfTheWifi
@@ -32,6 +44,23 @@ FORGE - Credits / クレジット
   https://pixabay.com/users/freesound_community-46691455/ (sound id 94328)
   License: Pixabay Content License (クレジット任意。感謝を込めて記載)
   使用箇所: チュートリアルで操作を覚えた時の確認音 (Assets/Sound/SE/learned.wav に加工: 先頭/末尾の無音を除去・モノラル化・-2.2dB・WAV化)
+- 試し切り・メニューの効果音 (2026-11-02 暫定。切り出し・音量正規化・フェードを加工。下記すべて CC0。出典の詳細: Assets/Sound/SE/Candidates_20261102/CREDITS_CANDIDATES.csv)
+  freesound.org:
+  "Whoosh 03" by velcronator https://freesound.org/people/velcronator/sounds/733890/ (cut_swing.wav)
+  "Cabbage being chopped 2.wav" by MessyAcousticApocalypse666 https://freesound.org/people/MessyAcousticApocalypse666/sounds/594781/ (cut_sever.wav)
+  "Knife Stab.wav" by Mixedupmoviestuff https://freesound.org/people/Mixedupmoviestuff/sounds/179222/ (cut_bite.wav)
+  "Drawing sword" by Mediapaja2009 https://freesound.org/people/Mediapaja2009/sounds/162560/ (result_glint.wav)
+  freesound.org (2026-11-09, 出典の詳細: Assets/Sound/SE/Candidates_20261109/manifest.json):
+  "Straw bush rustling.wav" by BonginkosiMakhubu190225 https://freesound.org/people/BonginkosiMakhubu190225/sounds/542690/ (cut_pull.wav)
+  "Choir of Voices - Single Chord" by bone666138 https://freesound.org/people/bone666138/sounds/274121/ (result_legendary.wav, stereo)
+  "Quill and Parchment.WAV" by Nickh69 https://freesound.org/people/Nickh69/sounds/507864/ (quill_write.wav)
+  "Bag Drop Hard Surface 1" by BenjaminNelan https://freesound.org/people/BenjaminNelan/sounds/584440/ (cut_fall.wav)
+  "Metal Object Tapped.aif" by RutgerMuller https://freesound.org/people/RutgerMuller/sounds/104368/ (focus_glint.wav)
+  "Wooden Hover" / "Wooden Click" by BenjaminNelan https://freesound.org/people/BenjaminNelan/sounds/321082/ , /321083/ (ui_move.wav / ui_confirm.wav)
+  "Leather Rubbing Foley Sound" by ALLANZ10D https://freesound.org/people/ALLANZ10D/sounds/269761/ (ui_back.wav / ui_pause.wav)
+  bigsoundbank.com:
+  "Heartbeat #2" by Denis Chardonnet https://bigsoundbank.com/heartbeat-2-s0244.html (heartbeat.wav)
+  "Impatient finger tapping #1" by Joseph Sardin https://bigsoundbank.com/impatient-finger-tapping-1-s1427.html (ui_slider.wav)
 - Poly Haven (CC0): 岩壁テクスチャ
 - Kenney (CC0): 操作キーのアイコン
 - SDL3 (zlib License, https://www.libsdl.org/): ゲームパッドの入力 (ThirdParty/SDL3/LICENSE.txt)
@@ -44,6 +73,10 @@ FORGE - Credits / クレジット
 - Cinzel (Natanael Gama) / EB Garamond (Georg Duffner, Octavio Pardo)
   License: SIL Open Font License 1.1 (https://openfontlicense.org/)
   使用箇所: タイトル・本文 (Assets/Font/)
+- Pinyon Script (Copyright 2024 The Pinyon Project Authors, https://github.com/SorkinType/Pinyon)
+  License: SIL Open Font License 1.1 (ライセンス文: Assets/Font/OFL.txt)
+  入手元: https://github.com/google/fonts/tree/main/ofl/pinyonscript (2026-11-09, 無加工)
+  使用箇所: 結算の称号 (Assets/Font/PinyonScript-Regular.ttf)
   ※ OFL はフォントを同梱して配布する時にライセンス文の同梱が必要。
 - 日本語: Windows 標準のメイリオ / 游明朝 (OS のフォントを読むだけで、同梱はしていない)
 

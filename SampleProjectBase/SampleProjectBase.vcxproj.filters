@@ -222,6 +222,9 @@
     <ClCompile Include="SceneForge\TestCut.cpp">
       <Filter>ソース ファイル\App\Scene\SceneForge</Filter>
     </ClCompile>
+    <ClCompile Include="SceneForge\ResultStage.cpp">
+      <Filter>ソース ファイル\App\Scene\SceneForge</Filter>
+    </ClCompile>
     <ClCompile Include="SceneForge\Collision.cpp">
       <Filter>ソース ファイル\App\Scene\SceneForge</Filter>
     </ClCompile>

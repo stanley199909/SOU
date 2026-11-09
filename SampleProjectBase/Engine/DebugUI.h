@@ -29,6 +29,7 @@ public:
 	//   日本語(主人公セリフ)は既定フォント(メイリオ)のまま。
 	static ImFont* FontTitle();		// 大見出し(FORGE / FORGED! など)
 	static ImFont* FontBody();		// 英文の本文・ボタン
+	static ImFont* FontScript();	// 英文の手書き体(結算の称号。Pinyon Script)。ファイルが無ければ nullptr
 	static ImFont* FontJP();		// 日本語HUD(工程案内/操作説明)。游明朝。無ければ既定フォント(nullptr を返さない)
 	static ImFont* FontJPFor(float px);	// px の大きさで描く時に一番合う実寸で焼いた日本語フォント(縮小ぼけ防止)
 };

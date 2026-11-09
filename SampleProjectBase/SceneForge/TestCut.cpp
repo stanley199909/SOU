@@ -158,7 +158,8 @@ namespace
     const float STILL_RELEASE   = 0.7f;      // a release at least this still counts as "focused" (else the lesson reminds how)
     const float STILL_GLINT_SWAY = 0.08f;     // below this sway the tip glints once (the cue: now)
     const float HEARTBEAT_SEC    = 0.85f;     // a heartbeat while focusing
-    const float HEARTBEAT_VOLUME = 0.35f, HEARTBEAT_PITCH = 0.45f;   // a dull, low thump
+    const float HEARTBEAT_VOLUME = 0.5f;
+    const float GLINT_VOLUME     = 0.5f;      // the tip's glint (the cue to release)
     const float FOCUS_FADE_LAMBDA = 6.0f;     // how fast the focus look (dark edges, narrow view) comes and goes
     const float FOCUS_FOV_NARROW  = 0.12f;    // share the view narrows while focusing (the world closes in)
     const float RETICLE_R_MIN = 0.006f, RETICLE_R_GROW = 0.030f;   // aim ring radius (screen-height ratio): still .. restless
@@ -221,10 +222,11 @@ namespace
     const XMFLOAT4 CHARGE_GLINT_COL(1.0f, 0.95f, 0.85f, 1.0f);
 
     // --- feedback ---
-    const float SWING_VOLUME = 0.8f, SWING_PITCH = 0.85f;      // the whoosh (low = heavy)
-    const float CUT_VOLUME = 0.7f, CUT_PITCH = 1.1f;            // a thud as it goes through
-    const float THUD_VOLUME = 0.8f, THUD_PITCH = 1.0f;          // the blade stops in the straw
-    const float PULL_VOLUME = 0.35f, PULL_PITCH = 0.7f;         // pulled out (a short, low swish)
+    const float SWING_VOLUME = 0.85f;     // the whoosh, at the release
+    const float SEVER_VOLUME = 1.0f;      // it goes through, exactly at the hit
+    const float BITE_VOLUME  = 0.9f;      // the blade stops in the straw
+    const float PULL_VOLUME  = 0.6f;      // pulled out
+    const float FALL_VOLUME  = 0.9f;      // the upper part hits the ground
     const float CUT_SHAKE = 0.55f, STUCK_SHAKE = 0.7f;          // camera shake (m_shake)
     const Rumble RUMBLE_CUT    = { 0.7f, 0.8f, 0.0f, 0.9f };
     const Rumble RUMBLE_STUCK  = { 0.9f, 0.4f, 0.0f, 1.0f };
@@ -261,7 +263,7 @@ namespace
     const float BANNER_Y         = 0.38f;   // vertical position (screen-height ratio)
     const float BANNER_W         = 0.62f;   // brush image width (screen-width ratio)
     const float BANNER_TEXT_H    = 0.075f;  // text height (screen-height ratio)
-    const float BANNER_SLAM_VOLUME = 1.0f, BANNER_SLAM_PITCH = 0.55f;   // a deep "dong" as it lands
+    const float BANNER_SLAM_VOLUME = 1.0f;  // as it lands
 
     // Share of the blade length searched at each end to tell the tip (narrow) from the tang end (wide).
     const float TIP_END_FRAC = 0.1f;
@@ -466,6 +468,8 @@ void SceneForge::UpdateTestCut(float tick)
     m_cutTarget.SetPlacement(XMFLOAT3(m_cutPosXZ[0], m_walkFloorY, m_cutPosXZ[1]), m_cutYaw);   // follows F4 "place in front of me"
     m_cutTarget.Update(tick * TestCutTimeScale());
     if (m_cutSlowmo > 0.0f) m_cutSlowmo -= tick;
+    XMFLOAT3 landedAt;
+    if (m_cutTarget.TakeLanded(landedAt)) Audio::PlayAt(Audio::SE_CUT_FALL, landedAt, FALL_VOLUME);
 }
 
 //====================================================================
@@ -778,13 +782,17 @@ void SceneForge::UpdateTestCutStation(float tick, bool inputOn)
         const float tire   = Clamp01((m_focusTime - TIRE_START_SEC) / TIRE_RAMP_SEC);
         const float before = m_focusSway;
         m_focusSway = fmaxf(breath, tire);
-        if (before >= STILL_GLINT_SWAY && m_focusSway < STILL_GLINT_SWAY) m_chargeGlintAt = m_time;   // the cue: now
+        if (before >= STILL_GLINT_SWAY && m_focusSway < STILL_GLINT_SWAY)   // the cue: now
+        {
+            m_chargeGlintAt = m_time;
+            Audio::Play(Audio::SE_FOCUS_GLINT, GLINT_VOLUME);
+        }
         const float amp = Lerp::Linear(SWAY_MIN_RAD, SWAY_MAX_RAD, m_focusSway);
         m_focusAim = XMFLOAT2(OrganicNoise(m_time * SWAY_SPEED, SWAY_SEED_X) * amp, OrganicNoise(m_time * SWAY_SPEED, SWAY_SEED_Y) * amp);
         if (m_time - m_heartbeatAt >= HEARTBEAT_SEC)
         {
             m_heartbeatAt = m_time;
-            Audio::Play(Audio::SE_COLD, HEARTBEAT_VOLUME, HEARTBEAT_PITCH);
+            Audio::Play(Audio::SE_HEARTBEAT, HEARTBEAT_VOLUME);
         }
         if (!canInput) { m_focusAim = XMFLOAT2(0, 0); BeginSlashPhase(SlashPhase::Recover); break; }   // e.g. the pause menu: lower the sword
         if (m_focusTime >= BREAK_SEC)
@@ -800,7 +808,7 @@ void SceneForge::UpdateTestCutStation(float tick, bool inputOn)
         m_focusQuality = FocusQualityNow();
         m_slashStruck  = false;
         ++m_cutStrikes;
-        Audio::Play(Audio::SE_SWING, SWING_VOLUME, SWING_PITCH);
+        Audio::Play(Audio::SE_CUT_SWING, SWING_VOLUME);
         m_trailDir   = m_slashDir;
         m_trailHead  = m_trailTail = XMConvertToRadians(m_windDeg);
         m_trailAlpha = 1.0f;
@@ -843,7 +851,7 @@ void SceneForge::UpdateTestCutStation(float tick, bool inputOn)
         m_swordPose.guard = XMFLOAT3(m_swordPose.guard.x + n.x * q, m_swordPose.guard.y + n.y * q, m_swordPose.guard.z + n.z * q);
         if (m_stuckTime < m_cutStuckSec) break;
         // pull it back out along the way it came in
-        Audio::Play(Audio::SE_SWING, PULL_VOLUME, PULL_PITCH);
+        Audio::PlayAt(Audio::SE_CUT_PULL, m_plan.judged.entry, PULL_VOLUME);
         m_cutTarget.Push(XMFLOAT3(-m_plan.fwd.x * PULL_IMPULSE, -m_plan.fwd.y * PULL_IMPULSE, -m_plan.fwd.z * PULL_IMPULSE), m_plan.judged.entry);
         m_particles.SpawnStraw(m_plan.judged.entry, XMFLOAT3(-m_plan.fwd.x, -m_plan.fwd.y, -m_plan.fwd.z), STRAW_SPREAD, STRAW_PULL,
                                STRAW_SPEED_MIN, STRAW_SPEED_MAX, m_walkFloorY);
@@ -994,7 +1002,7 @@ void SceneForge::ApplyStrike()
         m_cutKick = XMFLOAT2(m_slashDir.x * KICK_CUT, m_slashDir.y * KICK_CUT);   // the view follows the blade through
         m_cutFovPunch = fmaxf(m_cutFovPunch, FOV_PUNCH_CUT);
         Haptics::Pulse(RUMBLE_CUT, RUMBLE_CUT_SEC);
-        Audio::PlayAt(Audio::SE_COLD, m_plan.aim.point, CUT_VOLUME, CUT_PITCH);
+        Audio::PlayAt(Audio::SE_CUT_SEVER, m_plan.aim.point, SEVER_VOLUME);
         m_particles.SpawnStraw(m_plan.aim.point, sw, STRAW_SPREAD, STRAW_CUT, STRAW_SPEED_MIN, STRAW_SPEED_MAX, m_walkFloorY);
         m_cutTarget.Push(XMFLOAT3(sw.x * CUT_IMPULSE, sw.y * CUT_IMPULSE, sw.z * CUT_IMPULSE), m_plan.aim.point);   // the stump rocks
         // cut in two: the payoff, by how many strokes it took
@@ -1017,7 +1025,7 @@ void SceneForge::ApplyStrike()
         m_shake = fmaxf(m_shake, STUCK_SHAKE);
         m_cutKick = XMFLOAT2(m_slashDir.x * KICK_STUCK, m_slashDir.y * KICK_STUCK);
         Haptics::Pulse(RUMBLE_STUCK, RUMBLE_STUCK_SEC);
-        Audio::PlayAt(Audio::SE_COLD, r.stop, THUD_VOLUME, THUD_PITCH);
+        Audio::PlayAt(Audio::SE_CUT_BITE, r.stop, BITE_VOLUME);
         m_particles.SpawnStraw(r.stop, back, STRAW_SPREAD, STRAW_STUCK, STRAW_SPEED_MIN, STRAW_SPEED_MAX, m_walkFloorY);
         m_trailHead  = m_plan.thetaStop;             // the streak stops where the blade did
         m_stuckPose  = m_swordPose;
@@ -1183,7 +1191,7 @@ void SceneForge::DrawSeverBanner()
         if (m_cutBannerShake > 0.0f)
         {
             m_shake = fmaxf(m_shake, m_cutBannerShake);
-            Audio::Play(Audio::SE_ANVIL2, BANNER_SLAM_VOLUME, BANNER_SLAM_PITCH);
+            Audio::Play(Audio::SE_CUT_SLAM, BANNER_SLAM_VOLUME);
         }
     }
     const float scale = Lerp::Linear(m_cutBannerSlam, 1.0f, EaseOutBack(slam, BANNER_SLAM_BACK));
@@ -1245,9 +1253,10 @@ void SceneForge::DrawTestCut()
     m_cutTarget.Draw(cam, StationHighlight(StationPropKey(Station::TestCut)));
     if (m_showCutDebug) m_cutTarget.DrawDebug(cam);
 
-    // The hilt: fitted when the blade reached the dummy (m_workAt == TestCut), wherever the blade is.
-    // Not on the result screen: the blade is not drawn there either (it would lie across the view).
-    if (!cam || !m_wpOk || m_workAt != Station::TestCut || m_carrying || m_state == GAME_RESULT) return;
+    // The hilt: fitted when the blade reached the dummy (m_workAt == TestCut), wherever the blade is;
+    // on the result screen the fitted sword lies on the anvil (m_resultHilt).
+    const bool fitted = (m_workAt == Station::TestCut) || (m_state == GAME_RESULT && m_resultHilt);
+    if (!cam || !m_wpOk || !fitted || m_carrying) return;
     if (!m_hiltMetal) BuildHilt();
     // the hilt's axes from the blade's own world matrix: tang end, toward the tip, along the edge
     const int sign = SwordTipSign();

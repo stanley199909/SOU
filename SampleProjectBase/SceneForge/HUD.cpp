@@ -1456,70 +1456,165 @@ float SceneForge::GradeScore() const
 	return s;
 }
 
+//--- 鍛造の工程だけの出来: 形の一致度と打撃品質を、出来栄えと同じ重みの比で混ぜる(結算の「鍛造」の行)。
+float SceneForge::ForgeScore() const
+{
+	const float qAvg = (m_strikeCount > 0) ? (m_qualitySum / (float)m_strikeCount) : 0.0f;
+	return (GRADE_W_MATCH * m_match + GRADE_W_QUALITY * qAvg) / (GRADE_W_MATCH + GRADE_W_QUALITY);
+}
+
 //--- 出来栄えを S/A/B/C に量子化(閾値は header の GRADE_*)。
 char SceneForge::GradeLetter() const
 {
-	float s = GradeScore();
+	return LetterOf(GradeScore());
+}
+
+char SceneForge::LetterOf(float s) const
+{
 	if (s >= GRADE_S) return 'S';
 	if (s >= GRADE_A) return 'A';
 	if (s >= GRADE_B) return 'B';
 	return 'C';
 }
 
+//--- 結算の画面(2026-11-09 方向C)。3D の鏡頭・時間軸・音は ResultStage.cpp。ここは文字だけ:
+//    右の羊皮紙に工程ごとの「名前 / 時間 / 評価」を1行ずつ書く → 称号(英文の手書き体)を叩き付ける → キー待ちの案内。
+//    最初は黒から淡入(剣と鏡頭が試し切りの場所から金床へ跳ぶのを見せない)。
+//    紙の上の文字は「濃いインク・影なし」(黒い影は紙の上で文字を濁らせる)。
 void SceneForge::DrawResultUI()
 {
 	ImFont* title = DebugUI::FontTitle();
 	ImFont* body  = DebugUI::FontBody();
-	// 羊皮紙を下地に敷き、その上に成果を書く。
-	//   紙(橙色)の上の文字は「濃いインク・影なし」(黒い影は紙の上で文字を濁らせ、対比を下げていた)。
-	//   文字は全部、紙の破れ縁の内側に収める。操作案内だけは紙の外(暗い背景)に白で出す=紙の文字と役割が違う。
-	DrawParchmentPanel(0.50f, 0.72f);
-	const ImU32 INK_DARK  = IM_COL32(40, 20,  8, 255);	// 見出し/数値: 一番濃い焦茶(橙の紙との対比を最大に)
-	const ImU32 INK_LABEL = INK_DARK;	// 項目名も一番濃いインク(旧: 少し薄い焦茶+細い書体で、紙の模様に埋もれた)
-	// 縦位置(画面高さ比)。紙の破れ縁の内側 ≒ 0.36〜0.71(DrawParchmentPanel(0.50, 0.72) の時)
-	// 試し切りの行がある時は、形/点の2行を少し上げて3行を紙の中に収める
-	const bool  cutLine = m_cutSevered;
-	const float TITLE_Y = 0.375f, GRADE_Y = 0.50f;
-	const float MATCH_Y = cutLine ? 0.595f : 0.615f, SCORE_Y = cutLine ? 0.640f : 0.665f, CUT_Y = 0.685f;
-	const float PROMPT_Y = 0.83f;	// 紙の下の外
-	const float TITLE_SCALE = 1.10f, GRADE_SCALE = 2.2f, PROMPT_SCALE = 0.80f;
-	// 成績の2行は太い見出し書体(Cinzel Black, 64px で焼いてある)を半分の大きさで。
-	//   本文書体(EB Garamond)は線が細く、模様の多い羊皮紙の上では読めなかった。
-	const float STAT_SCALE = 0.50f;
-	CenterText("FORGED!", TITLE_Y, TITLE_SCALE, INK_DARK, title, false);
+	ImDrawList* dl = HudDrawList();
+	const ImVec2 disp = ImGui::GetIO().DisplaySize;
+	const float t = m_resultTime;
+	auto clamp01 = [](float v) { return fminf(fmaxf(v, 0.0f), 1.0f); };
+	auto withAlpha = [](ImU32 c, float a) { return (c & ~IM_COL32_A_MASK) | ((ImU32)(((c >> IM_COL32_A_SHIFT) & 0xFF) * a) << IM_COL32_A_SHIFT); };
 
-	// --- 等級(S/A/B/C): 一番大きく、等級ごとに色を変えて主役にする(どれも紙の上で読める濃さ) ---
-	char g = GradeLetter();
-	ImU32 gcol;
-	switch (g)
+	// --- 羊皮紙のカード(右側。工程リスト・一時停止メニューと同じ飾り枠。左には剣が見える
+	//     = ResultStage.cpp の鏡頭が剣を左へ寄せる)。2026-11-09 F5: 横長の巻物の画像は右へはみ出し、剣も隠した ---
+	const float CARD_LEFT = 0.58f, CARD_RIGHT = 0.94f, CARD_TOP = 0.30f;	// 画面比。下端は行数で決まる
+	const float ROW_H = 0.05f;			// 1行の高さ(画面の高さ比)。行数に依らず一定(2026-11-09 F5: 行で割ると1行だけの時に文字が巨大化した)
+	const float CARD_CORNER = 0.07f;	// 飾り枠の隅の大きさ(画面の高さ比)
+	const float INSET_X = 0.75f, INSET_TOP = 0.95f, INSET_BOTTOM = 0.7f;	// 文字の余白(隅の大きさに対する比。上辺は中央の飾りを避けて広め)
+	const float COL_TIME  = 0.66f;	// 時間の列の右端(内側の幅に対する比)。評価は右端に揃える
+	const float ROW_TEXT_K = 0.66f;	// 文字の高さ = 1行の高さ × これ
+	const float RULE_W = 1.5f;		// 合計の上の線の太さ(px)
+	const ImU32 INK  = IM_COL32(40, 20, 8, 255);	// 一番濃い焦茶(紙との対比を最大に)
+	const ImU32 SEAL = IM_COL32(150, 25, 10, 255);	// S の評価だけ朱(印章の色)
+	const int   lines   = ResultLineCount();
+	const float linesAt = ResultLinesAt();
+	if (t >= linesAt - RESULT_LINE_GAP && m_uiFrame)	// カードが先に置かれ、1行目はその後に書かれる
 	{
-	case 'S': gcol = IM_COL32(150,  25,  10, 255); break;	// 朱(印章の色)=特別
-	case 'A': gcol = IM_COL32( 45,  22,   8, 255); break;	// 濃い焦茶
-	case 'B': gcol = IM_COL32( 70,  45,  25, 255); break;
-	default:  gcol = IM_COL32( 90,  65,  45, 255); break;	// C=少し薄いインク
+		const float corner = disp.y * CARD_CORNER;
+		const float rowH = disp.y * ROW_H;
+		const float cardH = corner * (INSET_TOP + INSET_BOTTOM) + rowH * lines;
+		const ImVec2 pa(disp.x * CARD_LEFT, disp.y * CARD_TOP), pb(disp.x * CARD_RIGHT, disp.y * CARD_TOP + cardH);
+		DrawParchment(dl, m_uiFrame.get(), pa, pb, corner);
+		const float x0 = pa.x + corner * INSET_X, x1 = pb.x - corner * INSET_X;
+		const float y0 = pa.y + corner * INSET_TOP;
+		const float px = rowH * ROW_TEXT_K;
+		ImFont* jp = DebugUI::FontJPFor(px);
+		ImFont* letterFont = title ? title : jp;
+		const float xTime = x0 + (x1 - x0) * COL_TIME;
+		auto timeText = [](float sec, char* out, size_t n) { const int s = (int)(sec + 0.5f); sprintf_s(out, n, "%d:%02d", s / 60, s % 60); };
+		float total = 0.0f;
+		for (const StepTime& st : m_stepTimes) total += st.total;
+		int step = -1;	// 今の行が表す工程(0 秒の工程は飛ばす = ResultRowShown)
+		for (int k = 0; k < lines; ++k)
+		{
+			const float a = clamp01((t - (linesAt + k * RESULT_LINE_GAP)) / RESULT_LINE_FADE);	// 書かれて浮かび上がる
+			if (a <= 0.0f) break;
+			const bool isTotal = (k == lines - 1);
+			if (!isTotal) { ++step; while (step < (int)m_stepTimes.size() && !ResultRowShown(step)) ++step; }
+			if (!isTotal && step >= (int)m_stepTimes.size()) break;
+			const char* label = isTotal ? (const char*)u8"合計" : (m_recipe ? m_recipe->steps[step].label : "");
+			char tbuf[16]; timeText(isTotal ? total : m_stepTimes[step].total, tbuf, sizeof(tbuf));
+			// 評価: 点数のある工程だけ S/A/B/C、試し切りは「何太刀で両断」。他は時間だけ
+			char rbuf[32] = "";
+			ImFont* rFont = letterFont;
+			ImU32 rCol = INK;
+			if (!isTotal && m_recipe)
+			{
+				char letter = 0;
+				switch (m_recipe->steps[step].type)
+				{
+				case StepName::Forge:  letter = LetterOf(ForgeScore());  break;
+				case StepName::Quench: letter = LetterOf(QuenchScore()); break;
+				case StepName::Temper: letter = LetterOf(TemperScore()); break;
+				case StepName::TestCut:
+					if (m_cutSevered) { sprintf_s(rbuf, sizeof(rbuf), (const char*)u8"%d 太刀", m_cutSeveredHits); rFont = jp; }
+					break;
+				default: break;
+				}
+				if (letter) { sprintf_s(rbuf, sizeof(rbuf), "%c", letter); if (letter == 'S') rCol = SEAL; }
+			}
+			const float yMid = y0 + rowH * (k + 0.5f);
+			if (isTotal) dl->AddLine(ImVec2(x0, y0 + rowH * k), ImVec2(x1, y0 + rowH * k), withAlpha(INK, a), RULE_W);
+			const ImVec2 ls = jp->CalcTextSizeA(px, FLT_MAX, 0.0f, label);
+			dl->AddText(jp, px, ImVec2(x0, yMid - ls.y * 0.5f), withAlpha(INK, a), label);
+			const ImVec2 ts = jp->CalcTextSizeA(px, FLT_MAX, 0.0f, tbuf);
+			dl->AddText(jp, px, ImVec2(xTime - ts.x, yMid - ts.y * 0.5f), withAlpha(INK, a), tbuf);
+			if (rbuf[0])
+			{
+				const ImVec2 rs = rFont->CalcTextSizeA(px, FLT_MAX, 0.0f, rbuf);
+				dl->AddText(rFont, px, ImVec2(x1 - rs.x, yMid - rs.y * 0.5f), withAlpha(rCol, a), rbuf);
+			}
+		}
 	}
-	char gbuf[8]; sprintf_s(gbuf, sizeof(gbuf), "%c", g);
-	CenterText(gbuf, GRADE_Y, GRADE_SCALE, gcol, title, false);	// 等級=最大サイズ
 
-	char buf[64];
-	sprintf_s(buf, sizeof(buf), "SHAPE MATCH   %d%%", (int)(m_match * 100));
-	CenterText(buf, MATCH_Y, STAT_SCALE, INK_LABEL, title, false);
-	sprintf_s(buf, sizeof(buf), "SCORE   %d", m_score);
-	CenterText(buf, SCORE_Y, STAT_SCALE, INK_LABEL, title, false);
-	// 試し切り: 何太刀で胴を両断したか(鍛えた出来の証拠。等級とは別の点数にはしない)。派手な演出は後の段階
-	if (cutLine)
+	// --- 称号: 英文の手書き体を大きい所から叩き付ける。色で等級が分かる(英語が読めない人にも) ---
+	//   S = 流れる虹色 / A = 赤 / B = 青 / C = 灰白
+	const float TITLE_X = 0.5f, TITLE_Y = 0.15f, TITLE_H = 0.14f;	// 画面比
+	const float TITLE_SLAM_FROM = 2.4f;		// 叩き付ける前の大きさ(倍)
+	const float TITLE_SLAM_BACK = 1.7f;		// ease-out-back: 少し小さく行き過ぎて戻る(着地の「ドン」)
+	const float RAINBOW_SPEED = 0.35f;		// 虹色が流れる速さ(色相/秒)
+	const float RAINBOW_SPAN  = 0.8f;		// 文字列の端から端までで色相がどれだけ変わるか
+	const float RAINBOW_SAT = 0.55f, RAINBOW_VAL = 1.0f;
+	if (t >= ResultTitleAt())
 	{
-		sprintf_s(buf, sizeof(buf), "CUT IN TWO   %d STROKE%s", m_cutSeveredHits, m_cutSeveredHits == 1 ? "" : "S");
-		CenterText(buf, CUT_Y, STAT_SCALE, INK_LABEL, title, false);
+		const float slam = clamp01((t - ResultTitleAt()) / RESULT_SLAM_SEC);
+		const float u = slam - 1.0f;
+		const float back = 1.0f + (TITLE_SLAM_BACK + 1.0f) * u * u * u + TITLE_SLAM_BACK * u * u;
+		const float scale = Lerp::Linear(TITLE_SLAM_FROM, 1.0f, back);
+		const float a = clamp01(slam * 2.0f);
+		ImFont* sf = DebugUI::FontScript() ? DebugUI::FontScript() : title;
+		const char g = GradeLetter();
+		const char* name = (g == 'S') ? "Legendary" : (g == 'A') ? "Masterwork" : (g == 'B') ? "Fine" : "Common";
+		const ImU32 col = (g == 'A') ? IM_COL32(200, 40, 30, 255) : (g == 'B') ? IM_COL32(70, 120, 220, 255) : IM_COL32(225, 222, 215, 255);
+		const float px = disp.y * TITLE_H * scale;
+		const ImVec2 sz = sf->CalcTextSizeA(px, FLT_MAX, 0.0f, name);
+		float x = disp.x * TITLE_X - sz.x * 0.5f;
+		const float y = disp.y * TITLE_Y - sz.y * 0.5f;
+		if (g != 'S') DrawOutlinedText(dl, sf, px, x, y, withAlpha(col, a), name);
+		else
+		{
+			// 1文字ずつ色相をずらし、時間で流す
+			for (const char* c = name; *c; ++c)
+			{
+				const char ch[2] = { *c, 0 };
+				const float hue = fmodf(m_time * RAINBOW_SPEED + (x - (disp.x * TITLE_X - sz.x * 0.5f)) / fmaxf(sz.x, 1.0f) * RAINBOW_SPAN, 1.0f);
+				float r, gr, b; ImGui::ColorConvertHSVtoRGB(hue, RAINBOW_SAT, RAINBOW_VAL, r, gr, b);
+				DrawOutlinedText(dl, sf, px, x, y, IM_COL32((int)(r * 255), (int)(gr * 255), (int)(b * 255), (int)(255 * a)), ch);
+				x += sf->CalcTextSizeA(px, FLT_MAX, 0.0f, ch).x;
+			}
+		}
 	}
-	CenterTextWithIcons("PRESS  ", Action::Confirm, "  TO  RETURN", PROMPT_Y, PROMPT_SCALE, IM_COL32(240, 228, 205, 230), body);	// 暗い背景の上=影あり
+
+	// --- 黒からの淡入(最初だけ) ---
+	const float fade = 1.0f - clamp01(t / RESULT_FADE_SEC);
+	if (fade > 0.0f) dl->AddRectFilled(ImVec2(0, 0), disp, IM_COL32(0, 0, 0, (int)(255 * fade)));
+
+	const float PROMPT_Y = 0.86f, PROMPT_SCALE = 0.80f;
+	if (t >= ResultEnd())
+		CenterTextWithIcons("PRESS  ", Action::Confirm, "  TO  RETURN", PROMPT_Y, PROMPT_SCALE, IM_COL32(240, 228, 205, 230), body);	// 暗い背景の上=影あり
 	// 素材のクレジット(CC BY は作者名の表示が使用条件。一覧は CREDITS.txt)。目立たない様に画面下端に小さく
 	const float CREDIT_Y = 0.95f, CREDIT_SCALE = 0.45f, CREDIT_LINE_GAP = 0.025f;	// 行の間隔(下から 音 / 音楽 / モデル)
 	const ImU32 CREDIT_COL = IM_COL32(200, 190, 170, 170);
 	CenterText("Models: \"Medieval Combat Dummy\" CaptainHC, \"Historical Swords set\" Clint Bellanger (sketchfab.com), CC BY 4.0",
 	           CREDIT_Y - 2.0f * CREDIT_LINE_GAP, CREDIT_SCALE, CREDIT_COL, body);
 	CenterText("Music: \"Crusade\", \"Five Armies\" Kevin MacLeod (incompetech.com), CC BY 4.0", CREDIT_Y - CREDIT_LINE_GAP, CREDIT_SCALE, CREDIT_COL, body);
-	CenterText("Sound: ZijunSANG, soundslikewillem (freesound.org, CC BY-NC 4.0)", CREDIT_Y, CREDIT_SCALE, CREDIT_COL, body);
+	CenterText("Sound: ZijunSANG, soundslikewillem (freesound.org, CC BY-NC 4.0), Jagadamba, Benboncan (freesound.org, CC BY 4.0)", CREDIT_Y, CREDIT_SCALE, CREDIT_COL, body);
 }
 
 //--- 羊皮紙の選択パネル(一時停止メニュー / タイトルのモード選択)。工程リストと同じ見た目。

@@ -435,6 +435,7 @@ void SceneForge::ApplyTransCamera()
 void SceneForge::ApplyViewCamera()
 {
 	if (m_state == GAME_TITLE) ApplyTitleCamera();		// タイトル: 固定の標題カメラ(Title.cpp)
+	else if (m_state == GAME_RESULT) ApplyResultCamera();	// 結算: 金床の上の剣を1つの鏡頭で(ResultStage.cpp)
 	else if (Transitioning()) ApplyTransCamera();
 	else if (m_walkMode) ApplyWalkCamera();				// 走動: 玩家目線の一人称カメラ
 	else if (m_station == Station::Anvil) ApplyCamera();	// 金床: FPS式受限環視カメラ

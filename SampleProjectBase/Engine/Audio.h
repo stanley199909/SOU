@@ -30,6 +30,26 @@ namespace Audio
 		SE_NEXT_STEP,	// 工程が進んだ合図(中央の札「〜完了 → 次」と同時。低い鐘2つ)。Assets/Sound/SE/next_step.wav があればそれ、無ければ合成音
 		SE_SEG_DONE,	// 研ぎの区域が仕上がった「チン」(小さな区切り。面の完成 SE_FACE_DONE とは別)。Assets/Sound/SE/seg_done.wav があればそれ、無ければ合成音
 		SE_BELLOWS_PUMP,	// ふいごを1回踏んだ「フッ」(押す毎に1回。炉火の唸りの上に乗る)。Assets/Sound/SE/bellows_pump.wav があればそれ、無ければ合成音
+		// 試し切り(2026-11-02)。素材が無ければ無音
+		SE_CUT_SWING,	// 放した瞬間の重い風切り音
+		SE_CUT_SEVER,	// 藁人形を斬り切った
+		SE_CUT_BITE,	// 刃が藁の中で止まった
+		SE_CUT_PULL,	// 刃を引き抜く
+		SE_CUT_FALL,	// 上半分が地面に落ちた(実際に当たった瞬間)
+		SE_CUT_SLAM,	// 「一刀両断」の札が叩き付けられた
+		SE_FOCUS_GLINT,	// 集中: 切っ先が光った(放す合図)
+		SE_HEARTBEAT,	// 集中: 心臓の音
+		// メニュー(2026-11-02)。素材が無ければ無音
+		SE_UI_MOVE,		// 選ぶ項目が変わった
+		SE_UI_CONFIRM,	// 決定
+		SE_UI_BACK,		// 戻る
+		SE_UI_SLIDER,	// 設定の値が変わった
+		SE_UI_PAUSE,	// 一時停止メニューを開く/閉じる
+		// 結算(2026-11-09)。素材が無ければ無音
+		SE_QUILL,		// 羊皮紙に1行書く
+		SE_RESULT_GLINT,	// 刀身を光が走る
+		SE_RESULT_SLAM,	// 称号が叩き付けられる
+		SE_RESULT_LEGENDARY,	// S 級の称号だけ: 合唱の和音(stereo)
 		// ※BGM_* は必ず最後にまとめる(IsBgm が BGM_TITLE..BGM_RESULT の範囲で判定する)
 		BGM_TITLE,	// タイトル画面BGM(TITLE状態でループ)
 		BGM_PLAY,	// ゲーム中BGM その1(PLAY状態でループ)。2026-10-29: Kevin MacLeod "Crusade"

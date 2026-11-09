@@ -507,6 +507,7 @@ void SceneForge::ResetRunState()
 	m_guideText = nullptr; m_guideGoal = Station::Anvil;	// 案内文と行き先(UpdateGuide が毎フレーム決め直す)
 	m_trackerRows.clear();		// 工程リストの済状態を作り直す(UpdateTracker が配方の工程数で用意する)
 	m_stepTimes.assign(m_recipe ? m_recipe->steps.size() : 0, StepTime{});	// プレイテスト計時も 0 から
+	m_resultTime = 0.0f; m_resultLinesWritten = 0; m_resultGlintPlayed = false; m_resultTitleLanded = false; m_resultHilt = false;	// 結算の演出
 	for (LessonState& l : m_lessons) l = LessonState{};		// 操作の案内は毎回最初から(新しい人が遊ぶ)
 	m_lessonShown = -1; m_lessonShownRescue = false; m_lessonLearnedAt = -1000.0f;
 	m_aimTravel = 0.0f; m_lastAimRail = -1.0f; m_validStrikes = 0; m_bellowsHeldSec = 0.0f; m_flipCount = 0;	// 案内の「できた」量
@@ -908,11 +909,11 @@ void SceneForge::FinishGame()
 	if (m_heatSndOn)  { Audio::Stop(Audio::SE_FORGE_LOOP); m_heatSndOn  = false; }
 	if (m_burnSndOn)  { Audio::Stop(Audio::SE_BURN_LOOP);  m_burnSndOn  = false; }
 	if (m_grindSndOn) { Audio::Stop(Audio::SE_GRIND_LOOP); m_grindSndOn = false; }
-	Audio::Play(Audio::SE_SUCCESS, 0.8f);		// 完成の合図
-	Audio::PlayLoop(Audio::BGM_RESULT, 0.5f);	// 結果画面BGM
+	Audio::PlayLoop(Audio::BGM_RESULT, RESULT_BGM_VOLUME);	// 結果画面BGM(完成の合図は称号が着地する時に鳴る)
 	m_state = GAME_RESULT;
-	m_walkMode = false;	// 結果画面は通常カメラで見せる(走動カメラを解除)
+	m_walkMode = false;	// 結算は専用の鏡頭で見せる(走動カメラを解除)
 	m_modeTrans = ModeTrans::None;
+	StartResultStage();	// 剣を金床の上へ・時間を 0 から(ResultStage.cpp)
 }
 
 //--- タイトル: 雰囲気で自動的に火花を出しつつ、SPACEで開始
@@ -937,7 +938,13 @@ void SceneForge::UpdateTitle(float tick)
 		const int req = m_courseRequest;
 		m_courseRequest    = -1;
 		m_courseSelectOpen = false;
-		if (req >= nCourse) { m_modeSelectOpen = true; m_modeSel = (int)ModeItem::Tutorial; m_modeRequest = -1; return; }	// 戻る
+		if (req >= nCourse)	// 戻る
+		{
+			Audio::Play(Audio::SE_UI_BACK, UI_BACK_VOLUME);
+			m_modeSelectOpen = true; m_modeSel = (int)ModeItem::Tutorial; m_modeRequest = -1;
+			return;
+		}
+		Audio::Play(Audio::SE_UI_CONFIRM, UI_CONFIRM_VOLUME);
 		m_tutorial   = true;
 		m_courseIdx  = req;
 		m_introPhase = IntroPhase::LogoFade;
@@ -948,15 +955,25 @@ void SceneForge::UpdateTitle(float tick)
 
 	if (!m_modeSelectOpen)
 	{
-		if (InputActions::Pressed(Action::Confirm)) { m_modeSelectOpen = true; m_modeSel = (int)ModeItem::Tutorial; m_modeRequest = -1; }
+		if (InputActions::Pressed(Action::Confirm))
+		{
+			Audio::Play(Audio::SE_UI_CONFIRM, UI_CONFIRM_VOLUME);
+			m_modeSelectOpen = true; m_modeSel = (int)ModeItem::Tutorial; m_modeRequest = -1;
+		}
 		return;	// 開いたフレームは決定を読まない(同じ SPACE で即決定しない様に)
 	}
 	const int N = (int)ModeItem::Count;
-	if (InputActions::Pressed(Action::Back)) { m_modeSelectOpen = false; return; }	// 選ばずに戻る(ESC / B)
+	if (InputActions::Pressed(Action::Back))	// 選ばずに戻る(ESC / B)
+	{
+		Audio::Play(Audio::SE_UI_BACK, UI_BACK_VOLUME);
+		m_modeSelectOpen = false;
+		return;
+	}
 	if (InputActions::Pressed(Action::MenuUp))   m_modeSel = (m_modeSel + N - 1) % N;
 	if (InputActions::Pressed(Action::MenuDown)) m_modeSel = (m_modeSel + 1) % N;
 	if (InputActions::Pressed(Action::Confirm)) m_modeRequest = m_modeSel;
 	if (m_modeRequest < 0) return;
+	Audio::Play(Audio::SE_UI_CONFIRM, UI_CONFIRM_VOLUME);
 
 	if (m_modeRequest == (int)ModeItem::Quit)
 	{
@@ -2003,11 +2020,14 @@ void SceneForge::SetLetterbox(float t01)
 	m_letterbox = Lerp::SmoothStep(t01 < 0.0f ? 0.0f : (t01 > 1.0f ? 1.0f : t01));
 }
 
-//--- 結果: SPACEでタイトルへ戻る
-void SceneForge::UpdateResult(float /*tick*/)
+//--- 結果: 演出を進める。決定 = 演出中なら最後まで飛ばす / 終わっていればタイトルへ戻る
+void SceneForge::UpdateResult(float tick)
 {
+	UpdateResultStage(tick);
 	if (InputActions::Pressed(Action::Confirm) && !m_fade.IsBusy())
 	{
+		if (m_resultTime < ResultEnd()) { SkipResultStage(); return; }
+		Audio::Play(Audio::SE_UI_CONFIRM, UI_CONFIRM_VOLUME);
 		m_fade.Transition([this] {
 			m_state = GAME_TITLE;
 			ResetTitleStage();	// 金床の上を「新しい熱い鉄」に戻す(完成した剣は片付ける)
@@ -2029,6 +2049,7 @@ bool SceneForge::CanPause() const
 
 void SceneForge::OpenPause()
 {
+	Audio::Play(Audio::SE_UI_PAUSE, UI_PAUSE_VOLUME);
 	m_paused       = true;
 	m_pauseSel     = (int)PauseItem::Resume;	// 既定 = 続ける(誤って終了しない様に)
 	m_pauseRequest = PauseItem::None;
@@ -2050,8 +2071,21 @@ void SceneForge::UpdateCursorVisibility()
 	if (want != m_cursorShown) { ShowCursor(want); m_cursorShown = want; }
 }
 
+//--- 選ぶ項目が変わった瞬間に鳴らす(エッジ検出)。キーの操作も、描画側のマウスの判定も同じ変数に書くので、ここだけ見ればよい。
+//    メニューを開いた時の既定値への書き換えでは鳴らさない(同じメニューが続いている間だけ比べる)。
+void SceneForge::UpdateMenuSounds()
+{
+	const int* sel = m_paused           ? (m_optionsOpen ? &m_optionsSel : &m_pauseSel)
+	               : m_courseSelectOpen ? &m_courseSel
+	               : m_modeSelectOpen   ? &m_modeSel : nullptr;
+	if (sel && sel == m_menuSoundOf && *sel != m_menuSoundSel) Audio::Play(Audio::SE_UI_MOVE, UI_MOVE_VOLUME);
+	m_menuSoundOf  = sel;
+	m_menuSoundSel = sel ? *sel : 0;
+}
+
 void SceneForge::ClosePause()
 {
+	Audio::Play(Audio::SE_UI_PAUSE, UI_PAUSE_VOLUME);
 	m_paused = false;
 	m_optionsOpen = false;
 	m_canStrike = false;					// 押しっぱなしのボタンで再開直後に打たない(一度離すまで)
@@ -2078,6 +2112,7 @@ void SceneForge::UpdatePause()
 		ClosePause();
 		break;
 	case PauseItem::Options:
+		Audio::Play(Audio::SE_UI_CONFIRM, UI_CONFIRM_VOLUME);
 		m_optionsOpen = true; m_optionsSel = (int)OptionItem::LessonSpeed; m_optionsRequest = -1; m_optionsStep = 0;
 		break;
 	case PauseItem::Title:
@@ -2085,7 +2120,8 @@ void SceneForge::UpdatePause()
 		ReturnToTitle(false);	// 結果画面からタイトルへ戻るのと同じ流れ(黒幕の裏で状態を切り替える)
 		break;
 	case PauseItem::Quit:
-		PostQuitMessage(0);						// 通常の終了と同じ(メインループが抜けて Uninit=調整値の保存も走る)
+		Audio::Play(Audio::SE_UI_CONFIRM, UI_CONFIRM_VOLUME);
+		PostQuitMessage(0);					// 通常の終了と同じ(メインループが抜けて Uninit=調整値の保存も走る)
 		break;
 	default: break;
 	}
@@ -2108,6 +2144,7 @@ void SceneForge::UpdateOptions()
 	}
 	if (step != 0)
 	{
+		Audio::Play(Audio::SE_UI_SLIDER, UI_SLIDER_VOLUME);
 		// 選んでいる行の「何段目か」を1つ動かす。端で止まる(回り込まない=今どこか分かる)
 		auto stepIndex = [step](int& idx, int n) { const int next = idx + step; if (next < 0 || next >= n) return false; idx = next; return true; };
 		if (m_optionsSel == (int)OptionItem::LessonSpeed && stepIndex(m_lessonSpeedIdx, (int)_countof(LESSON_SPEED_STEPS)))
@@ -2144,7 +2181,11 @@ void SceneForge::UpdateOptions()
 	}
 	const int req = m_optionsRequest;
 	m_optionsRequest = -1;
-	if (req == (int)OptionItem::Back) { m_optionsOpen = false; m_pauseSel = (int)PauseItem::Options; }
+	if (req == (int)OptionItem::Back)
+	{
+		Audio::Play(Audio::SE_UI_BACK, UI_BACK_VOLUME);
+		m_optionsOpen = false; m_pauseSel = (int)PauseItem::Options;
+	}
 }
 
 //--- 設定の保存/読み込み。1行 = "<キー> <値>"。無い/壊れた行は既定のまま。
@@ -2216,8 +2257,21 @@ void SceneForge::Update(float tick)
 	if (IsKeyTrigger(VK_F4)) m_toolsPanelOpen = !m_toolsPanelOpen;	// 設計者用: 検査ツール(見える化・工程へ飛ぶ・進捗。HUD.cpp DrawToolsPanel)
 	if (IsKeyTrigger(VK_F5)) m_feelPanelOpen = !m_feelPanelOpen;	// 設計者用: 手感の調整(HUD.cpp DrawFeelPanel)
 	if (IsKeyTrigger(VK_F6)) m_swordPanelOpen = !m_swordPanelOpen;	// 設計者用: 剣の姿勢(HUD.cpp DrawSwordPanel)
+	// 設計者用: 結算の演出を確かめる。遊んでいる途中 = 今までの記録のまま結算へ / 結算中 = 最初から見直す
+	if (IsKeyTrigger(VK_F7) && !m_paused && !m_fade.IsBusy())
+	{
+		if (m_state == GAME_PLAY) FinishGame();
+		else if (m_state == GAME_RESULT)
+		{
+			const bool hilt = m_resultHilt;	// 剣はもう金床の上=柄の有無は前の回のまま
+			StartResultStage();
+			m_resultHilt = hilt;
+			Audio::SetLoop(Audio::BGM_RESULT, RESULT_BGM_VOLUME, 1.0f);
+		}
+	}
 	if (IsKeyTrigger('H')) m_shotMode = (ShotMode)(((int)m_shotMode + 1) % (int)ShotMode::Count);	// 撮影用: 普通 → UI なし → UI なし+「一刀両断」なし → 普通
 	UpdateCursorVisibility();	// 一時停止中も決める(下で return する前に)
+	UpdateMenuSounds();			// 〃
 
 	// --- 一時停止メニュー(ESC)。開いている間は世界を止める(以下の更新を全部飛ばす=時間・温度・粒子も止まる) ---
 	//   開いたフレームは UpdatePause を呼ばない: 同じフレームの ESC の押下を「続ける」と読んで即座に閉じていた(2026-10-08 F5)。
@@ -2370,10 +2424,8 @@ void SceneForge::Draw()
 	ReflectionProbe::DrawRoomBox(GetObj<CameraBase>("Camera"));		// F4「反射の部屋の箱」: ボックスプロジェクションの部屋の箱(橙の線)
 	// 鉄は置かれた工位に描く。運んでいる間は手のビューモデルとして最後に描く(DrawViewmodel。めり込み防止)。
 	// 拍子表の再生中は普通に描く(置く時、炉の中などへ入って行く鉄が道具に正しく隠れる様に)。
-	// 試し切りで終わった結果画面では剣を描かない(2026-10-26 バグ): 結果画面では SwordInHand が偽になり、剣が
-	//   手を離れて工位の置き位置(カメラの前を横切る)に描かれ、柄と一緒に巻物の下へ見えていた。
-	const bool swordLeftInResult = (m_state == GAME_RESULT && m_workAt == Station::TestCut);
-	if ((!m_carrying || SequencePlaying()) && !swordLeftInResult)
+	// 結算では剣は金床の上に置き直してある(StartResultStage)=いつも通り工位の置き位置に描く。
+	if (!m_carrying || SequencePlaying())
 	{
 		GpuProfiler::Scope t((const char*)u8"刀身");
 		if (m_wpOk) DrawWeapon();	// Blender武器モデルを進捗でモーフ(あれば優先)
@@ -2396,6 +2448,7 @@ void SceneForge::Draw()
 	{ GpuProfiler::Scope t((const char*)u8"火の粉・蒸気"); DrawEmbers(); DrawSteam(); }	// 炭火から立ち上る余燼(火花描画より前に) / 淬火の蒸気
 	DrawGrindGlints();	// 研ぎの区域が仕上がった瞬間の光芒(刃の手前に加算で重ねる)
 	DrawSwordTrail();	// 試し切りの刀光(加算。剣の後ろに残る光の帯。TestCut.cpp)
+	DrawResultGlint();	// 結算: 刀身を走る光(加算。ResultStage.cpp)
 	{ GpuProfiler::Scope t((const char*)u8"手に持った物"); DrawViewmodel(); }	// 手に持った鉄+火钳(深度範囲を詰めて手前に。運んでいない時は何もしない。Carry.cpp)
 
 	CameraBase* pCamera = GetObj<CameraBase>("Camera");

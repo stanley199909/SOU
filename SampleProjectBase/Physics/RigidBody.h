@@ -63,6 +63,8 @@ public:
     void Wake() { m_sleeping = false; m_stillTime = 0.0f; }
 
     DirectX::XMMATRIX World() const;   // body space -> world
+    DirectX::XMFLOAT3 Position() const { return m_pos; }   // center of mass (world)
+    float LowestY() const;             // the lowest of the body's points (world y)
     bool Sleeping() const { return m_sleeping; }
 
 private:

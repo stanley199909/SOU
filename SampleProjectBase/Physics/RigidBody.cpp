@@ -1,4 +1,5 @@
 #include "RigidBody.h"
+#include <cfloat>
 #include <cmath>
 
 using namespace DirectX;
@@ -51,6 +52,15 @@ void RigidBody::Init(const std::vector<XMFLOAT3>& points, float mass, const XMFL
 XMMATRIX RigidBody::World() const
 {
     return XMMatrixRotationQuaternion(XMLoadFloat4(&m_rot)) * XMMatrixTranslation(m_pos.x, m_pos.y, m_pos.z);
+}
+
+float RigidBody::LowestY() const
+{
+    const XMVECTOR q = XMLoadFloat4(&m_rot);
+    float lowest = FLT_MAX;
+    for (const XMFLOAT3& p : m_points)
+        lowest = fminf(lowest, XMVectorGetY(XMVector3Rotate(XMLoadFloat3(&p), q)));
+    return lowest + m_pos.y;
 }
 
 // The inertia tensor is diagonal in body space. In world space: I^-1 = R * diag * R^T,

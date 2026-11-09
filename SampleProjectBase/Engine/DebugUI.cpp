@@ -6,6 +6,7 @@
 //--- ゲームHUD用の追加フォント。Init で読み込み、ここに保持する
 static ImFont* s_fontTitle = nullptr;
 static ImFont* s_fontBody  = nullptr;
+static ImFont* s_fontScript = nullptr;
 // 日本語HUDフォントは複数の実寸で焼く。imgui(1.91)のフォントは「焼いた実寸の画像」を拡大縮小して描くだけで、
 // フォントアトラスにミップマップも無い → 焼いた寸法から大きく離れた大きさで描くと、縮小で縁が毛羽立ち/ぼやける。
 // → 使う大きさに近い寸法を何種類か焼いておき、描く大きさに一番近いものを選ぶ(FontJPFor)。
@@ -15,6 +16,7 @@ static const int   JP_MAIN = 1;							// FontJP() が返す基準(大)。既存�
 static ImFont* s_fontJPSizes[_countof(JP_BAKE_SIZES)] = {};
 ImFont* DebugUI::FontTitle() { return s_fontTitle; }
 ImFont* DebugUI::FontBody()  { return s_fontBody; }
+ImFont* DebugUI::FontScript() { return s_fontScript; }
 ImFont* DebugUI::FontJP()    { return s_fontJPSizes[JP_MAIN] ? s_fontJPSizes[JP_MAIN] : ImGui::GetFont(); }	// 無ければ既定(メイリオ)
 
 //--- px の大きさで描く時に使う日本語フォント。焼いた寸法との「比」が一番1に近いもの(対数で比べる=
@@ -57,6 +59,11 @@ void DebugUI::Init(HWND hWnd, ID3D11Device* device, ID3D11DeviceContext* context
 	latin.OversampleV = 2;
 	s_fontTitle = io.Fonts->AddFontFromFileTTF("Assets/Font/Cinzel-Black.ttf",       64.0f, &latin);
 	s_fontBody  = io.Fonts->AddFontFromFileTTF("Assets/Font/EBGaramond-Medium.ttf",  32.0f, &latin);
+	// 結算の称号の手書き体(2026-11-09)。大きく描くので実寸96px。ファイルが無いと imgui は assert するので先に確かめる
+	const char* SCRIPT_FONT = "Assets/Font/PinyonScript-Regular.ttf";
+	const float SCRIPT_BAKE_PX = 96.0f;
+	if (GetFileAttributesA(SCRIPT_FONT) != INVALID_FILE_ATTRIBUTES)
+		s_fontScript = io.Fonts->AddFontFromFileTTF(SCRIPT_FONT, SCRIPT_BAKE_PX, &latin);
 
 	// ゲームHUD用の日本語フォント(工程の案内/操作説明/互動の一言)。
 	//   明朝体(游明朝 Demibold)=筆の入り抜きがあり、中世の羊皮紙の雰囲気に合う(メイリオはゴシック=現代的)。

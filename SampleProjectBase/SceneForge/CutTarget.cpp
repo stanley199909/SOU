@@ -24,6 +24,7 @@ namespace
     const float CAP_EPS = 1e-3f;
     const float MIN_DEBRIS_MASS = 0.2f;   // kg: a thin sliver still gets a sensible mass
     const int   DISC_SEGMENTS = 24;       // F4 debug circle
+    const float LAND_SLOP = 0.01f;        // m: a falling piece this close to the ground has landed
 
     // A closed box: 6 faces x 2 triangles, wound so cross(b - a, c - a) points outward
     // (the D3D front face). Each face has its own 4 vertices (sharp edges).
@@ -353,6 +354,7 @@ void CutTarget::Build(const PartDef* defs, int count, const std::vector<MeshSlic
     m_defs.assign(defs, defs + count);
     m_wound = Wound{};
     m_gathered = 0.0f;
+    m_landedNow = false;
     m_tilt = m_tiltVel = XMFLOAT3(0, 0, 0);   // a fresh dummy stands still
     m_standing.clear();
     m_debris.clear();
@@ -596,7 +598,21 @@ void CutTarget::Update(float dt)
             d.impulse = XMFLOAT3(0, 0, 0);
         }
         d.body.Update(dt, d.planes, physics);
+        if (!d.landed && d.body.LowestY() <= m_foot.y + LAND_SLOP)
+        {
+            d.landed = true;
+            m_landedNow = true;
+            m_landedAt = d.body.Position();
+        }
     }
+}
+
+bool CutTarget::TakeLanded(XMFLOAT3& at)
+{
+    if (!m_landedNow) return false;
+    m_landedNow = false;
+    at = m_landedAt;
+    return true;
 }
 
 void CutTarget::Draw(CameraBase* camera, float highlight)

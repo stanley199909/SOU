@@ -136,6 +136,8 @@ public:
     float Gathered() const { return m_gathered; }   // the power gathered so far
     bool  HasWound() const { return m_wound.open; }
     Aim   WoundAim() const;                         // the aim of the slash that opened the wound (world)
+    // A falling piece touched the ground since the last call (once per piece; the sound of it landing).
+    bool  TakeLanded(DirectX::XMFLOAT3& at);
     const PartDef& Part(int i) const { return m_defs[i]; }
     // World bounding box of the standing parts (interaction prompt / range).
     bool WorldBox(DirectX::XMFLOAT3& mn, DirectX::XMFLOAT3& mx) const;
@@ -185,6 +187,7 @@ private:
         float              hold = 0.0f;        // seconds left hanging in place before it falls
         DirectX::XMFLOAT3  impulse{ 0, 0, 0 }; // the blade's push, given when it starts to fall
         DirectX::XMFLOAT3  impulseAt{ 0, 0, 0 };
+        bool               landed = false;     // has touched the ground
     };
 
     static void Upload(Piece& p);
@@ -203,6 +206,8 @@ private:
     Wound                 m_wound;
     DirectX::XMFLOAT3     m_coreCenter{ 0, 0, 0 };   // center of the intact torso's bounding box (local)
     float                 m_gathered = 0.0f;   // the power of every slash that counted so far
+    bool                  m_landedNow = false; // TakeLanded: a piece touched the ground ...
+    DirectX::XMFLOAT3     m_landedAt{ 0, 0, 0 };   // ... here
     std::vector<Piece>    m_standing;
     std::vector<Debris>   m_debris;
     DirectX::XMFLOAT3     m_foot{ 0, 0, 0 };

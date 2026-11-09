@@ -627,6 +627,23 @@ namespace Audio
 			"Assets/Sound/SE/next_step.wav",	// SE_NEXT_STEP(工程が進んだ合図。無ければ合成音)
 			"Assets/Sound/SE/seg_done.wav",	// SE_SEG_DONE(研ぎの区域が仕上がった。無ければ合成音)
 			"Assets/Sound/SE/bellows_pump.wav",	// SE_BELLOWS_PUMP(ふいごを1回踏んだ。無ければ合成音)
+			"Assets/Sound/SE/cut_swing.wav",	// SE_CUT_SWING
+			"Assets/Sound/SE/cut_sever.wav",	// SE_CUT_SEVER
+			"Assets/Sound/SE/cut_bite.wav",		// SE_CUT_BITE
+			"Assets/Sound/SE/cut_pull.wav",		// SE_CUT_PULL
+			"Assets/Sound/SE/cut_fall.wav",		// SE_CUT_FALL
+			"Assets/Sound/SE/cut_slam.wav",		// SE_CUT_SLAM
+			"Assets/Sound/SE/focus_glint.wav",	// SE_FOCUS_GLINT
+			"Assets/Sound/SE/heartbeat.wav",	// SE_HEARTBEAT
+			"Assets/Sound/SE/ui_move.wav",		// SE_UI_MOVE
+			"Assets/Sound/SE/ui_confirm.wav",	// SE_UI_CONFIRM
+			"Assets/Sound/SE/ui_back.wav",		// SE_UI_BACK
+			"Assets/Sound/SE/ui_slider.wav",	// SE_UI_SLIDER
+			"Assets/Sound/SE/ui_pause.wav",		// SE_UI_PAUSE
+			"Assets/Sound/SE/quill_write.wav",	// SE_QUILL
+			"Assets/Sound/SE/result_glint.wav",	// SE_RESULT_GLINT
+			"Assets/Sound/SE/result_slam.wav",	// SE_RESULT_SLAM
+			"Assets/Sound/SE/result_legendary.wav",	// SE_RESULT_LEGENDARY
 			"Assets/Sound/BGM/title_bgm.wav",	// BGM_TITLE(工場環境音。無ければ無音)
 			"Assets/Sound/BGM/Crusade_Kevin_MacLeod.wav",		// BGM_PLAY(Kevin MacLeod, CC BY 4.0。無ければ無音)
 			"Assets/Sound/BGM/Five_Armies_Kevin_MacLeod.wav",	// BGM_PLAY_2(Kevin MacLeod, CC BY 4.0。無ければ無音)

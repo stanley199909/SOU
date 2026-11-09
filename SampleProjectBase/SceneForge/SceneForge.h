@@ -1009,6 +1009,39 @@ private:
 		float move  = 0.0f;		// うち「歩く+工位への出入り」の時間(秒)=操作していない移動の時間
 	};
 	std::vector<StepTime> m_stepTimes;			// 配方の工程と同じ数(StartGame で作り直す)
+	//--- 結算演出(ResultStage.cpp / 文字は HUD.cpp DrawResultUI。2026-11-09 方向C)。
+	//    金床の上の剣を1つの鏡頭で見せる(約12秒、決定で飛ばせる): 淡入 → 切っ先から柄へ滑る → 引いて全体 →
+	//    羊皮紙に工程ごとの時間と評価を1行ずつ → 一拍(音楽を下げる) → 刀身を光が走る → 称号が叩き付けられる → キー待ち。
+	//    時間は見せるだけで評価に入れない。
+	static constexpr float RESULT_BGM_VOLUME = 0.5f;	// 結果画面の BGM
+	static constexpr float RESULT_FADE_SEC   = 0.8f;	// 黒からの淡入
+	static constexpr float RESULT_SLIDE_SEC  = 3.0f;	// 切っ先 → 柄へ滑る(淡入と同時に始まる)
+	static constexpr float RESULT_PULL_SEC   = 1.0f;	// 引いて剣の全体を見せる
+	static constexpr float RESULT_LINE_GAP   = 0.6f;	// 羊皮紙の1行ごとの間隔
+	static constexpr float RESULT_LINE_FADE  = 0.25f;	// 1行が書かれて浮かび上がる時間
+	static constexpr float RESULT_BEAT_SEC   = 0.8f;	// 最後の行の後の一拍
+	static constexpr float RESULT_GLINT_SEC  = 0.6f;	// 光が柄から切っ先まで走る
+	static constexpr float RESULT_SLAM_SEC   = 0.18f;	// 称号が大きい所から叩き付けられる
+	float m_resultTime = 0.0f;					// 結算が始まってからの秒(飛ばすと最後の時刻へ)
+	int   m_resultLinesWritten = 0;				// 書き終えた行の数(行ごとに筆の音)
+	bool  m_resultGlintPlayed  = false;			// 刀身の光の音を鳴らした
+	bool  m_resultTitleLanded  = false;			// 称号が着地した(震え+音は1回)
+	bool  m_resultHilt         = false;			// 柄を付けた剣か(試し切りまで進んだ)
+	std::shared_ptr<MeshBuffer> m_resultGlintMesh;	// 刀身を走る光の板
+	std::vector<Vertex> m_resultGlintVtx;
+	void  StartResultStage();					// FinishGame から: 剣を金床の上へ置き、時間を 0 から
+	void  UpdateResultStage(float tick);		// 時間・音・音楽の一拍・称号の着地
+	void  SkipResultStage();					// 決定: 最後(称号が出た所)まで飛ばす
+	void  ApplyResultCamera();					// 1つの鏡頭(切っ先 → 柄 → 全体)
+	void  DrawResultGlint();					// 刀身を走る光(加算。3D)
+	bool  ResultSwordEnds(DirectX::XMFLOAT3& grip, DirectX::XMFLOAT3& tip);	// 金床の上の剣の柄側の端と切っ先(ワールド)
+	static constexpr float RESULT_ROW_MIN_SEC = 0.5f;	// これより短い工程は記録に載せない(最初の加熱は開始時に済んでいる)
+	bool  ResultRowShown(int step) const;		// その工程を羊皮紙に載せるか
+	int   ResultLineCount() const;				// 羊皮紙の行数(載せる工程 + 合計)
+	float ResultLinesAt() const;				// 最初の行が書かれる時刻
+	float ResultGlintAt() const;				// 光が走り始める時刻
+	float ResultTitleAt() const;				// 称号が出始める時刻
+	float ResultEnd() const;					// 称号が着地する時刻(=演出の終わり)
 	bool  m_showPlaytestTimer = false;			// F4 で切替。F4 を閉じても表示は残る(試遊してもらう時に出しておく)。調整値と一緒に保存
 	void  TickPlaytestTimer(float dt);			// 今の工程に時間を足す(毎フレーム, Update)
 	void  DrawPlaytestTimer();					// 右下の羊皮紙: 工程ごとの時間 / 合計と目標
@@ -1278,6 +1311,15 @@ private:
 	static constexpr float PLAY_BGM_VOLUME      = 0.45f;	// ゲーム中 BGM の音量
 	int   m_playBgm     = -1;	// 今鳴らしているゲーム中BGM(Audio::SoundId, -1 = まだ無し = Stop は何もしない)。FinishIntro が決め、止める所はこれを止める
 	static constexpr float TITLE_FADE_SE_VOLUME = 1.0f;		// ロゴ淡出の効果音の音量
+	// メニューの音量(2026-11-02)
+	static constexpr float UI_MOVE_VOLUME    = 0.5f;
+	static constexpr float UI_CONFIRM_VOLUME = 0.7f;
+	static constexpr float UI_BACK_VOLUME    = 0.6f;
+	static constexpr float UI_SLIDER_VOLUME  = 0.5f;
+	static constexpr float UI_PAUSE_VOLUME   = 0.6f;
+	const int* m_menuSoundOf  = nullptr;	// 今開いているメニューの選択の変数(UpdateMenuSounds)
+	int        m_menuSoundSel = 0;			// その前のフレームの値
+	void  UpdateMenuSounds();				// 選ぶ項目が変わったら鳴らす(キーでもマウスでも、ここ1か所で検出)
 	void  UpdateIntro(float tick);					// 導入の段階を進める(LogoFade→CameraMove、BGM の淡出)
 	void  FinishIntro();							// 金床に着いた: BGM を切り替えて導入を終える
 	void  ApplyTitleCamera();						// 標題カメラを適用
@@ -1659,6 +1701,8 @@ private:
 	//    「注定成形」ゲームなので形は必ず完成に近づく→評価は「どれだけ綺麗に打てたか」を主にする。
 	float GradeScore() const;		// 出来栄え 0..1(=形の一致・打撃品質の合成)
 	char  GradeLetter() const;		// GradeScore を S/A/B/C に量子化
+	char  LetterOf(float score) const;	// 0..1 の出来を S/A/B/C に(GradeLetter と同じ閾値。結算の工程ごとの評価にも使う)
+	float ForgeScore() const;		// 鍛造の工程だけの出来 0..1(形の一致 + 打撃品質。GradeScore と同じ重みの比)
 	static constexpr float GRADE_W_MATCH   = 0.35f;	// 出来栄えに占める「形の一致度」の重み
 	static constexpr float GRADE_W_QUALITY = 0.45f;	// 同「打撃品質の平均」の重み(綺麗な打鉄を主に評価)
 	static constexpr float GRADE_W_QUENCH  = 0.10f;	// 同「淬火の出来」の重み(小さく。ユーザー決定 2026-10-07)

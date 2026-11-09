@@ -206,6 +206,7 @@
     <ClCompile Include="Physics\RigidBody.cpp" />
     <ClCompile Include="SceneForge\CutTarget.cpp" />
     <ClCompile Include="SceneForge\TestCut.cpp" />
+    <ClCompile Include="SceneForge\ResultStage.cpp" />
     <ClCompile Include="StateMachine\StateMachine.cpp" />
     <ClCompile Include="StateMachine\StateBase.cpp" />
     <ClCompile Include="StateMachine\Player\HeatStep.cpp" />
