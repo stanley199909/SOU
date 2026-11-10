@@ -124,9 +124,14 @@ namespace
     const float SWING_OUT_POW      = 3.0f;    // ... then ease-out: the follow-through drags to a stop (weight)
     const float SWING_BLEND_FRAC   = 0.25f;   // share of the swing spent blending from the start pose into the arc
     const float RECOVER_SEC        = 0.60f;   // back to the low guard (slow = the sword is heavy, and the moment is over)
-    const float HITSTOP_CUT_SEC    = 0.09f;   // the blade "catches" as it goes through (hit stop)
+    // the hit stop lengths are tunable (m_cutHitstopCut / m_cutHitstopStuck, F5)
+    // --- the blade's recoil spring (see the end of UpdateTestCutStation) ---
+    const float RECOIL_STIFFNESS = 900.0f;   // k (1/s^2): sqrt(k) = 30 rad/s, a quick snap back
+    const float RECOIL_DAMPING   = 24.0f;    // c (1/s): ~0.4 of critical (2 sqrt k) = it overshoots once and settles
+    // (peak knock-back ~ kick / sqrt(k): 3.0 -> ~10 cm, 5.0 -> ~17 cm. 1.2 / 2.2 = 4 / 7 cm could not be felt, 2026-11-10)
+    const float RECOIL_KICK_CUT   = 3.0f;    // m/s given at the hit: going through, a jolt
+    const float RECOIL_KICK_STUCK = 5.0f;    // stopped dead: knocked back hard
     // --- not strong enough: the blade stops INSIDE, quivers, and is pulled back out (2026-10-29, user's design) ---
-    const float HITSTOP_STUCK_SEC  = 0.16f;   // the bite freezes a little longer than a clean cut (it stops dead)
     // ... then it stays stuck for m_cutStuckSec ...
     const float STUCK_QUIVER_AMP  = 0.006f;  // ... quivering across the cut (m) ...
     const float STUCK_QUIVER_HZ    = 14.0f;   // ... this fast ...
@@ -195,7 +200,7 @@ namespace
     const float LUNGE = 0.10f;         // m: the eye moves forward into the cut
     const float COIL = 0.35f;          // while in the guard, the body turns the other way by this share (the coil before the release)
     const float LEAN_LAMBDA = 22.0f;   // 1/s: how fast the lean follows (frame-rate independent damping)
-    const float FOV_PUNCH_CUT = 0.07f, FOV_PUNCH_SEVER = 0.10f;   // share the view narrows on impact
+    const float FOV_PUNCH_CUT = 0.07f, FOV_PUNCH_SEVER = 0.16f;   // share the view narrows on impact
     const float FOV_LAMBDA = 9.0f;
 
     // --- camera kick when the blade lands (rad, decays back) ---
@@ -204,10 +209,10 @@ namespace
     const float KICK_LAMBDA = 16.0f;
 
     // --- the cut part is thrown along the swing (x CutTarget::pushSpeed) ---
-    const float PUSH_SCALE = 1.8f;
+    const float PUSH_SCALE = 3.0f;   // 2026-11-10: 1.8 let the cut-off half slump; now it is thrown off
 
     // --- straw bits knocked out where the blade goes in (light chaff, Particles::SpawnStraw) ---
-    const int   STRAW_CUT = 60, STRAW_STUCK = 34, STRAW_PULL = 14;
+    const int   STRAW_CUT = 150, STRAW_STUCK = 34, STRAW_PULL = 14;   // a cut in two bursts the straw open
     const float STRAW_SPREAD = 0.9f, STRAW_SPEED_MIN = 0.6f, STRAW_SPEED_MAX = 2.4f;
 
     // --- weapon trail ---
@@ -224,10 +229,16 @@ namespace
     // --- feedback ---
     const float SWING_VOLUME = 0.85f;     // the whoosh, at the release
     const float SEVER_VOLUME = 1.0f;      // it goes through, exactly at the hit
+    // ... layered with the "piang" the cut through the armor used to make (SE_COLD raised; 2026-11-09 user:
+    // the straw cut alone lacked punch. Not the anvil clang: that was the bounce off metal)
+    const float SEVER_PIANG_VOLUME = 0.7f, SEVER_PIANG_PITCH = 1.1f;
     const float BITE_VOLUME  = 0.9f;      // the blade stops in the straw
     const float PULL_VOLUME  = 0.6f;      // pulled out
     const float FALL_VOLUME  = 0.9f;      // the upper part hits the ground
-    const float CUT_SHAKE = 0.55f, STUCK_SHAKE = 0.7f;          // camera shake (m_shake)
+    const float CUT_SHAKE = 0.9f, STUCK_SHAKE = 0.7f;           // camera shake (m_shake)
+    // the impact frame: the screen flashes white for an instant as the dummy is cut in two (a common
+    // action-game cue for "a decisive hit"; search: "impact frame", "hit flash")
+    const float SEVER_FLASH_SEC = 0.12f, SEVER_FLASH_ALPHA = 0.45f;
     const Rumble RUMBLE_CUT    = { 0.7f, 0.8f, 0.0f, 0.9f };
     const Rumble RUMBLE_STUCK  = { 0.9f, 0.4f, 0.0f, 1.0f };
     const float RUMBLE_CUT_SEC = 0.22f, RUMBLE_STUCK_SEC = 0.25f;
@@ -248,8 +259,10 @@ namespace
     const SeverTier SEVER_TIERS[] = {
         //  strokes   hold   slow-mo  scale  brush  slam  shake  hitstop
         {  1,        0.40f, 0.80f,   0.25f, true,  2.6f, 1.0f,  0.16f },   // 一刀両断: the special one
-        {  3,        0.20f, 0.00f,   1.00f, false, 1.8f, 0.45f, 0.11f },   // two or three strokes: a lesser slam
-        { INT_MAX,   0.00f, 0.00f,   1.00f, false, 1.0f, 0.0f,  0.09f },   // more: just shown
+        // 2026-11-10 user: a cut in two after several strokes gave no reward at all -> every cut in two now
+        // gets slow motion and a slam, only weaker than the one-stroke 一刀両断
+        {  3,        0.25f, 0.55f,   0.35f, false, 2.0f, 0.60f, 0.12f },   // two or three strokes
+        { INT_MAX,   0.15f, 0.35f,   0.50f, false, 1.5f, 0.35f, 0.10f },   // more
     };
     const SeverTier& TierFor(int strokes)
     {
@@ -431,6 +444,7 @@ void SceneForge::ResetTestCut()
     m_plan         = StrikePlan{};
     m_stuckTime    = 0.0f;
     m_slashT = m_slashHitstop = 0.0f;
+    m_swordRecoil = m_swordRecoilVel = 0.0f;
     m_slashStruck  = false;
     m_trailAlpha   = 0.0f;
     m_cutKick      = XMFLOAT2(0.0f, 0.0f);
@@ -451,9 +465,21 @@ float SceneForge::CutNeed() const
     }
 }
 
-//--- Time scale of the test cut (slow motion after a clean cut). Real seconds keep the slow-mo timer.
+//--- The ground the dummy stands on: the top of the outdoor ground, which lies lower than the cottage floor
+//    (m_walkFloorY). 2026-11-09 F5: placed on the walking floor, the dummy floated ~16 cm above the grass.
+//    No outdoor ground -> the walking floor.
+float SceneForge::CutGroundY()
+{
+    const char* const OUTDOOR_GROUND_KEY = "StOutdoorGround";
+    Prop* g = GetProp(OUTDOOR_GROUND_KEY);
+    XMFLOAT3 mn, mx;
+    return (g && PropWorldBox(*g, mn, mx)) ? mx.y : m_walkFloorY;
+}
+
+//--- Time scale of the test cut: 0 during the hit stop, slow motion after a clean cut. Real seconds keep the timers.
 float SceneForge::TestCutTimeScale() const
 {
+    if (m_slashHitstop > 0.0f) return 0.0f;   // the hit stop: the whole test cut stands still
     return (m_cutSlowmo > 0.0f) ? m_cutSlowmoScale : 1.0f;
 }
 
@@ -465,7 +491,7 @@ void SceneForge::UpdateTestCut(float tick)
         m_cutTarget.Build(CUT_PARTS, NUM_CUT_PARTS, &m_cutModelParts);
         m_cutNeedsBuild = false;
     }
-    m_cutTarget.SetPlacement(XMFLOAT3(m_cutPosXZ[0], m_walkFloorY, m_cutPosXZ[1]), m_cutYaw);   // follows F4 "place in front of me"
+    m_cutTarget.SetPlacement(XMFLOAT3(m_cutPosXZ[0], CutGroundY(), m_cutPosXZ[1]), m_cutYaw);   // follows F4 "place in front of me"
     m_cutTarget.Update(tick * TestCutTimeScale());
     if (m_cutSlowmo > 0.0f) m_cutSlowmo -= tick;
     XMFLOAT3 landedAt;
@@ -755,7 +781,9 @@ void SceneForge::UpdateTestCutStation(float tick, bool inputOn)
 
     const bool canInput = inputOn && SwordAtStation() && !m_cutSevered && !m_clearDecided;
     m_slashDir = XMFLOAT2(-cosf(m_cutSlashTilt), -sinf(m_cutSlashTilt));   // Zornhau: upper right -> lower left
-    // hit stop: the pose holds still for a moment (the camera keeps moving)
+    // hit stop: everything of the test cut holds still for a moment -- the blade, the dummy, the falling
+    // half, the straw bits (TestCutTimeScale is 0) -- while the camera shakes. 2026-11-10 F5: freezing only
+    // the blade did not read as a stop at all.
     if (m_slashHitstop > 0.0f) { m_slashHitstop -= tick; return; }
 
     switch (m_slashPhase)
@@ -854,7 +882,7 @@ void SceneForge::UpdateTestCutStation(float tick, bool inputOn)
         Audio::PlayAt(Audio::SE_CUT_PULL, m_plan.judged.entry, PULL_VOLUME);
         m_cutTarget.Push(XMFLOAT3(-m_plan.fwd.x * PULL_IMPULSE, -m_plan.fwd.y * PULL_IMPULSE, -m_plan.fwd.z * PULL_IMPULSE), m_plan.judged.entry);
         m_particles.SpawnStraw(m_plan.judged.entry, XMFLOAT3(-m_plan.fwd.x, -m_plan.fwd.y, -m_plan.fwd.z), STRAW_SPREAD, STRAW_PULL,
-                               STRAW_SPEED_MIN, STRAW_SPEED_MAX, m_walkFloorY);
+                               STRAW_SPEED_MIN, STRAW_SPEED_MAX, CutGroundY());
         BeginSlashPhase(SlashPhase::PullOut);
         break;
     }
@@ -887,6 +915,17 @@ void SceneForge::UpdateTestCutStation(float tick, bool inputOn)
         break;
     }
     }
+
+    // The blade's recoil (2026-11-10 user: use the hammer's spring here too). The same spring-damper as the
+    // forging hammer and the dummy on its post, integrated with semi-implicit (symplectic) Euler:
+    //   x'' = -k x - c x'   (x = how far the hands are knocked back, m)
+    // The hit gives it a velocity (ApplyStrike); it is held still through the hit stop (we returned above),
+    // then springs back past zero and settles. Every phase builds m_swordPose afresh, so the offset is added
+    // here once per frame and never piles up.
+    const float accel = -RECOIL_STIFFNESS * m_swordRecoil - RECOIL_DAMPING * m_swordRecoilVel;
+    m_swordRecoilVel += accel * dt;
+    m_swordRecoil    += m_swordRecoilVel * dt;
+    XMStoreFloat3(&m_swordPose.guard, XMLoadFloat3(&m_swordPose.guard) + XMLoadFloat3(&m_recoilDir) * m_swordRecoil);
 }
 
 //--- The release: plan the strike along the crosshair -- a plane that contains the line of sight and
@@ -997,13 +1036,16 @@ void SceneForge::ApplyStrike()
 
     if (r.cut)
     {
-        m_slashHitstop = HITSTOP_CUT_SEC;
+        m_slashHitstop = m_cutHitstopCut;
+        XMStoreFloat3(&m_recoilDir, XMVectorNegate(XMLoadFloat3(&sw)));   // knocked back against the swing
+        m_swordRecoilVel = RECOIL_KICK_CUT;
         m_shake = fmaxf(m_shake, CUT_SHAKE);
         m_cutKick = XMFLOAT2(m_slashDir.x * KICK_CUT, m_slashDir.y * KICK_CUT);   // the view follows the blade through
         m_cutFovPunch = fmaxf(m_cutFovPunch, FOV_PUNCH_CUT);
         Haptics::Pulse(RUMBLE_CUT, RUMBLE_CUT_SEC);
         Audio::PlayAt(Audio::SE_CUT_SEVER, m_plan.aim.point, SEVER_VOLUME);
-        m_particles.SpawnStraw(m_plan.aim.point, sw, STRAW_SPREAD, STRAW_CUT, STRAW_SPEED_MIN, STRAW_SPEED_MAX, m_walkFloorY);
+        Audio::PlayAt(Audio::SE_COLD, m_plan.aim.point, SEVER_PIANG_VOLUME, SEVER_PIANG_PITCH);
+        m_particles.SpawnStraw(m_plan.aim.point, sw, STRAW_SPREAD, STRAW_CUT, STRAW_SPEED_MIN, STRAW_SPEED_MAX, CutGroundY());
         m_cutTarget.Push(XMFLOAT3(sw.x * CUT_IMPULSE, sw.y * CUT_IMPULSE, sw.z * CUT_IMPULSE), m_plan.aim.point);   // the stump rocks
         // cut in two: the payoff, by how many strokes it took
         m_cutSevered     = true;
@@ -1021,12 +1063,14 @@ void SceneForge::ApplyStrike()
     else
     {
         // short of enough (or off the middle): the blade bites in and stops dead (it will be pulled out)
-        m_slashHitstop = HITSTOP_STUCK_SEC;
+        m_slashHitstop = m_cutHitstopStuck;
+        XMStoreFloat3(&m_recoilDir, XMVectorNegate(XMLoadFloat3(&sw)));
+        m_swordRecoilVel = RECOIL_KICK_STUCK;
         m_shake = fmaxf(m_shake, STUCK_SHAKE);
         m_cutKick = XMFLOAT2(m_slashDir.x * KICK_STUCK, m_slashDir.y * KICK_STUCK);
         Haptics::Pulse(RUMBLE_STUCK, RUMBLE_STUCK_SEC);
         Audio::PlayAt(Audio::SE_CUT_BITE, r.stop, BITE_VOLUME);
-        m_particles.SpawnStraw(r.stop, back, STRAW_SPREAD, STRAW_STUCK, STRAW_SPEED_MIN, STRAW_SPEED_MAX, m_walkFloorY);
+        m_particles.SpawnStraw(r.stop, back, STRAW_SPREAD, STRAW_STUCK, STRAW_SPEED_MIN, STRAW_SPEED_MAX, CutGroundY());
         m_trailHead  = m_plan.thetaStop;             // the streak stops where the blade did
         m_stuckPose  = m_swordPose;
         XMStoreFloat4x4(&m_stuckDummyWorld, m_cutTarget.World());   // where the dummy stood when the blade stopped (FollowDummy)
@@ -1183,6 +1227,11 @@ void SceneForge::DrawSeverBanner()
 {
     if (m_cutBannerAt < 0.0f) return;
     const float age = m_time - m_cutBannerAt;
+    if (age < SEVER_FLASH_SEC)   // the impact flash (the banner starts at the moment of the cut)
+    {
+        const ImVec2 d = ImGui::GetIO().DisplaySize;
+        HudDrawList()->AddRectFilled(ImVec2(0, 0), d, IM_COL32(255, 250, 240, (int)(255 * SEVER_FLASH_ALPHA * (1.0f - age / SEVER_FLASH_SEC))));
+    }
     if (age > BANNER_SLAM_SEC + BANNER_HOLD_SEC + BANNER_FADE_SEC) return;
     const float slam = Clamp01(age / BANNER_SLAM_SEC);
     if (!m_cutBannerLanded && slam >= 1.0f)
@@ -1276,8 +1325,10 @@ void SceneForge::DrawTestCut()
     const XMVECTOR t = XMVector3Cross(e, d);
     const XMMATRIX hilt(e, d, t, XMVectorSetW(o, 1.0f));
     std::shared_ptr<Texture> iron = TextureCache::Get(HILT_METAL_TEX), wood = TextureCache::Get(HILT_GRIP_TEX);
+    const bool front = PushShowcaseDepth();   // the result showcase: in front of the room, like the blade
     LitRender::DrawMesh(m_hiltMetal.get(), iron.get(), hilt, cam, PropMaterials::Find(HILT_METAL_KEY));
     LitRender::DrawMesh(m_hiltGrip.get(),  wood.get(), hilt, cam, PropMaterials::Find(HILT_GRIP_KEY));
+    if (front) PopShowcaseDepth();
 }
 
 //====================================================================

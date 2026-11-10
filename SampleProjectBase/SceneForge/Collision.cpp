@@ -232,7 +232,7 @@ void SceneForge::BuildCollisionWorld()
 	{
 		const float headY = m_walkFloorY + PLAYER_BODY_HEIGHT;
 		std::vector<std::vector<XMFLOAT3>> solids;
-		m_cutTarget.CollisionPoints(m_walkFloorY, m_walkFloorY + CUT_STEP_OVER, headY, solids);
+		m_cutTarget.CollisionPoints(CutGroundY(), CutGroundY() + CUT_STEP_OVER, headY, solids);	// 藁人形は外の地面に立つ(家の床より低い)
 		for (const std::vector<XMFLOAT3>& pts : solids)
 		{
 			Collision2D::Hull h = FlatHull(pts);

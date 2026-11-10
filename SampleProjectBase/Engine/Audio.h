@@ -50,6 +50,9 @@ namespace Audio
 		SE_RESULT_GLINT,	// 刀身を光が走る
 		SE_RESULT_SLAM,	// 称号が叩き付けられる
 		SE_RESULT_LEGENDARY,	// S 級の称号だけ: 合唱の和音(stereo)
+		// 足音(2026-11-09)。1歩ごとに1と2を交互に。素材が無ければ無音
+		SE_STEP_WOOD_1, SE_STEP_WOOD_2,	// 家の中(木・石の床)
+		SE_STEP_DIRT_1, SE_STEP_DIRT_2,	// 外(土・草)
 		// ※BGM_* は必ず最後にまとめる(IsBgm が BGM_TITLE..BGM_RESULT の範囲で判定する)
 		BGM_TITLE,	// タイトル画面BGM(TITLE状態でループ)
 		BGM_PLAY,	// ゲーム中BGM その1(PLAY状態でループ)。2026-10-29: Kevin MacLeod "Crusade"

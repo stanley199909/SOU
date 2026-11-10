@@ -17,6 +17,7 @@
 #include "DirectX.h"
 #include "LitRender.h"		// 火钳の口が熱い時の描画(hotSpot)
 #include "PropMaterials.h"
+#include "Audio.h"			// 足音
 #include <cmath>
 
 using namespace DirectX;
@@ -131,6 +132,19 @@ void SceneForge::UpdateCarryBob(float tick, float walked)
 	const bool moving = (m_carrying || SwordInHand()) && walked > BOB_MOVE_EPS;
 	if (moving) m_bobPhase += walked * (m_carrying ? m_bobPerMeter : m_swordBobPerMeter);
 	m_bobWeight = Lerp::Damp(m_bobWeight, moving ? 1.0f : 0.0f, BOB_FADE_LAMBDA, tick);	// 歩き出し/止まりは滑らかに
+}
+
+//--- 足音: 揺れと同じく「時間」でなく「歩いた距離」で刻む=速く歩けば速く鳴り、壁に当たって止まれば鳴らない。
+void SceneForge::UpdateFootsteps(float walked)
+{
+	m_stepDist += walked;
+	if (m_stepDist < STEP_STRIDE) return;
+	m_stepDist -= STEP_STRIDE;
+	const bool indoors = ShadowCameraIndoors();	// カメラ(=目)が家の箱の中
+	const Audio::SoundId id = indoors ? (m_stepAlt ? Audio::SE_STEP_WOOD_2 : Audio::SE_STEP_WOOD_1)
+	                                  : (m_stepAlt ? Audio::SE_STEP_DIRT_2 : Audio::SE_STEP_DIRT_1);
+	m_stepAlt = !m_stepAlt;
+	Audio::Play(id, STEP_VOLUME, frand(1.0f - STEP_PITCH_JITTER, 1.0f + STEP_PITCH_JITTER));
 }
 
 //--- 今の揺れ(カメラの右/上方向のずれ)。上下 = 1歩に1回(sin の絶対値で「着地で下がる」形)、

@@ -644,6 +644,10 @@ namespace Audio
 			"Assets/Sound/SE/result_glint.wav",	// SE_RESULT_GLINT
 			"Assets/Sound/SE/result_slam.wav",	// SE_RESULT_SLAM
 			"Assets/Sound/SE/result_legendary.wav",	// SE_RESULT_LEGENDARY
+			"Assets/Sound/SE/step_wood_1.wav",	// SE_STEP_WOOD_1
+			"Assets/Sound/SE/step_wood_2.wav",	// SE_STEP_WOOD_2
+			"Assets/Sound/SE/step_dirt_1.wav",	// SE_STEP_DIRT_1
+			"Assets/Sound/SE/step_dirt_2.wav",	// SE_STEP_DIRT_2
 			"Assets/Sound/BGM/title_bgm.wav",	// BGM_TITLE(工場環境音。無ければ無音)
 			"Assets/Sound/BGM/Crusade_Kevin_MacLeod.wav",		// BGM_PLAY(Kevin MacLeod, CC BY 4.0。無ければ無音)
 			"Assets/Sound/BGM/Five_Armies_Kevin_MacLeod.wav",	// BGM_PLAY_2(Kevin MacLeod, CC BY 4.0。無ければ無音)

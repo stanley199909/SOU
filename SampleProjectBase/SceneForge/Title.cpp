@@ -48,7 +48,7 @@ void SceneForge::UpdateIntro(float tick)
 			}
 			else StartGame();
 			BeginEnterStation(first);	// 開始視点=今映っている標題カメラ
-			m_transDur   = m_titleIntroTime;	// 通常の工位移動より長く=映画的にゆっくり
+			if (!m_doorRoute) m_transDur = m_titleIntroTime;	// 通常の工位移動より長く=映画的にゆっくり(扉を通る道は区間ごとの長さのまま)
 			m_introPhase = IntroPhase::CameraMove;
 		}
 		break;

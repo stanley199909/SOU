@@ -6,3 +6,4 @@ displaysize 1280 800
 volmaster 10
 volbgm 10
 volse 10
+timeofday2 2

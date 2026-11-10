@@ -16,6 +16,9 @@
 #include "AimSystem.h"
 #include "MeshBuffer.h"
 #include "Shader.h"
+#include "InputActions.h"
+#include "DirectX.h"
+#include "imgui.h"
 #include <cmath>
 
 using namespace DirectX;
@@ -23,14 +26,14 @@ using namespace DirectX;
 namespace
 {
     // --- the camera (m: distances from the blade) ---
-    // Looked at from well above: the blade lies flat, so a low camera sees only its thin edge
-    // (2026-11-09 F5: the cold blade on the anvil could not be seen at all).
-    const float CAM_NEAR_DIST    = 0.20f;   // the slide: this far beside the blade ...
-    const float CAM_NEAR_HEIGHT  = 0.35f;   // ... and this far above it
-    const float CAM_FAR_DIST_K   = 0.55f;   // the wide shot: x the blade's length beside it ...
-    const float CAM_FAR_HEIGHT_K = 0.95f;   // ... and above it
-    const float CAM_LOOK_SHIFT_K = 0.25f;   // the wide shot looks this share of the blade to the right,
-                                            // so the sword sits left of the parchment (HUD: right half)
+    // Looked at from nearly straight above: the blade lies flat, so a lower camera sees only its thin edge
+    // (2026-11-09/10 F5: the blade could not be read; seen from above its whole face shows).
+    const float CAM_NEAR_DIST    = 0.10f;   // the slide: this far beside the blade ...
+    const float CAM_NEAR_HEIGHT  = 0.40f;   // ... and this far above it
+    const float CAM_FAR_DIST_K   = 0.30f;   // the wide shot: x the blade's length beside it ...
+    const float CAM_FAR_HEIGHT_K = 1.45f;   // ... and above it
+    const float CAM_LOOK_SHIFT_K = 0.45f;   // the wide shot looks this share of the blade to the right,
+                                            // so the sword sits left of the parchment card (2026-11-10: at 0.25 it ran under the card)
 
     // --- sound ---
     const float BGM_BEAT_SHARE  = 0.25f;    // the music during the beat (share of RESULT_BGM_VOLUME)
@@ -45,6 +48,17 @@ namespace
     const float GLINT_SIZE   = 0.12f;       // m
     const float GLINT_BRIGHT = 3.0f;        // HDR: Bloom makes it shine
     const XMFLOAT4 GLINT_COL(1.0f, 0.95f, 0.85f, 1.0f);
+
+    // --- the showcase (the user's sketch, 2026-11-10): the sword stands on the left, the record card on the right ---
+    const float SHOW_SCREEN_X     = 0.28f;  // where the blade's middle sits on the screen (share of the width)
+    const float SHOW_SCREEN_Y     = 0.52f;  // ... and height (below the title)
+    const float SHOW_HEIGHT_SHARE = 0.58f;  // the blade's length fills this share of the screen height
+                                            // (0.70 ran the pommel off the bottom, under the credits; 2026-11-10)
+    const float SHOW_TILT         = XMConvertToRadians(25.0f);   // leaning to the right like the sketch
+    const float SHOW_ROT_MOUSE    = 0.008f; // rad per pixel dragged (right mouse button)
+    const float SHOW_ROT_STICK    = 0.008f; // rad per unit of the right stick's look delta
+    const float SHOW_PITCH_LIMIT  = XMConvertToRadians(80.0f);
+    const float SHOW_INPUT_FROM   = 0.5f;   // turning works once the sword is this far up from the anvil
 
     float Clamp01(float t) { return fminf(fmaxf(t, 0.0f), 1.0f); }
     float Ease(float t) { t = Clamp01(t); return t * t * (3.0f - 2.0f * t); }   // smoothstep
@@ -84,6 +98,89 @@ void SceneForge::StartResultStage()
     m_resultLinesWritten = 0;
     m_resultGlintPlayed = m_resultTitleLanded = false;
     m_shake = 0.0f;
+    m_showYaw = m_showPitch = 0.0f;
+    // where the sword lies on the anvil, as a pose (the start of its rise to the showcase)
+    XMFLOAT3 grip, tip;
+    if (ResultSwordEnds(grip, tip))
+    {
+        const int la = AimSystem::LongAxis(m_wpMin, m_wpMax);
+        const int ta = (m_wpThickAxis >= 0) ? m_wpThickAxis : (la + 1) % 3;
+        const int wa = 3 - la - ta;
+        const XMVECTOR d = XMVector3Normalize(XMVectorSubtract(XMLoadFloat3(&tip), XMLoadFloat3(&grip)));
+        XMVECTOR e = XMVector3TransformNormal(XMVectorSet(wa == 0 ? 1.0f : 0.0f, wa == 1 ? 1.0f : 0.0f, wa == 2 ? 1.0f : 0.0f, 0.0f), WeaponWorld());
+        e = XMVector3Normalize(XMVectorSubtract(e, XMVectorScale(d, XMVectorGetX(XMVector3Dot(e, d)))));
+        m_resultAnvilPose.guard = grip;
+        XMStoreFloat3(&m_resultAnvilPose.dir, d);
+        XMStoreFloat3(&m_resultAnvilPose.edge, e);
+    }
+}
+
+//--- 0 = still on the anvil .. 1 = standing in the showcase. It rises as the record card is laid down.
+float SceneForge::ResultShowcase() const
+{
+    return Ease((m_resultTime - (ResultLinesAt() - RESULT_LINE_GAP)) / RESULT_RISE_SEC);
+}
+
+//--- The showcase pose: in front of the camera, on the left of the screen, leaning like the sketch, turned
+//    by the player (right stick / right mouse button + drag). Blended from the anvil pose while it rises.
+//    The sword is placed through m_swordPose (WeaponRot / WorkAnchor read it while SwordShowcased()).
+void SceneForge::UpdateResultShowcase()
+{
+    const float w = ResultShowcase();
+    if (w <= 0.0f) return;
+    XMVECTOR E, F, R, U;
+    if (!CameraBasis(E, F, R, U)) return;
+    if (w >= SHOW_INPUT_FROM)
+    {
+        float sx, sy; InputActions::LookDelta(sx, sy);
+        float dx = sx * SHOW_ROT_STICK, dy = sy * SHOW_ROT_STICK;
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Right))
+        {
+            const ImVec2 md = ImGui::GetIO().MouseDelta;
+            dx += md.x * SHOW_ROT_MOUSE; dy += md.y * SHOW_ROT_MOUSE;
+        }
+        m_showYaw  += dx;
+        m_showPitch = fminf(fmaxf(m_showPitch + dy, -SHOW_PITCH_LIMIT), SHOW_PITCH_LIMIT);
+    }
+    // the blade's middle at SHOW_SCREEN_X/Y, far enough that its length fills SHOW_HEIGHT_SHARE of the view
+    const ImVec2 disp = ImGui::GetIO().DisplaySize;
+    const float aspect = (disp.y > 0.0f) ? disp.x / disp.y : 1.0f;
+    const float tanY = tanf(m_camFov * 0.5f), tanX = tanY * aspect;
+    const float len = SwordLength();
+    const float dist = len / (SHOW_HEIGHT_SHARE * 2.0f * tanY);
+    const XMVECTOR center = E + F * dist + R * ((SHOW_SCREEN_X * 2.0f - 1.0f) * dist * tanX) + U * ((1.0f - SHOW_SCREEN_Y * 2.0f) * dist * tanY);
+    // upright on the screen, leaning right, the flat facing the camera; then the player's turn
+    XMVECTOR dir  = U * cosf(SHOW_TILT) + R * sinf(SHOW_TILT);
+    XMVECTOR edge = R * cosf(SHOW_TILT) - U * sinf(SHOW_TILT);
+    const XMMATRIX turn = XMMatrixRotationAxis(U, m_showYaw) * XMMatrixRotationAxis(R, m_showPitch);
+    dir  = XMVector3Normalize(XMVector3TransformNormal(dir, turn));
+    edge = XMVector3Normalize(XMVector3TransformNormal(edge, turn));
+    SwordPose show;
+    XMStoreFloat3(&show.guard, center - dir * (len * 0.5f));   // the pose is held at the tang end
+    XMStoreFloat3(&show.dir, dir);
+    XMStoreFloat3(&show.edge, edge);
+    m_swordPose = LerpPose(m_resultAnvilPose, show, w);
+}
+
+//--- The showcased sword floats in front of the anvil and the room: draw it with the depth range squeezed to
+//    the front (the same depth range hack as the carried iron, Carry.cpp), so it never sinks into them.
+bool SceneForge::PushShowcaseDepth()
+{
+    if (!SwordShowcased()) return false;
+    ID3D11DeviceContext* ctx = GetContext();
+    UINT n = 1; D3D11_VIEWPORT vp; ctx->RSGetViewports(&n, &vp);
+    m_showcaseOldDepth[0] = vp.MinDepth; m_showcaseOldDepth[1] = vp.MaxDepth;
+    vp.MinDepth = 0.0f; vp.MaxDepth = VIEWMODEL_DEPTH_RANGE;
+    ctx->RSSetViewports(1, &vp);
+    return true;
+}
+
+void SceneForge::PopShowcaseDepth()
+{
+    ID3D11DeviceContext* ctx = GetContext();
+    UINT n = 1; D3D11_VIEWPORT vp; ctx->RSGetViewports(&n, &vp);
+    vp.MinDepth = m_showcaseOldDepth[0]; vp.MaxDepth = m_showcaseOldDepth[1];
+    ctx->RSSetViewports(1, &vp);
 }
 
 void SceneForge::SkipResultStage()
@@ -125,6 +222,7 @@ void SceneForge::UpdateResultStage(float tick)
         if (GradeLetter() == 'S') Audio::Play(Audio::SE_RESULT_LEGENDARY, LEGENDARY_VOLUME);
         Audio::SetLoop(Audio::BGM_RESULT, RESULT_BGM_VOLUME, 1.0f);
     }
+    UpdateResultShowcase();
 }
 
 //====================================================================
@@ -151,9 +249,11 @@ bool SceneForge::ResultSwordEnds(XMFLOAT3& grip, XMFLOAT3& tip)
 void SceneForge::ApplyResultCamera()
 {
     CameraBase* cam = GetObj<CameraBase>("Camera");
-    XMFLOAT3 gripF, tipF;
-    if (!cam || !ResultSwordEnds(gripF, tipF)) { ApplyCamera(); return; }
-    const XMVECTOR grip = XMLoadFloat3(&gripF), tip = XMLoadFloat3(&tipF);
+    if (!cam || !m_wpOk) { ApplyCamera(); return; }
+    // From where the sword LIES on the anvil (recorded at the start), not where it is now: the showcased
+    // sword is placed from the camera, so following it would chase our own tail.
+    const XMVECTOR grip = XMLoadFloat3(&m_resultAnvilPose.guard);
+    const XMVECTOR tip  = grip + XMLoadFloat3(&m_resultAnvilPose.dir) * SwordLength();
     const XMVECTOR up = XMVectorSet(0, 1, 0, 0);
     const XMVECTOR mid = XMVectorLerp(grip, tip, 0.5f);
     const float len = XMVectorGetX(XMVector3Length(XMVectorSubtract(tip, grip)));

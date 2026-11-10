@@ -58,6 +58,8 @@ FORGE - Credits / クレジット
   "Metal Object Tapped.aif" by RutgerMuller https://freesound.org/people/RutgerMuller/sounds/104368/ (focus_glint.wav)
   "Wooden Hover" / "Wooden Click" by BenjaminNelan https://freesound.org/people/BenjaminNelan/sounds/321082/ , /321083/ (ui_move.wav / ui_confirm.wav)
   "Leather Rubbing Foley Sound" by ALLANZ10D https://freesound.org/people/ALLANZ10D/sounds/269761/ (ui_back.wav / ui_pause.wav)
+  "footstep on wood foley.wav" by martian https://freesound.org/people/martian/sounds/19292/ (step_wood_1/2.wav, 2026-11-09)
+  "Footsteps in Gravel" by petebuchwald https://freesound.org/people/petebuchwald/sounds/273354/ (step_dirt_1/2.wav, 2026-11-09)
   bigsoundbank.com:
   "Heartbeat #2" by Denis Chardonnet https://bigsoundbank.com/heartbeat-2-s0244.html (heartbeat.wav)
   "Impatient finger tapping #1" by Joseph Sardin https://bigsoundbank.com/impatient-finger-tapping-1-s1427.html (ui_slider.wav)

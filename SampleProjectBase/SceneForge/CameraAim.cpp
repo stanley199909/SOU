@@ -22,6 +22,7 @@
 #include "AimSystem.h"
 #include "Lerp.h"
 #include "PropParts.h"
+#include "ReflectionProbe.h"	// 部屋の箱(家の中か)= 扉を通る道
 #include <cstdlib>
 #include <cmath>
 #include <cfloat>
@@ -262,6 +263,48 @@ void SceneForge::BeginEnterStation(Station s)
 	m_modeTrans  = ModeTrans::Enter;
 	m_transTimer = 0.0f;
 	m_transDur   = TransDuration();
+	m_doorRoute  = (s == Station::TestCut) && PlanDoorRoute();	// 家の中からなら扉を通って行く
+	m_doorRouteOpened = false;
+	if (m_doorRoute) m_transDur = m_routeSeg[0] + m_routeSeg[1] + m_routeSeg[2] + m_routeSeg[3];
+}
+
+//--- 家の中(反射プローブの部屋の箱の中)から藁人形へ入る時の道: 扉の内側の点 → 外側の点。
+//    扉の位置と向きは扉のモデルから求める(閉じた姿勢の箱の中心と、薄い方の軸=壁の法線)=配置を変えても追従する。
+bool SceneForge::PlanDoorRoute()
+{
+	XMFLOAT3 rmn, rmx;
+	const XMFLOAT3& e = m_transFromEye;
+	if (!ReflectionProbe::RoomBox(rmn, rmx)) return false;
+	if (e.x < rmn.x || e.x > rmx.x || e.z < rmn.z || e.z > rmx.z) return false;	// もう外にいる: いつもの円弧で回り込む
+	Model* door = GetObj<Model>(CottageDoor::DOOR_KEY);
+	Prop*  house = GetProp(CottageDoor::HOUSE_KEY);
+	XMFLOAT3 hmn, hmx;
+	if (!door || !house || !PropWorldBox(*house, hmn, hmx)) return false;
+	XMFLOAT3 lmn, lmx;
+	door->GetLocalAABB(lmn, lmx);
+	const XMMATRIX closed = CottageDoor::HingeMatrix(m_doorHinge, 0.0f) * PropWorld(*house);
+	const XMVECTOR c = XMVector3TransformCoord(XMVectorSet((lmn.x + lmx.x) * 0.5f, (lmn.y + lmx.y) * 0.5f, (lmn.z + lmx.z) * 0.5f, 1.0f), closed);
+	const bool thinX = (lmx.x - lmn.x) < (lmx.z - lmn.z);	// 扉の板は壁の法線の向きに薄い
+	XMVECTOR out = XMVector3TransformNormal(thinX ? XMVectorSet(1, 0, 0, 0) : XMVectorSet(0, 0, 1, 0), closed);
+	out = XMVector3Normalize(XMVectorSetY(out, 0.0f));
+	const XMVECTOR houseC = XMVectorSet((hmn.x + hmx.x) * 0.5f, 0.0f, (hmn.z + hmx.z) * 0.5f, 0.0f);
+	if (XMVectorGetX(XMVector3Dot(out, XMVectorSubtract(XMVectorSetY(c, 0.0f), houseC))) < 0.0f) out = XMVectorNegate(out);	// 家の中心から離れる向き = 外
+	const float eyeY = m_walkFloorY + m_walkEyeH;
+	XMStoreFloat3(&m_routeDoor, c);
+	XMStoreFloat3(&m_routeIn,  XMVectorSetY(XMVectorSubtract(c, XMVectorScale(out, ROUTE_DOOR_STAND)), eyeY));
+	XMStoreFloat3(&m_routeOut, XMVectorSetY(XMVectorAdd(c, XMVectorScale(out, ROUTE_DOOR_OUT)), eyeY));
+
+	// 区間の秒 = 距離 / 過渡の速さ(短すぎ・長すぎは過渡と同じ範囲に収める)。扉の開く間 = 扉の開く時間 + 少しの間
+	auto segFor = [&](const XMFLOAT3& a, const XMFLOAT3& b) {
+		const float d = XMVectorGetX(XMVector3Length(XMVectorSubtract(XMLoadFloat3(&b), XMLoadFloat3(&a)))) / m_transSpeed;
+		return fminf(fmaxf(d, m_transMinTime), m_transMaxTime);
+	};
+	XMFLOAT3 toEye, toFwd; TargetViewPose(toEye, toFwd);
+	m_routeSeg[0] = segFor(m_transFromEye, m_routeIn);
+	m_routeSeg[1] = m_door.IsOpen() ? 0.0f : m_door.swingTime + ROUTE_DOOR_HOLD;
+	m_routeSeg[2] = segFor(m_routeIn, m_routeOut);
+	m_routeSeg[3] = segFor(m_routeOut, toEye);
+	return true;
 }
 
 //--- 工位の視点方向(と砥石の研ぎ始め位置)を玩家の今の位置から決める。
@@ -361,6 +404,7 @@ void SceneForge::BeginExitStation()
 	m_modeTrans  = ModeTrans::Exit;
 	m_transTimer = 0.0f;
 	m_transDur   = TransDuration();
+	m_doorRoute  = false;	// 出る時は扉を通らない(中断された前の道を持ち越さない)
 }
 
 //--- 計時を進め、終わったらモードを切り替える。過渡中のマウスは読んで捨てる(明けに視点が跳ばない)。
@@ -370,8 +414,15 @@ void SceneForge::UpdateModeTrans(float tick)
 	float dx, dy; ReadMouseDelta(dx, dy);	// 捨てる
 
 	m_transTimer += tick;
+	// 扉を通る道: 扉の前に着いたら本物の扉を開ける(回転・衝突・絵は扉の角度に全部追従する)
+	if (m_doorRoute && !m_doorRouteOpened && m_transTimer >= m_routeSeg[0])
+	{
+		m_doorRouteOpened = true;
+		if (!m_door.IsOpen()) m_door.Toggle();
+	}
 	if (m_transTimer < m_transDur) return;
 
+	m_doorRoute = false;
 	m_walkMode  = (m_modeTrans == ModeTrans::Exit);	// 到着: Exit=走動へ / Enter=工位へ
 	m_canStrike = false;							// 工位に入った直後の誤打防止(一度離すまで叩かない)
 	if (m_introPhase == IntroPhase::CameraMove) FinishIntro();	// タイトル→金床の導入もここで終わり(BGM 切替、HUD が出る)
@@ -391,6 +442,7 @@ void SceneForge::ApplyTransCamera()
 {
 	CameraBase* cam = GetObj<CameraBase>("Camera");
 	if (!cam) return;
+	if (m_doorRoute) { ApplyDoorRouteCamera(); return; }
 	XMFLOAT3 toEye, toFwd; TargetViewPose(toEye, toFwd);	// 到着先(これで cam は一旦上書きされる)
 
 	float s = Lerp::SmoothStep(m_transTimer / m_transDur);
@@ -426,6 +478,62 @@ void SceneForge::ApplyTransCamera()
 	}
 	XMFLOAT3 f = AnglesToFwd(yaw, pitch);
 
+	cam->SetPos(eye);
+	cam->SetLook(XMFLOAT3(eye.x + f.x, eye.y + f.y, eye.z + f.z));
+	cam->SetUp(XMFLOAT3(0.0f, 1.0f, 0.0f));
+}
+
+//--- 扉を通る道のカメラ(区間ごと。各区間は SmoothStep で歩き出し/止まりがなめらか):
+//    ① 扉の前へ歩きながら扉の方を向く ② 扉が開くのを見ている ③ 外へ出ながら藁人形の方を向く
+//    ④ 藁人形の周りを円弧で正面へ回り込む(いつもの入り方と同じ極座標の補間)
+void SceneForge::ApplyDoorRouteCamera()
+{
+	CameraBase* cam = GetObj<CameraBase>("Camera");
+	XMFLOAT3 toEye, toFwd; TargetViewPose(toEye, toFwd);	// 到着先(これで cam は一旦上書きされる)
+	XMFLOAT3 eyeT, dummy; StationView(Station::TestCut, eyeT, dummy);	// 藁人形の見る所
+	auto anglesTo = [](const XMFLOAT3& from, const XMFLOAT3& at, float& y, float& p) {
+		XMFLOAT3 f; XMStoreFloat3(&f, XMVector3Normalize(XMVectorSubtract(XMLoadFloat3(&at), XMLoadFloat3(&from))));
+		FwdToAngles(f, y, p);
+	};
+	auto lerp3 = [](const XMFLOAT3& a, const XMFLOAT3& b, float s) {
+		return XMFLOAT3(a.x + (b.x - a.x) * s, a.y + (b.y - a.y) * s, a.z + (b.z - a.z) * s);
+	};
+	const float* sg = m_routeSeg;
+	float t = m_transTimer;
+	XMFLOAT3 eye;
+	float yaw, pitch;
+	if (t < sg[0])	// ① 扉の前へ
+	{
+		const float s = Lerp::SmoothStep(t / sg[0]);
+		eye = lerp3(m_transFromEye, m_routeIn, s);
+		float y0, p0, y1, p1; FwdToAngles(m_transFromFwd, y0, p0); anglesTo(m_routeIn, m_routeDoor, y1, p1);
+		yaw = y0 + WrapPi(y1 - y0) * s; pitch = p0 + (p1 - p0) * s;
+	}
+	else if ((t -= sg[0]) < sg[1])	// ② 扉が開くのを見る
+	{
+		eye = m_routeIn;
+		anglesTo(m_routeIn, m_routeDoor, yaw, pitch);
+	}
+	else if ((t -= sg[1]) < sg[2])	// ③ 外へ出る
+	{
+		const float s = Lerp::SmoothStep(t / sg[2]);
+		eye = lerp3(m_routeIn, m_routeOut, s);
+		float y0, p0, y1, p1; anglesTo(m_routeIn, m_routeDoor, y0, p0); anglesTo(m_routeOut, dummy, y1, p1);
+		yaw = y0 + WrapPi(y1 - y0) * s; pitch = p0 + (p1 - p0) * s;
+	}
+	else	// ④ 藁人形の正面へ回り込む
+	{
+		t -= sg[2];
+		const float s = Lerp::SmoothStep(fminf(t / sg[3], 1.0f));
+		const float cx = m_cutPosXZ[0], cz = m_cutPosXZ[1];
+		const float a0 = atan2f(m_routeOut.x - cx, m_routeOut.z - cz), a1 = atan2f(toEye.x - cx, toEye.z - cz);
+		const float r0 = sqrtf((m_routeOut.x - cx) * (m_routeOut.x - cx) + (m_routeOut.z - cz) * (m_routeOut.z - cz));
+		const float r1 = sqrtf((toEye.x - cx) * (toEye.x - cx) + (toEye.z - cz) * (toEye.z - cz));
+		const float a = a0 + WrapPi(a1 - a0) * s, r = r0 + (r1 - r0) * s;
+		eye = XMFLOAT3(cx + sinf(a) * r, m_routeOut.y + (toEye.y - m_routeOut.y) * s, cz + cosf(a) * r);
+		anglesTo(eye, dummy, yaw, pitch);
+	}
+	const XMFLOAT3 f = AnglesToFwd(yaw, pitch);
 	cam->SetPos(eye);
 	cam->SetLook(XMFLOAT3(eye.x + f.x, eye.y + f.y, eye.z + f.z));
 	cam->SetUp(XMFLOAT3(0.0f, 1.0f, 0.0f));
@@ -496,7 +604,7 @@ XMFLOAT3 SceneForge::StationBase(Station s)
 		float chestY = 0.0f;
 		for (int i = 0; i < NUM_CUT_PARTS; ++i)
 			if (CUT_PARTS[i].core) chestY = CUT_PARTS[i].center.y;
-		return XMFLOAT3(m_cutPosXZ[0], m_walkFloorY + chestY, m_cutPosXZ[1]);
+		return XMFLOAT3(m_cutPosXZ[0], CutGroundY() + chestY, m_cutPosXZ[1]);
 	}
 	}
 	return m_barAnchor;
@@ -951,6 +1059,7 @@ void SceneForge::SaveTuning()
 	fprintf(fp, "grindspark %.5f %.5f %.5f\n", m_grindSparkOff.x, m_grindSparkOff.y, m_grindSparkOff.z);
 	fprintf(fp, "cutzone %.5f\n", m_cutTarget.coreZone);	// 胴の真ん中とみなす幅(m, 2026-11-01)
 	fprintf(fp, "cutwound %.5f %.5f %.5f\n", m_cutTarget.woundOpen, m_cutStuckSec, m_cutPullSec);	// 傷の開き(rad), 刃が止まる秒, 引き抜く秒
+	fprintf(fp, "cuthitstop %.5f %.5f\n", m_cutHitstopCut, m_cutHitstopStuck);	// ヒットストップ(秒): 斬り抜けた時, 止まった時
 	fprintf(fp, "cutsway %.5f %.5f\n", m_cutTarget.sway.stiffness, m_cutTarget.sway.damping);	// 藁人形の揺れ(ばね k, 減衰 c)
 	fprintf(fp, "swordhold %.5f %.5f %.5f %.5f %.5f %.5f %.5f\n", m_holdHand.x, m_holdHand.y, m_holdHand.z,
 	        m_holdDir.x, m_holdDir.y, m_holdDir.z, m_holdRollDeg);	// 剣の構え(前/右/上, 向きの重み, ねじり。2026-10-29)
@@ -1016,7 +1125,7 @@ void SceneForge::TuningRefs(std::vector<float*>& out)
 		&m_carryAvoidMaxRaise, &m_carryAvoidMargin, &m_carryAvoidLambda, &m_carryAvoidMaxPull,
 		// -- F5 pacing (flip beats / sequence speed / station move / walk / cut strength) --
 		&m_flipTongsOutTime, &m_flipGripTime, &m_flipPutBackTime, &m_seqTimeScale, &m_transMinTime, &m_transMaxTime,
-		&m_walkSpeed, &m_cutPowerMin, &m_cutPowerMax, &m_cutTarget.coreZone, &m_cutTarget.woundOpen, &m_cutStuckSec, &m_cutPullSec, &m_swordBobPerMeter, &m_grindSparkOff.x, &m_grindSparkOff.y, &m_grindSparkOff.z, &m_cutTarget.sway.stiffness, &m_cutTarget.sway.damping, 
+		&m_walkSpeed, &m_cutPowerMin, &m_cutPowerMax, &m_cutTarget.coreZone, &m_cutTarget.woundOpen, &m_cutStuckSec, &m_cutPullSec, &m_cutHitstopCut, &m_cutHitstopStuck, &m_swordBobPerMeter, &m_grindSparkOff.x, &m_grindSparkOff.y, &m_grindSparkOff.z, &m_cutTarget.sway.stiffness, &m_cutTarget.sway.damping, 
 		&m_holdHand.x, &m_holdHand.y, &m_holdHand.z, &m_holdDir.x, &m_holdDir.y, &m_holdDir.z, &m_holdRollDeg,
 		&m_windHand.x, &m_windHand.y, &m_windHand.z, &m_windDeg, &m_hiltSeat,
 		&m_forging.grindSpread, 
@@ -1133,6 +1242,7 @@ void SceneForge::LoadTuning()
 		else if (strcmp(key, "grindspark") == 0) sscanf_s(v, "%f %f %f", &m_grindSparkOff.x, &m_grindSparkOff.y, &m_grindSparkOff.z);
 		else if (strcmp(key, "cutzone")    == 0) sscanf_s(v, "%f", &m_cutTarget.coreZone);
 		else if (strcmp(key, "cutwound")   == 0) sscanf_s(v, "%f %f %f", &m_cutTarget.woundOpen, &m_cutStuckSec, &m_cutPullSec);
+		else if (strcmp(key, "cuthitstop") == 0) sscanf_s(v, "%f %f", &m_cutHitstopCut, &m_cutHitstopStuck);
 		else if (strcmp(key, "cutsway")    == 0) sscanf_s(v, "%f %f", &m_cutTarget.sway.stiffness, &m_cutTarget.sway.damping);
 		else if (strcmp(key, "swordhold")  == 0) sscanf_s(v, "%f %f %f %f %f %f %f", &m_holdHand.x, &m_holdHand.y, &m_holdHand.z, &m_holdDir.x, &m_holdDir.y, &m_holdDir.z, &m_holdRollDeg);
 		else if (strcmp(key, "swordwind")  == 0) sscanf_s(v, "%f %f %f %f %f", &m_windHand.x, &m_windHand.y, &m_windHand.z, &m_windDeg, &m_hiltSeat);

@@ -24,7 +24,7 @@ namespace AutoExposure
         bool  enabled     = true;
         float key         = 0.18f;   // target average brightness (0.18 = photographic middle grey)
         float minExposure = 0.35f;   // limits: never darker / brighter than this (the eye has limits too)
-        float maxExposure = 2.4f;    // 2026-11-09 user: the smithy read too dark (1.8 capped the dark room)
+        float maxExposure = 1.8f;
         float toBrightSec = 0.4f;    // time constant when the scene gets brighter (pupil closes fast)
         float toDarkSec   = 1.6f;    // time constant when the scene gets darker (eyes adjust slowly)
     };

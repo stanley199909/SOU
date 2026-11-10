@@ -380,7 +380,7 @@ XMMATRIX SceneForge::WeaponSpin() const
 XMMATRIX SceneForge::WeaponRot() const
 {
 	if (m_seqIronOverride) return XMLoadFloat4x4(&m_seqIronRot);	// 拍子表で動かしている間(Sequence.cpp)
-	if (SwordInHand()) return SwordRotation();					// 試し切りで構えた剣(振りの姿勢。TestCut.cpp)
+	if (SwordInHand() || SwordShowcased()) return SwordRotation();	// 試し切りで構えた剣(振りの姿勢。TestCut.cpp)/ 結算の展示(ResultStage.cpp)
 	XMMATRIX r = WeaponSpin() *
 		XMMatrixRotationRollPitchYaw(m_wpPitch, m_wpYaw, m_wpRoll) *
 		XMMatrixRotationY(StationAlignYaw());
@@ -488,7 +488,7 @@ float SceneForge::BladeDepthBelowCentre() const
 XMFLOAT3 SceneForge::WorkAnchor()
 {
 	if (m_carrying) return HeldPoint();	// 火钳で掴んで運んでいる=手の前(Carry.cpp)
-	if (SwordInHand()) return SwordCenter();	// 柄を付けた剣(試し切り): 鍔が手の位置に来る様に。歩いている時も手に持つ(TestCut.cpp)
+	if (SwordInHand() || SwordShowcased()) return SwordCenter();	// 柄を付けた剣(試し切り): 鍔が手の位置に来る様に。歩いている時も手に持つ(TestCut.cpp)/ 結算の展示
 	XMFLOAT3 a = StationBase(m_workAt);
 	switch (m_workAt)
 	{
@@ -780,8 +780,17 @@ void SceneForge::DrawWeapon()
 	static_assert(sizeof(WpParams) % 16 == 0, "cbuffer size must be a multiple of 16 bytes");
 	const PropMaterial& mat = PropMaterials::Find("Weapon");
 	wp.light    = LitRender::Lights(cam);
+	// 結算: 刀身だけに展示用の光(商品写真の様に)。磨いた鋼は周りを映すだけ=暗い工房では黒く見えた(2026-11-10 F5)。
+	//   炉の点光源を、カメラの少し上(刃の面を照らす位置)へ移して強める。他の物の光は変えない
+	if (m_state == GAME_RESULT)
+	{
+		const XMFLOAT3 eye = cam->GetPos();
+		wp.light.fire = { eye.x, eye.y + RESULT_DISPLAY_LIGHT_LIFT, eye.z, wp.light.fire.w * RESULT_DISPLAY_LIGHT_GAIN };
+	}
 	// z = 磨いてある(焼入れの後=焼き戻しの色を見る為に鍛冶が刃を磨く)。暗い鍛造肌のままでは色が見えなかった(2026-10-19)
-	wp.material = { mat.roughness, mat.metallic, (m_state == GAME_PLAY && StepReached(StepName::Temper)) ? 1.0f : 0.0f, 0.0f };
+	//   結算の完成した剣も磨いてある(2026-11-09 F5: GAME_PLAY だけを見ていたので、結算で黒い鍛造肌に戻っていた)
+	const bool polished = (m_state == GAME_PLAY && StepReached(StepName::Temper)) || (m_state == GAME_RESULT && m_resultHilt);
+	wp.material = { mat.roughness, mat.metallic, polished ? 1.0f : 0.0f, 0.0f };
 	wp.hot      = { m_wpHotReflect, m_wpHotTint, m_wpHotEmisMin, m_wpHotGain };
 	const bool hasNormal = m_wpNormalTex && m_wpNormalTex->GetResource() && LitRender::NormalMapsEnabled();	// 編集シーンの「Normal maps」は道具と共通
 	// マスクが読めない時は黒皮を出さない(灰色の既定テクスチャで全面が皮に覆われない様に)

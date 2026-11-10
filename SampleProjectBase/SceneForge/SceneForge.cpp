@@ -455,6 +455,7 @@ void SceneForge::ResetRunState()
 	if (m_burnSndOn)  { Audio::Stop(Audio::SE_BURN_LOOP);  m_burnSndOn  = false; }
 	if (m_grindSndOn) { Audio::Stop(Audio::SE_GRIND_LOOP); m_grindSndOn = false; }
 	m_modeTrans = ModeTrans::None;	// 走動⇔工位の移動アニメも解除
+	m_doorRoute = false; m_doorRouteOpened = false;	// 扉を通る道も
 	m_focus = -1; m_promptAlpha = 0.0f;	// 互動の状態も初期化
 	m_grabFocus = -1; m_grabPromptAlpha = 0.0f; m_gripAfterExit = false;
 	m_bannerAt = -1000.0f; m_bannerText.clear(); m_hiAlpha = 0.0f;	// 工程の札・工位の光も初期化
@@ -519,6 +520,7 @@ void SceneForge::ResetRunState()
 	StopSequence();				// 前の回の拍子表が途中なら打ち切る
 	m_seqBreathW = 0.0f;		// 拍子表の呼吸の重み
 	m_bobPhase = 0.0f; m_bobWeight = 0.0f;	// 運ぶ時の揺れ
+	m_stepDist = 0.0f; m_stepAlt = false;	// 足音
 	m_carryPull = 0.0f; m_carryRaise = 0.0f;	// 手の鉄が道具/壁を避ける量
 	m_grindFlipStart = 0.0f;
 	for (float& t : m_temperCell) t = 0.0f;	// 焼き戻しの色
@@ -924,6 +926,16 @@ void SceneForge::UpdateTitle(float tick)
 	// 黒転じは使わない: タイトルはゲーム世界そのもの。
 	// SPACE → モード選択(チュートリアル / 通常モード) → 決定 → ロゴ淡出 → カメラが金床へ → 鍛打(Title.cpp UpdateIntro)。
 	if (m_introPhase != IntroPhase::None || m_fade.IsBusy()) return;
+
+	// 左下の時刻: ← → (十字キー) か ◀ ▶ のクリック。メニューを開いている間は上下左右をメニューが使う
+	if (!m_modeSelectOpen && !m_courseSelectOpen)
+	{
+		int step = m_titleTimeStep;
+		if (InputActions::Pressed(Action::MenuLeft))  step = -1;
+		if (InputActions::Pressed(Action::MenuRight)) step = +1;
+		if (StepTimeOfDay(step)) Audio::Play(Audio::SE_UI_SLIDER, UI_SLIDER_VOLUME);
+	}
+	m_titleTimeStep = 0;
 
 	// チュートリアルの課程の一覧(モード選択で「チュートリアル」を選んだ後)。最後の行 = 戻る(モード選択へ)
 	if (m_courseSelectOpen && m_recipe)
@@ -2155,6 +2167,7 @@ void SceneForge::UpdateOptions()
 			Haptics::Pulse(RUMBLE_PREVIEW, RUMBLE_PREVIEW_SEC);	// 新しい強さで一度震わせる
 			SaveOptions();
 		}
+		if (m_optionsSel == (int)OptionItem::TimeOfDay) StepTimeOfDay(step);
 		if (m_optionsSel == (int)OptionItem::Quality && stepIndex(m_qualityIdx, (int)_countof(QUALITY_STEPS)))
 		{
 			RenderScale() = QUALITY_STEPS[m_qualityIdx];	// 次の描画で PostProcess::Begin が描画先を新しい大きさで作り直す
@@ -2208,11 +2221,31 @@ void SceneForge::LoadOptions()
 		if (sscanf_s(line, "volmaster %d", &v) == 1 && v >= 0 && v < VOLUME_STEP_COUNT) m_volMasterIdx = v;
 		if (sscanf_s(line, "volbgm %d", &v) == 1 && v >= 0 && v < VOLUME_STEP_COUNT) m_volBgmIdx = v;
 		if (sscanf_s(line, "volse %d", &v) == 1 && v >= 0 && v < VOLUME_STEP_COUNT) m_volSeIdx = v;
+		if (sscanf_s(line, "timeofday2 %d", &v) == 1 && v >= 0 && v < TIME_OF_DAY_COUNT) m_timeOfDayIdx = v;
 	}
 	fclose(fp);
 	Haptics::SetStrength(RUMBLE_STEPS[m_rumbleIdx]);
 	RenderScale() = QUALITY_STEPS[m_qualityIdx];
 	ApplyDisplayAndVolume();
+	ApplyTimeOfDay();
+}
+
+//--- 選んだ時刻を太陽へ: 朝/昼/夕方/夜 = その時刻で止める / 流れる = 今の時刻から時間を進める
+void SceneForge::ApplyTimeOfDay()
+{
+	if (m_timeOfDayIdx == TIME_OF_DAY_FLOW) { m_sun.running = true; return; }
+	m_sun.running = false;
+	m_sun.time01  = TIME_OF_DAY_STEPS[m_timeOfDayIdx - 1];	// 0 番は「流れる」
+}
+
+bool SceneForge::StepTimeOfDay(int step)
+{
+	const int next = m_timeOfDayIdx + step;
+	if (step == 0 || next < 0 || next >= TIME_OF_DAY_COUNT) return false;	// 端で止まる(回り込まない=今どこか分かる。設定の他の行と同じ)
+	m_timeOfDayIdx = next;
+	ApplyTimeOfDay();
+	SaveOptions();
+	return true;
 }
 
 //--- 今の設定を画面と音へ渡す
@@ -2241,6 +2274,7 @@ void SceneForge::SaveOptions() const
 	fprintf(fp, "volmaster %d\n", m_volMasterIdx);		// 音量の段階(0..10 = 0%..100%)
 	fprintf(fp, "volbgm %d\n", m_volBgmIdx);
 	fprintf(fp, "volse %d\n", m_volSeIdx);
+	fprintf(fp, "timeofday2 %d\n", m_timeOfDayIdx);		// 0 = 時間が流れる, 1..4 = 朝/昼/夕方/夜で止める(並びを変えたのでキーも変えた)
 	fclose(fp);
 }
 
@@ -2325,6 +2359,7 @@ void SceneForge::Update(float tick)
 			const XMFLOAT3 after = m_player.GetPosition();
 			const float walked = sqrtf((after.x - before.x) * (after.x - before.x) + (after.z - before.z) * (after.z - before.z));
 			UpdateCarryBob(tick, walked);			// 実際に進んだ距離で揺らす(壁に当たって止まれば揺れも止まる)
+			UpdateFootsteps(walked);				// 〃 足音(Carry.cpp)
 
 			// 互動: ①範囲 ②視線 の両方が true の物件だけ E が効く(Interaction.cpp)。
 			//   金床=工位へ移動 / 火钳=取って工位へ移動→翻面。退出(工位→走動)は UpdatePlay 側で E。
@@ -2398,7 +2433,7 @@ void SceneForge::Update(float tick)
 		const float NORMAL_SPEED = 1.0f;
 		m_particles.EmitSteamLine(m_bladeLineA, m_bladeLineB, STEAM_SPREAD, STEAM_RATE * m_boil, tick, NORMAL_SPEED);
 	}
-	m_particles.Update(tick, m_time);
+	m_particles.Update(tick * TestCutTimeScale(), m_time);	// 試し切りのヒットストップ中は藁屑も止まる(普段は 1 倍)
 	UpdateTestCut(tick);	// 試し切りの藁人形: 切った断片の落下(剛体)。どの状態でも動かす(切った直後に工位へ入っても落ち切る)
 	UpdateWaterSim(tick);	// 水槽の水面の波(刃・泡で押し、波動方程式で広げる)
 }
@@ -2428,8 +2463,10 @@ void SceneForge::Draw()
 	if (!m_carrying || SequencePlaying())
 	{
 		GpuProfiler::Scope t((const char*)u8"刀身");
+		const bool front = PushShowcaseDepth();	// 結算の展示: 場面より手前に(浮かんだ剣が金床・床にめり込まない)
 		if (m_wpOk) DrawWeapon();	// Blender武器モデルを進捗でモーフ(あれば優先)
 		else        Draw3DBillet();	// 無ければ従来の高さ場メッシュ
+		if (front) PopShowcaseDepth();
 		if (m_wpOk && !m_carrying) DrawGhostTarget();	// 実体の後に完成形の半透明ゴーストを重ねる
 	}
 	{ GpuProfiler::Scope t((const char*)u8"水"); DrawWater(); }		// 水槽の水面(屈折。背後のシーンを撮ってから描く=不透明の後)

@@ -22,6 +22,7 @@
 #include "Geometory.h"
 #include "Input.h"
 #include "InputActions.h"	// 裏返しの「押している」表示(Action::Flip)
+#include "InputPrompts.h"	// 今の機器(結算の剣を回す案内の文)
 #include "DebugUI.h"
 #include "Lerp.h"
 #include "Defines.h"
@@ -691,6 +692,52 @@ void SceneForge::DrawTitleUI()
 	}
 	float p = (0.6f + 0.4f * sinf(m_time * 3.0f)) * alpha;
 	CenterTextWithIcons("PRESS  ", Action::Confirm, "  TO  START", 0.86f, 1.15f, IM_COL32(255, 255, 255, (int)(255 * p)), body);
+	DrawTitleTimeOfDay(alpha);
+}
+
+const char* SceneForge::TimeOfDayName(int idx) const
+{
+	static const char* NAMES[TIME_OF_DAY_COUNT] = { (const char*)u8"時間が流れる", (const char*)u8"朝", (const char*)u8"昼", (const char*)u8"夕方", (const char*)u8"夜" };
+	return NAMES[(idx >= 0 && idx < TIME_OF_DAY_COUNT) ? idx : TIME_OF_DAY_FLOW];
+}
+
+//--- タイトルの左下: 「時刻 ◀ 昼 ▶」。← → (十字キー) かクリックで変える(UpdateTitle が実行)。設定の「時刻」と同じ値
+void SceneForge::DrawTitleTimeOfDay(float alpha)
+{
+	const float X = 0.035f, Y = 0.90f;		// 左上の位置(画面比)
+	const float TEXT_H = 0.030f;			// 文字の高さ(画面高さ比)
+	const float ARROW_K = 0.38f;			// ◀ ▶ の大きさ(文字の高さに対する比)
+	const float GAP_K = 0.6f;				// 名前と ◀ / ◀ と値の間(文字の高さに対する比)
+	const float VALUE_W_K = 6.5f;			// 値の欄の幅(文字の高さに対する比)=「時間が流れる」が入る
+	const float CLICK_K = 2.0f;				// 矢印の当たり判定の広さ(矢印の大きさに対する比)
+	const float SHADOW_PX = 2.0f;
+	ImDrawList* dl = HudDrawList();
+	const ImVec2 disp = ImGui::GetIO().DisplaySize;
+	const float px = disp.y * TEXT_H, a = px * ARROW_K;
+	ImFont* f = DebugUI::FontJPFor(px);
+	const int ai = (int)(255 * alpha);
+	const ImU32 ink = IM_COL32(245, 235, 215, ai), off = IM_COL32(245, 235, 215, ai / 3), shadow = IM_COL32(0, 0, 0, (int)(ai * 0.7f));
+	float x = disp.x * X;
+	const float y = disp.y * Y, my = y + px * 0.5f;
+	const char* label = (const char*)u8"時刻";
+	dl->AddText(f, px, ImVec2(x + SHADOW_PX, y + SHADOW_PX), shadow, label);
+	dl->AddText(f, px, ImVec2(x, y), ink, label);
+	x += f->CalcTextSizeA(px, FLT_MAX, 0.0f, label).x + px * GAP_K;
+	const ImVec2 lc(x + a, my), rc(x + a * 2.0f + px * (GAP_K * 2.0f + VALUE_W_K), my);
+	const bool canL = m_timeOfDayIdx > 0, canR = m_timeOfDayIdx < TIME_OF_DAY_COUNT - 1;
+	dl->AddTriangleFilled(ImVec2(lc.x - a, my), ImVec2(lc.x + a * 0.7f, my - a), ImVec2(lc.x + a * 0.7f, my + a), canL ? ink : off);
+	dl->AddTriangleFilled(ImVec2(rc.x + a, my), ImVec2(rc.x - a * 0.7f, my - a), ImVec2(rc.x - a * 0.7f, my + a), canR ? ink : off);
+	const char* value = TimeOfDayName(m_timeOfDayIdx);
+	const float vw = f->CalcTextSizeA(px, FLT_MAX, 0.0f, value).x;
+	const float vx = (lc.x + rc.x - vw) * 0.5f;
+	dl->AddText(f, px, ImVec2(vx + SHADOW_PX, y + SHADOW_PX), shadow, value);
+	dl->AddText(f, px, ImVec2(vx, y), ink, value);
+	if (alpha < 1.0f || !ImGui::IsMouseClicked(ImGuiMouseButton_Left)) return;	// 導入で消えていく間は押せない
+	const ImVec2 m = ImGui::GetIO().MousePos;
+	const float r = a * CLICK_K;
+	auto onArrow = [&](ImVec2 c) { return fabsf(m.x - c.x) <= r && fabsf(m.y - c.y) <= r; };
+	if (onArrow(lc)) m_titleTimeStep = -1;
+	if (onArrow(rc)) m_titleTimeStep = +1;
 }
 
 //--- 映画的な終幕の黒帯(上下)。淬火後に QuenchStep が m_letterbox を 0→1 へ進める。
@@ -1605,6 +1652,18 @@ void SceneForge::DrawResultUI()
 	const float fade = 1.0f - clamp01(t / RESULT_FADE_SEC);
 	if (fade > 0.0f) dl->AddRectFilled(ImVec2(0, 0), disp, IM_COL32(0, 0, 0, (int)(255 * fade)));
 
+	// 展示の剣を回せる事の案内(剣の下。今の機器で文が変わる)
+	if (ResultShowcase() >= 1.0f)
+	{
+		const float HINT_X = 0.28f, HINT_Y = 0.82f, HINT_H = 0.024f;	// 剣の真下(画面比)。0.88 は下端のクレジットに重なった
+		const char* hint = (InputPrompts::Device() == InputDevice::KeyboardMouse) ? (const char*)u8"右クリック＋ドラッグで剣を回す"
+		                                                                          : (const char*)u8"右スティックで剣を回す";
+		const float hpx = disp.y * HINT_H;
+		ImFont* hf = DebugUI::FontJPFor(hpx);
+		const float hw = hf->CalcTextSizeA(hpx, FLT_MAX, 0.0f, hint).x;
+		DrawOutlinedText(dl, hf, hpx, disp.x * HINT_X - hw * 0.5f, disp.y * HINT_Y, IM_COL32(240, 228, 205, 220), hint);
+	}
+
 	const float PROMPT_Y = 0.86f, PROMPT_SCALE = 0.80f;
 	if (t >= ResultEnd())
 		CenterTextWithIcons("PRESS  ", Action::Confirm, "  TO  RETURN", PROMPT_Y, PROMPT_SCALE, IM_COL32(240, 228, 205, 230), body);	// 暗い背景の上=影あり
@@ -2121,6 +2180,8 @@ void SceneForge::DrawOptionsMenu()
 			else                  sprintf_s(val, sizeof(val), "%d%%", (int)(RUMBLE_STEPS[m_rumbleIdx] * PERCENT + 0.5f));	// 25% / 50% …
 			steppedRow((const char*)u8"震動(コントローラー)", val, m_rumbleIdx, (int)_countof(RUMBLE_STEPS));
 		}
+		else if (i == (int)OptionItem::TimeOfDay)
+			steppedRow((const char*)u8"時刻", TimeOfDayName(m_timeOfDayIdx), m_timeOfDayIdx, TIME_OF_DAY_COUNT);
 		else if (i == (int)OptionItem::Quality)
 		{
 			strcpy_s(val, sizeof(val), m_qualityIdx == 0 ? (const char*)u8"標準" : (const char*)u8"高画質");
@@ -2608,6 +2669,8 @@ void SceneForge::DrawFeelPanel()
 	ImGui::SliderFloat((const char*)u8"1太刀の力：最高", &m_cutPowerMax, 0.5f, 3.0f, "%.2f");	// 一番静かな瞬間に放した時
 	ImGui::SliderFloat((const char*)u8"胴の真ん中の幅", &m_cutTarget.coreZone, 0.02f, 0.40f, "%.3f m");	// 切り口が胴の中心からこの距離以内なら数える(大=当てやすい)
 	ImGui::SliderFloat((const char*)u8"傷の開き", &m_cutTarget.woundOpen, 0.05f, 0.80f, "%.2f rad");	// 切れかかった時に上半分が傾く角度(大=大きく開く)
+	ImGui::SliderFloat((const char*)u8"ヒットストップ：斬り抜けた時", &m_cutHitstopCut, 0.0f, 0.4f, "%.2f 秒");	// 当たった瞬間に全てが止まる長さ
+	ImGui::SliderFloat((const char*)u8"ヒットストップ：止まった時", &m_cutHitstopStuck, 0.0f, 0.4f, "%.2f 秒");
 	ImGui::SliderFloat((const char*)u8"刃が止まる秒", &m_cutStuckSec, 0.1f, 1.5f, "%.2f");
 	ImGui::SliderFloat((const char*)u8"引き抜く秒", &m_cutPullSec, 0.1f, 1.5f, "%.2f");
 	ImGui::SliderFloat((const char*)u8"藁人形の揺れ：硬さ k", &m_cutTarget.sway.stiffness, 300.0f, 8000.0f, "%.0f");	// 大=速く小さく揺れる(柱が硬い)

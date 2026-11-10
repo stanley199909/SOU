@@ -163,6 +163,7 @@ private:
 	bool  m_sunAppliedSet = false;
 	float m_sunSinceCaptureDeg = 0.0f;	// 前に反射の写真を撮ってから太陽が動いた角度
 	static constexpr float SHADOW_RANGE_M = 20.0f;			// 太陽の影を作る範囲(カメラ中心の正方形, m)。小さい=影が細かい/遠くの影は出ない。カメラが屋内の時
+	static constexpr float SHADOW_HOUSE_MARGIN_M = 2.0f;	// 屋内の範囲 = 家の対角線 + これ(m)。屋根の張り出しの影まで入る様に
 	static constexpr float SHADOW_RANGE_OUTDOOR_M = 48.0f;	// カメラが屋外の時の範囲(m)。20m だと見ている家が範囲から半分はみ出し、歩くと影の境目が家の上を這った(2026-10-23 試遊)
 	bool  m_showInteract = false;		// F4「互動の範囲」: 互動範囲の箱と目線を F4 を閉じても表示(F4 中は入力が止まるので、歩いて試す用)
 	bool  m_showShadowRange = false;	// F4「影の範囲」:影の地図が掛かる正方形を地面に水色で描く(壁越しに透視)
@@ -590,6 +591,17 @@ private:
 	float  m_transMinTime  = 0.6f;			// 過渡の最短(秒。近くても一瞬で飛ばない)
 	float  m_transMaxTime  = 1.2f;			// 過渡の最長(秒。遠くても待たせすぎない)
 	bool   Transitioning() const { return m_modeTrans != ModeTrans::None; }
+	//--- 家の中から藁人形へ入る時の道(2026-11-10 ユーザー: チュートリアルの試し切りで、カメラが壁を突き抜けて飛んだ)。
+	//    扉の前へ歩いて扉の方を向く → 扉が開く(本物の扉 m_door を開ける)→ 外へ出る → 藁人形の正面へ回り込む。
+	static constexpr float ROUTE_DOOR_STAND = 1.3f;		// 扉の前に立つ距離(m)。扉は室内へ開くので、扉の幅より離れて立つ
+	static constexpr float ROUTE_DOOR_OUT   = 1.2f;		// 扉を出てから立つ距離(m)
+	static constexpr float ROUTE_DOOR_HOLD  = 0.25f;	// 扉が開き切ってから歩き出すまでの間(秒)
+	bool  m_doorRoute       = false;			// この過渡は扉を通る
+	bool  m_doorRouteOpened = false;			// 扉を開けた(1回だけ)
+	DirectX::XMFLOAT3 m_routeIn{ 0, 0, 0 }, m_routeOut{ 0, 0, 0 }, m_routeDoor{ 0, 0, 0 };	// 扉の内側・外側に立つ点 / 扉の中心
+	float m_routeSeg[4] = {};					// 区間の秒: 扉の前へ / 扉が開く間 / 外へ / 藁人形の正面へ
+	bool  PlanDoorRoute();						// 家の中から試し切りへ入る時だけ道を作る(作れたら true)
+	void  ApplyDoorRouteCamera();				// その道に沿ったカメラ
 	bool   m_gripAfterExit = false;	// 工位を Q/X で出た=出終わったら続けて鉄を掴む(E で出た時は false)
 	void   BeginEnterStation(Station s);	// 走動→工位の過渡を開始(刃もその工位へ置く)
 	static DirectX::XMFLOAT3 BedLongAxis(float yaw, const float size[2]);	// 炭床/水面の四角の長辺の水平方向
@@ -712,6 +724,13 @@ private:
 	static constexpr float BOB_FADE_LAMBDA = 8.0f;	// 揺れの出入りの速さ(Damp率, 1/秒)
 	static constexpr float BOB_MOVE_EPS    = 1e-4f;	// 1フレームにこれ未満しか動いていなければ「止まっている」
 	void  UpdateCarryBob(float tick, float walked);	// 歩いた距離から揺れの位相と強さを進める
+	// 足音(2026-11-09): 歩いた距離が1歩分たまる毎に1回。家の中 = 木の床 / 外 = 土(カメラが家の箱の中か)
+	static constexpr float STEP_STRIDE      = 0.75f;	// 1歩の長さ(m)
+	static constexpr float STEP_VOLUME      = 0.45f;
+	static constexpr float STEP_PITCH_JITTER = 0.06f;	// 1歩ごとに音程をこれだけ揺らす(同じ音の繰り返しに聞こえない様に)
+	float m_stepDist = 0.0f;						// 前の1歩から歩いた距離(m)
+	bool  m_stepAlt  = false;						// 次は2つ目の音
+	void  UpdateFootsteps(float walked);
 	//--- 手の鉄の「めり込み回避」(FPS の武器の壁めり込み回避 / weapon wall-clipping avoidance と同じ考え方)。
 	//    視線の水平方向へ 2D レイを飛ばし(Collision2D::RayCast = 歩きの衝突と同じ凸包/壁線)、
 	//    鉄の先端がそこへ届かない様に ①まず手元へ引き寄せる(m_carryPull) ②それでも足りなければ上へ起こす(m_carryRaise)。
@@ -915,7 +934,19 @@ private:
 	//    今は「教学アニメの速さ」だけ。段階の中から選ぶ(◀ ▶)。選んでいる間は横に瞄準の指示図を実際の速さで動かして見せる。
 	//    保存 = Assets/options.txt(調整値 forge_tuning.txt とは別=玩家の好み)。
 	//    2026-10-26: 画面モード / 解像度 / 音量(全体・BGM・効果音)を追加(ユーザー要望)。
-	enum class OptionItem { DisplayMode, Resolution, Quality, VolMaster, VolBgm, VolSe, LessonSpeed, Rumble, Back, Count };
+	enum class OptionItem { DisplayMode, Resolution, Quality, TimeOfDay, VolMaster, VolBgm, VolSe, LessonSpeed, Rumble, Back, Count };
+	// 時刻(2026-11-09 ユーザー: 夜は暗いので嫌な人が多い → 自分で選べる)。設定とタイトルの左下の両方で変えられる。
+	//   0 = 時間が流れる(既定 = 今までと同じ動き) / 1.. = 朝 / 昼 / 夕方 / 夜 でその時刻に止める。
+	//   「流れる」を先頭に置く(2026-11-09 F5: 末尾だと既定から左へ1つ押すだけで夜になった)
+	static constexpr float TIME_OF_DAY_STEPS[] = { 0.08f, 0.25f, 0.44f, 0.75f };	// SunCycle::time01(0 = 日の出, 0.25 = 正午, 0.5 = 日の入り)
+	static constexpr int   TIME_OF_DAY_FLOW  = 0;	// 「流れる」の番号
+	static constexpr int   TIME_OF_DAY_COUNT = (int)_countof(TIME_OF_DAY_STEPS) + 1;
+	int   m_timeOfDayIdx  = TIME_OF_DAY_FLOW;
+	int   m_titleTimeStep = 0;					// タイトルの左下の ◀/▶ のクリック(−1 / +1)。UpdateTitle で実行
+	void  ApplyTimeOfDay();						// 選んだ時刻を太陽へ(止める / 流す)
+	bool  StepTimeOfDay(int step);				// 1段動かす(端で止まる)。変わったら太陽へ渡して保存
+	const char* TimeOfDayName(int idx) const;
+	void  DrawTitleTimeOfDay(float alpha);		// タイトルの左下: ◀ 時刻 ▶
 	int   m_displayMode    = (int)Display::Mode::Windowed;	// Display::Mode(窓 / 無枠の全画面 / 全画面)
 	int   m_displaySizeIdx = 0;					// Display の解像度一覧の番号(LoadOptions で起動時の窓 1280x720 に一番近い物から)
 	static constexpr int VOLUME_STEP_COUNT = 11;	// 音量の段階 0%, 10% … 100%
@@ -1022,6 +1053,8 @@ private:
 	static constexpr float RESULT_BEAT_SEC   = 0.8f;	// 最後の行の後の一拍
 	static constexpr float RESULT_GLINT_SEC  = 0.6f;	// 光が柄から切っ先まで走る
 	static constexpr float RESULT_SLAM_SEC   = 0.18f;	// 称号が大きい所から叩き付けられる
+	static constexpr float RESULT_DISPLAY_LIGHT_LIFT = 0.3f;	// 刀身の展示用の光: カメラからこれだけ上(m)
+	static constexpr float RESULT_DISPLAY_LIGHT_GAIN = 1.0f;	// 〃 炉の火の強さの倍率(1.5 では暖色が強すぎて、刃が燃える金の様に見えた。2026-11-10)
 	float m_resultTime = 0.0f;					// 結算が始まってからの秒(飛ばすと最後の時刻へ)
 	int   m_resultLinesWritten = 0;				// 書き終えた行の数(行ごとに筆の音)
 	bool  m_resultGlintPlayed  = false;			// 刀身の光の音を鳴らした
@@ -1038,6 +1071,16 @@ private:
 	static constexpr float RESULT_ROW_MIN_SEC = 0.5f;	// これより短い工程は記録に載せない(最初の加熱は開始時に済んでいる)
 	bool  ResultRowShown(int step) const;		// その工程を羊皮紙に載せるか
 	int   ResultLineCount() const;				// 羊皮紙の行数(載せる工程 + 合計)
+	//--- 展示(2026-11-10 ユーザーの絵): 過場(切っ先→柄→引き)の後、剣が金床から浮かんで画面の左に立ち、
+	//    玩家が自分で回して全ての角度を見られる(右スティック / 右クリック+マウス)。右には紀録のカード。
+	static constexpr float RESULT_RISE_SEC = 0.7f;	// 金床から展示の位置へ浮かぶ秒
+	float m_showYaw = 0.0f, m_showPitch = 0.0f;	// 玩家が回した角度(rad。画面の上下軸 / 左右軸まわり)
+	float m_showcaseOldDepth[2] = {};			// 深度範囲を詰める前の値(PushShowcaseDepth)
+	float ResultShowcase() const;				// 展示の進み 0(金床)..1(展示の位置)
+	bool  SwordShowcased() const { return m_state == GAME_RESULT && ResultShowcase() > 0.0f; }	// 剣は m_swordPose で置く
+	void  UpdateResultShowcase();				// 回す入力 + 展示の姿勢(m_swordPose)
+	bool  PushShowcaseDepth();					// 展示中の剣と柄を場面より手前に描く(深度範囲を詰める)。詰めたら true
+	void  PopShowcaseDepth();
 	float ResultLinesAt() const;				// 最初の行が書かれる時刻
 	float ResultGlintAt() const;				// 光が走り始める時刻
 	float ResultTitleAt() const;				// 称号が出始める時刻
@@ -1730,6 +1773,11 @@ private:
 	float m_cutStandDist = 1.5f;			// 構える位置: 藁人形の柱から何 m 手前に立つか(近すぎると構えた剣が藁人形に入る。2026-10-21 F5)
 	float m_cutPowerMin = 0.5f;				// 1太刀の力: 一番悪い時機で放した時(F5。低すぎると悪い剣が何十太刀もかかる)
 	float m_cutPowerMax = 1.5f;				// 〃 一番静かな瞬間に放した時(F5)
+	float m_cutHitstopCut   = 0.18f;		// 当たった瞬間に試し切りの全てが止まる秒(ヒットストップ): 斬り抜けた時(F5)。0.12 では感じ取れなかった(2026-11-10)
+	float m_cutHitstopStuck = 0.28f;		// 〃 刃が止まった時(長く止める=藁に止められた重さ)(F5)
+	float m_swordRecoil    = 0.0f;			// 当たった反動で手が押し戻された量(m)。ばね-ダンパで戻る(鎚・藁人形と同じ)
+	float m_swordRecoilVel = 0.0f;			// その速さ(m/s)
+	DirectX::XMFLOAT3 m_recoilDir{ 0, 0, 0 };	// 押し戻される向き(ワールド。振りの逆)
 	float m_cutStuckSec = 0.6f;				// 斬り切れなかった刃が傷の中で止まっている秒(F5)
 	float m_cutPullSec  = 0.6f;				// その刃を引き抜く秒(F5)
 	// ---- 剣の姿勢(F6「剣の姿勢」で調整・forge_tuning の swordhold / swordwind に保存) ----
@@ -1793,6 +1841,7 @@ private:
 	DirectX::XMFLOAT2 m_slashDir = { -1.0f, -1.0f };	// 振りの向き(画面の右 x / 上 y。長さ1)
 	SwordPose m_swordPose{};				// 今の剣の姿勢(ワールド)
 	SwordPose m_swordFrom{};				// 今の段階の始めの姿勢(そこから目標へ補間)
+	SwordPose m_resultAnvilPose{};			// 結算: 金床の上の姿勢(展示へ浮かび始める所。StartResultStage で記録)
 	int   m_swordTipSign = 0;				// 切っ先は刃のローカル長軸の +側(+1)か -側(-1)か。0 = まだ調べていない
 	std::shared_ptr<MeshBuffer> m_hiltMetal, m_hiltGrip;	// 柄(鍔+柄頭 / 握り)。最初に描く時に作る
 	// 集中(構えている間): 呼吸で照準が揺れる。息を吐き切った所が一番静か = 離し時
@@ -1804,6 +1853,7 @@ private:
 	float m_heartbeatAt  = -1.0f;			// 最後に心臓の音を鳴らした時刻
 	float FocusQualityNow() const;			// 今離した時の集中の良さ(揺れが小さいほど 1)
 	float CutNeed() const;					// 両断に要る力の累積(剣の等級 = 太刀数)
+	float CutGroundY();						// 藁人形が立つ地面の高さ(外の地面の上面。家の床 m_walkFloorY より低い)
 	// 刀光(ウェポントレイル): 振りの円弧を式で持っているので、残像は「尾の角度〜頭の角度」の円弧をその場で作る(フレームレートに依らず滑らか)
 	float m_trailHead = 0.0f, m_trailTail = 0.0f;	// 刀光の頭(=今の刃)と尾の角度(rad)
 	float m_trailAlpha = 0.0f;				// 刀光の濃さ(振り終わると薄れて消える)

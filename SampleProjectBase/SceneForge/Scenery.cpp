@@ -224,10 +224,26 @@ void SceneForge::DrawScenery()
     // 影を落とす物は「影の範囲(カメラ中心の正方形)」に掛かる物だけ。範囲外の屋外の木・石・草まで毎フレーム
     // 影の地図へ描いていた(2026-10-17 F3: 太陽の影 約3ms)。境界箱の球で判定する(安い・取りこぼさない)
     CameraBase* camForShadow = GetObj<CameraBase>("Camera");
-    const XMFLOAT3 camPos = camForShadow ? camForShadow->GetPos() : shadowCenter;
+    XMFLOAT3 camPos = camForShadow ? camForShadow->GetPos() : shadowCenter;
     // 範囲 = 屋内 20m(窓の光の縁を細かく) / 屋外 48m(見ている家が丸ごと入る)。
     //   旧: いつも 20m → 屋外で家を見ると家の半分が範囲の外=「影無し(日向)」扱いになり、歩くと影の境目が家の上を這った
-    const float shadowRange = ShadowCameraIndoors() ? SHADOW_RANGE_M : SHADOW_RANGE_OUTDOOR_M;
+    float shadowRange = ShadowCameraIndoors() ? SHADOW_RANGE_M : SHADOW_RANGE_OUTDOOR_M;
+    // 屋内: 範囲を「家全体」に固定する(中心 = 家の箱の中心、幅 = 家の対角線 + 余白)。
+    //   2026-11-10 F5: カメラ中心の 20m では、家の端に立つと反対側の壁が範囲の外=日向扱いになり、
+    //   歩くと壁の一面が急に明るくなった/戻った。家に固定すれば歩いても範囲が動かない(影の縁も這わない)。
+    bool shadowOnHouse = false;
+    if (ShadowCameraIndoors())
+        if (Prop* house = GetProp(CottageDoor::HOUSE_KEY))
+        {
+            XMFLOAT3 hmn, hmx;
+            if (PropWorldBox(*house, hmn, hmx))
+            {
+                const float dx = hmx.x - hmn.x, dz = hmx.z - hmn.z;
+                camPos = XMFLOAT3((hmn.x + hmx.x) * 0.5f, (hmn.y + hmx.y) * 0.5f, (hmn.z + hmx.z) * 0.5f);
+                shadowRange = fmaxf(SHADOW_RANGE_M, sqrtf(dx * dx + dz * dz) + SHADOW_HOUSE_MARGIN_M);
+                shadowOnHouse = true;
+            }
+        }
     const XMFLOAT4 sunNow=LitRender::Sun();
     const XMFLOAT4 sunDirOnly(sunNow.x,sunNow.y,sunNow.z,1.0f);   // the shadow map depends only on the DIRECTION (brightness changes must not re-render it)
     for(auto& p:m_props) {
@@ -248,7 +264,8 @@ void SceneForge::DrawScenery()
     // 影の範囲は「家全体の 48m」でなく「見ている人の周り」だけ(1テクセル 2.3cm → 約 1cm)。
     //   窓から差す光の縁が細かくなる=太陽が動いた時に光の縁が前後に揺れて見えるのを抑える(2026-10-17 F5「先-1再+1」)。
     //   中心はカメラ(歩けば付いて来る。テクセル単位に吸着するので歩いても影の縁は這わない)。
-    if (CameraBase* cam = GetObj<CameraBase>("Camera")) shadowCenter = cam->GetPos();
+    if (shadowOnHouse) shadowCenter = camPos;	// 屋内 = 家の中心(上で決めた)
+    else if (CameraBase* cam = GetObj<CameraBase>("Camera")) shadowCenter = cam->GetPos();
     // 反射の写真を撮っている間は影の地図を作り直さない(本描画で作った物をそのまま使う)。
     //   撮影のカメラ(金床の上)を中心に作り直すと、撮影で1回 + 本描画に戻って1回 = 毎回 2 回余計に描いていた
     if (!m_capturingProbe)
@@ -601,7 +618,7 @@ void SceneForge::DrawModelsTest()
 {
 	if (!m_show3D) return;
 	DrawScenery();	// 床・樹桩・金床・炉・風箱・作業台・水槽・道具などを一括描画(金床もここ)
-	DrawHammer3D();
+	if (m_state != GAME_RESULT) DrawHammer3D();	// 結算では金床の上は剣だけ(鎚が剣の前に入って邪魔だった, 2026-11-10)
 	DrawCarry();	// 火钳(手に持っている時=鉄を咥える / そうでない時=左腰)
 }
 
