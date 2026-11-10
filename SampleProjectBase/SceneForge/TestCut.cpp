@@ -239,9 +239,14 @@ namespace
     // the impact frame: the screen flashes white for an instant as the dummy is cut in two (a common
     // action-game cue for "a decisive hit"; search: "impact frame", "hit flash")
     const float SEVER_FLASH_SEC = 0.12f, SEVER_FLASH_ALPHA = 0.45f;
-    const Rumble RUMBLE_CUT    = { 0.7f, 0.8f, 0.0f, 0.9f };
-    const Rumble RUMBLE_STUCK  = { 0.9f, 0.4f, 0.0f, 1.0f };
-    const float RUMBLE_CUT_SEC = 0.22f, RUMBLE_STUCK_SEC = 0.25f;
+    // controller rumble = the most direct sensation of the test cut (2026-11-10 user: "too weak, make it the
+    // strongest"). Both motors + the right trigger at full; held flat at full for the whole hit stop
+    // (RUMBLE_HITSTOP_HOLD, UpdateTestCutStation), then the pulse fades out over *_SEC.
+    const Rumble RUMBLE_CUT    = { 1.0f, 1.0f, 0.0f, 1.0f };
+    const Rumble RUMBLE_STUCK  = { 1.0f, 1.0f, 0.0f, 1.0f };
+    const Rumble RUMBLE_SEVER  = { 1.0f, 1.0f, 1.0f, 1.0f };   // cut in two: both triggers too = the whole pad
+    const Rumble RUMBLE_HITSTOP_HOLD = { 1.0f, 1.0f, 0.0f, 1.0f };
+    const float RUMBLE_CUT_SEC = 0.45f, RUMBLE_STUCK_SEC = 0.40f, RUMBLE_SEVER_SEC = 0.70f;
     const unsigned int VOICE_COL = IM_COL32(255, 200, 90, 255);   // the smith's mutter (same color as the other lines)
 
     // --- cut in two: the payoff, by how many strokes it took (data; the first row that fits) ---
@@ -258,11 +263,13 @@ namespace
     };
     const SeverTier SEVER_TIERS[] = {
         //  strokes   hold   slow-mo  scale  brush  slam  shake  hitstop
-        {  1,        0.40f, 0.80f,   0.25f, true,  2.6f, 1.0f,  0.16f },   // 一刀両断: the special one
+        {  1,        0.40f, 0.80f,   0.25f, true,  2.6f, 1.0f,  0.50f },   // 一刀両断: the special one
         // 2026-11-10 user: a cut in two after several strokes gave no reward at all -> every cut in two now
         // gets slow motion and a slam, only weaker than the one-stroke 一刀両断
-        {  3,        0.25f, 0.55f,   0.35f, false, 2.0f, 0.60f, 0.12f },   // two or three strokes
-        { INT_MAX,   0.15f, 0.35f,   0.50f, false, 1.5f, 0.35f, 0.10f },   // more
+        // 2026-11-10 user: the freeze at the cut is the film "beat" (cut -> dead stillness -> it falls apart);
+        // 0.18 s was too short to see. Longer the fewer strokes it took. Sound, rumble, flash keep going.
+        {  3,        0.25f, 0.55f,   0.35f, false, 2.0f, 0.60f, 0.35f },   // two or three strokes
+        { INT_MAX,   0.15f, 0.35f,   0.50f, false, 1.5f, 0.35f, 0.25f },   // more
     };
     const SeverTier& TierFor(int strokes)
     {
@@ -493,7 +500,7 @@ void SceneForge::UpdateTestCut(float tick)
     }
     m_cutTarget.SetPlacement(XMFLOAT3(m_cutPosXZ[0], CutGroundY(), m_cutPosXZ[1]), m_cutYaw);   // follows F4 "place in front of me"
     m_cutTarget.Update(tick * TestCutTimeScale());
-    if (m_cutSlowmo > 0.0f) m_cutSlowmo -= tick;
+    if (m_cutSlowmo > 0.0f && m_slashHitstop <= 0.0f) m_cutSlowmo -= tick;   // the slow motion starts after the freeze (it is not eaten by it)
     XMFLOAT3 landedAt;
     if (m_cutTarget.TakeLanded(landedAt)) Audio::PlayAt(Audio::SE_CUT_FALL, landedAt, FALL_VOLUME);
 }
@@ -784,7 +791,7 @@ void SceneForge::UpdateTestCutStation(float tick, bool inputOn)
     // hit stop: everything of the test cut holds still for a moment -- the blade, the dummy, the falling
     // half, the straw bits (TestCutTimeScale is 0) -- while the camera shakes. 2026-11-10 F5: freezing only
     // the blade did not read as a stop at all.
-    if (m_slashHitstop > 0.0f) { m_slashHitstop -= tick; return; }
+    if (m_slashHitstop > 0.0f) { Haptics::Hold(RUMBLE_HITSTOP_HOLD); m_slashHitstop -= tick; return; }   // the pad stays at full while everything stands still
 
     switch (m_slashPhase)
     {
@@ -1059,6 +1066,7 @@ void SceneForge::ApplyStrike()
         m_cutSlowmo      = tier.slowmoSec;
         m_cutSlowmoScale = tier.slowmoScale;
         m_cutFovPunch    = fmaxf(m_cutFovPunch, FOV_PUNCH_SEVER);
+        Haptics::Pulse(RUMBLE_SEVER, RUMBLE_SEVER_SEC);
     }
     else
     {
