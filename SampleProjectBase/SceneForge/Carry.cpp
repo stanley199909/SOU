@@ -135,11 +135,27 @@ void SceneForge::UpdateCarryBob(float tick, float walked)
 }
 
 //--- 足音: 揺れと同じく「時間」でなく「歩いた距離」で刻む=速く歩けば速く鳴り、壁に当たって止まれば鳴らない。
+//    物を持っている時(剣・火钳の鉄)は、手の揺れ(UpdateCarryBob)の「着地で一番沈む」瞬間に合わせて鳴らす
+//    = 揺れと足音が同じ拍子(2026-11-10 F5: 剣を持って歩くと足音だけ速かった)。持っていない時は歩幅ごと。
 void SceneForge::UpdateFootsteps(float walked)
 {
-	m_stepDist += walked;
-	if (m_stepDist < STEP_STRIDE) return;
-	m_stepDist -= STEP_STRIDE;
+	const bool holding = m_carrying || SwordInHand();
+	if (holding)
+	{
+		if (walked <= BOB_MOVE_EPS) return;
+		// 揺れの位相は 1 歩で 1 進み、半分(n + 0.5)の所で一番沈む(ViewmodelBob の |sin(位相 π)|)
+		const float perMeter = m_carrying ? m_bobPerMeter : m_swordBobPerMeter;
+		const float before = m_bobPhase - walked * perMeter;
+		const float LANDING = 0.5f;
+		if (floorf(before + LANDING) == floorf(m_bobPhase + LANDING)) return;
+		m_stepDist = 0.0f;
+	}
+	else
+	{
+		m_stepDist += walked;
+		if (m_stepDist < STEP_STRIDE) return;
+		m_stepDist -= STEP_STRIDE;
+	}
 	const bool indoors = ShadowCameraIndoors();	// カメラ(=目)が家の箱の中
 	const Audio::SoundId id = indoors ? (m_stepAlt ? Audio::SE_STEP_WOOD_2 : Audio::SE_STEP_WOOD_1)
 	                                  : (m_stepAlt ? Audio::SE_STEP_DIRT_2 : Audio::SE_STEP_DIRT_1);

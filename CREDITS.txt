@@ -6,16 +6,16 @@ FORGE - Credits / クレジット
 - "Rubbing" by ZijunSANG
   https://freesound.org/s/798312/
   License: CC BY-NC 4.0 (https://creativecommons.org/licenses/by-nc/4.0/)
-  使用箇所: 工程リストの取り消し線を消す音 (Assets/Sound/SE/eraser.wav に加工)
+  使用箇所: 工程リストの取り消し線を消す音 (Assets/Sound/SE/ui_tracker_eraser.wav に加工)
 
 - "extinguishing fire" by soundslikewillem
   https://freesound.org/s/399548/
   License: CC BY-NC 4.0 (https://creativecommons.org/licenses/by-nc/4.0/)
-  使用箇所: 焼入れ (Assets/Sound/SE/quench.wav に加工)
+  使用箇所: 焼入れ (Assets/Sound/SE/quench_plunge.wav に加工)
 
 - 効果音：On-Jin ～音人～ (https://on-jin.com/)
   「刀鍛冶 ふいご01」(sen_ka_katanakaji_fuigo01)
-  使用箇所: ふいごを踏む音 (Assets/Sound/SE/bellows_pump.wav に加工: 0.45〜2.55秒に切り出し・末尾0.3秒フェードアウト・モノラル・WAV化)
+  使用箇所: ふいごを踏む音 (Assets/Sound/SE/forge_bellows.wav に加工: 0.45〜2.55秒に切り出し・末尾0.3秒フェードアウト・モノラル・WAV化)
   ※ 音源の二次配布・無断利用禁止 (Redistribution of the sound files is prohibited)
   規約: https://on-jin.com/kiyaku.php
   個人・学校の作品は無料。企業による商用利用の時は利用連絡が必要 (https://on-jin.com/onrenfo.php)。
@@ -40,28 +40,31 @@ FORGE - Credits / クレジット
 
 - freesound.org (CC0): "Metal Grinding-Sharpening" by sentryx86 / "Writing Short with Pencil" by WaltzOfTheWifi
 - Pixabay (Pixabay Content License): BGM・効果音 (tunetank / dragon-studio / soundreality / freesound_community)
+  扉の音 (2026-11-10): dragon-studio "opening door" (id 450444) → door_open.wav / "creaky old door" (id 472357) → door_close.wav (MP3 → WAV・末尾フェード)
+  入手した MP3 は Assets/Sound/SE/_source/
 - "Generic Metallic Sound 1" — Sound Effect by freesound_community from Pixabay
   https://pixabay.com/users/freesound_community-46691455/ (sound id 94328)
   License: Pixabay Content License (クレジット任意。感謝を込めて記載)
-  使用箇所: チュートリアルで操作を覚えた時の確認音 (Assets/Sound/SE/learned.wav に加工: 先頭/末尾の無音を除去・モノラル化・-2.2dB・WAV化)
-- 試し切り・メニューの効果音 (2026-11-02 暫定。切り出し・音量正規化・フェードを加工。下記すべて CC0。出典の詳細: Assets/Sound/SE/Candidates_20261102/CREDITS_CANDIDATES.csv)
+  使用箇所: チュートリアルで操作を覚えた時の確認音 (Assets/Sound/SE/ui_lesson_learned.wav に加工: 先頭/末尾の無音を除去・モノラル化・-2.2dB・WAV化)
+- 試し切り・メニューの効果音 (2026-11-02 暫定。切り出し・音量正規化・フェードを加工。下記すべて CC0。出典の詳細: Assets/Sound/SE/_source/Candidates_20261102/CREDITS_CANDIDATES.csv)
   freesound.org:
   "Whoosh 03" by velcronator https://freesound.org/people/velcronator/sounds/733890/ (cut_swing.wav)
   "Cabbage being chopped 2.wav" by MessyAcousticApocalypse666 https://freesound.org/people/MessyAcousticApocalypse666/sounds/594781/ (cut_sever.wav)
   "Knife Stab.wav" by Mixedupmoviestuff https://freesound.org/people/Mixedupmoviestuff/sounds/179222/ (cut_bite.wav)
   "Drawing sword" by Mediapaja2009 https://freesound.org/people/Mediapaja2009/sounds/162560/ (result_glint.wav)
-  freesound.org (2026-11-09, 出典の詳細: Assets/Sound/SE/Candidates_20261109/manifest.json):
+  freesound.org (2026-11-09, 出典の詳細: Assets/Sound/SE/_source/Candidates_20261109/manifest.json):
   "Straw bush rustling.wav" by BonginkosiMakhubu190225 https://freesound.org/people/BonginkosiMakhubu190225/sounds/542690/ (cut_pull.wav)
   "Choir of Voices - Single Chord" by bone666138 https://freesound.org/people/bone666138/sounds/274121/ (result_legendary.wav, stereo)
-  "Quill and Parchment.WAV" by Nickh69 https://freesound.org/people/Nickh69/sounds/507864/ (quill_write.wav)
+  "Quill and Parchment.WAV" by Nickh69 https://freesound.org/people/Nickh69/sounds/507864/ (result_quill.wav)
   "Bag Drop Hard Surface 1" by BenjaminNelan https://freesound.org/people/BenjaminNelan/sounds/584440/ (cut_fall.wav)
-  "Metal Object Tapped.aif" by RutgerMuller https://freesound.org/people/RutgerMuller/sounds/104368/ (focus_glint.wav)
+  "Metal Object Tapped.aif" by RutgerMuller https://freesound.org/people/RutgerMuller/sounds/104368/ (cut_focus_glint.wav)
   "Wooden Hover" / "Wooden Click" by BenjaminNelan https://freesound.org/people/BenjaminNelan/sounds/321082/ , /321083/ (ui_move.wav / ui_confirm.wav)
   "Leather Rubbing Foley Sound" by ALLANZ10D https://freesound.org/people/ALLANZ10D/sounds/269761/ (ui_back.wav / ui_pause.wav)
   "footstep on wood foley.wav" by martian https://freesound.org/people/martian/sounds/19292/ (step_wood_1/2.wav, 2026-11-09)
+  "Wooden Door 01" by aglinder https://freesound.org/people/aglinder/sounds/265583/ (door_thud.wav, 2026-11-10)
   "Footsteps in Gravel" by petebuchwald https://freesound.org/people/petebuchwald/sounds/273354/ (step_dirt_1/2.wav, 2026-11-09)
   bigsoundbank.com:
-  "Heartbeat #2" by Denis Chardonnet https://bigsoundbank.com/heartbeat-2-s0244.html (heartbeat.wav)
+  "Heartbeat #2" by Denis Chardonnet https://bigsoundbank.com/heartbeat-2-s0244.html (cut_heartbeat.wav)
   "Impatient finger tapping #1" by Joseph Sardin https://bigsoundbank.com/impatient-finger-tapping-1-s1427.html (ui_slider.wav)
 - Poly Haven (CC0): 岩壁テクスチャ
 - Kenney (CC0): 操作キーのアイコン
@@ -137,7 +140,7 @@ Source: https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1100875
 ISRC: USUAN1100875
 
 Changes made for this project:
-- Original MP3 files are preserved unchanged in this folder.
+- Original MP3 files are preserved unchanged (Assets/Sound/BGM/_source/ when present).
 - Full-length WAV copies: format conversion to 48 kHz, stereo, 16-bit PCM only.
 - FORGE promotional video: Five Armies excerpted, faded and mixed with game audio.
 - The game BGM selection has NOT been changed by this handoff.
@@ -152,4 +155,4 @@ published video's description; keep a statement of any later edits.
 使用箇所: ゲーム中BGM (2026-10-29 接続: Crusade と Five Armies から遊ぶ毎にランダムに1曲をループ再生。旧 play_bgm.wav の代わり)。
           Five Armies は FORGE 宣伝映像にも使用。
 ※ CC BY 4.0 の表記はゲーム内では結果画面の下端に出している (HUD.cpp DrawResultUI)。動画では概要欄に書く。
-WAV: Assets/Sound/BGM/Crusade_Kevin_MacLeod.wav / Five_Armies_Kevin_MacLeod.wav
+WAV: Assets/Sound/BGM/bgm_play_crusade.wav / bgm_play_five_armies.wav (2026-11-10 改名)

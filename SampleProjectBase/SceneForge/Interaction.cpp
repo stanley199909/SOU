@@ -14,6 +14,7 @@
 #include "AimSystem.h"
 #include "Lerp.h"
 #include "imgui.h"
+#include "Audio.h"		// 扉の音
 #include <cfloat>
 #include <cmath>
 
@@ -62,6 +63,35 @@ static bool TransformAABB(const XMFLOAT3& lmn, const XMFLOAT3& lmx, const XMMATR
 bool SceneForge::PropWorldBox(Prop& p, XMFLOAT3& mn, XMFLOAT3& mx)
 {
 	return TransformAABB(p.aabbMin, p.aabbMax, PropWorld(p), mn, mx);
+}
+
+//--- 扉の中心(ワールド。今の角度の扉の箱の中心)= 扉の音の声源
+XMFLOAT3 SceneForge::DoorCenter()
+{
+	Model* door = GetObj<Model>(CottageDoor::DOOR_KEY);
+	XMFLOAT3 lmn, lmx;
+	if (!door || !GetProp(CottageDoor::HOUSE_KEY)) return XMFLOAT3(0, 0, 0);
+	door->GetLocalAABB(lmn, lmx);
+	XMFLOAT3 c;
+	XMStoreFloat3(&c, XMVector3TransformCoord(XMVectorSet((lmn.x + lmx.x) * 0.5f, (lmn.y + lmx.y) * 0.5f, (lmn.z + lmx.z) * 0.5f, 1.0f), DoorWorld()));
+	return c;
+}
+
+//--- 扉を開ける/閉め始める + その音(開ける / 閉める 2026-11-10)。閉まり切った時の「ドン」は UpdateDoorSound
+void SceneForge::ToggleDoor()
+{
+	m_door.Toggle();
+	if (m_door.IsOpen()) Audio::PlayAt(Audio::SE_DOOR_OPEN,  DoorCenter(), DOOR_OPEN_VOLUME);
+	else                 Audio::PlayAt(Audio::SE_DOOR_CLOSE, DoorCenter(), DOOR_CLOSE_VOLUME);
+}
+
+//--- 扉が閉まり切った瞬間(角度が 0 に着いた)に「ドン」。毎フレーム扉の Update の後で
+void SceneForge::UpdateDoorSound()
+{
+	const float angle = m_door.Angle();
+	if (!m_door.IsOpen() && m_doorPrevAngle > 0.0f && angle <= 0.0f)
+		Audio::PlayAt(Audio::SE_DOOR_THUD, DoorCenter(), DOOR_THUD_VOLUME);
+	m_doorPrevAngle = angle;
 }
 
 //--- プロップのワールドAABBの中心(3D音の声源など「その道具の位置」が要る時)。キーが無ければ fallback
@@ -261,7 +291,7 @@ void SceneForge::DoInteract(const Interactable& it)
 		break;
 	case InteractAction::ToggleDoor:
 		// 開閉を切り替えるだけ。回転・衝突(扉の凸包)・提示の位置は m_door の角度に全部追従する。
-		m_door.Toggle();
+		ToggleDoor();
 		break;
 	}
 }

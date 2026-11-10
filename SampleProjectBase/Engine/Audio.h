@@ -10,7 +10,7 @@ namespace Audio
 {
 	enum SoundId
 	{
-		SE_FACE_DONE,	// 「完成した」の合図=鍛造/研ぎで面(表/裏)が仕上がった瞬間(2026-10-07: 口笛 → 上がっていく打音。Assets/Sound/SE/face_done.wav があればそれを使う)
+		SE_FACE_DONE,	// 「完成した」の合図=鍛造/研ぎで面(表/裏)が仕上がった瞬間(2026-10-07: 口笛 → 上がっていく打音。Assets/Sound/SE/forge_face_done.wav があればそれを使う)
 		SE_HAMMER,	// 打撃の「カン」(合成音フォールバック)
 		SE_COLD,	// 冷打の鈍い「ドン」
 		SE_SIZZLE,	// 過熱の「ジュー」
@@ -26,10 +26,10 @@ namespace Audio
 		SE_TITLE_FADE,	// タイトルのロゴが淡出する時の効果音(一回。ユーザーが素材を用意。無ければ無音)
 		SE_PENCIL,	// 工程リスト: 取り消し線を引く「シャッ」(鉛筆が紙を走る)。無ければ合成音
 		SE_ERASER,	// 工程リスト: 取り消し線を消す「ゴシゴシ」(消しゴム)。無ければ合成音
-		SE_LEARNED,	// チュートリアル: 操作を覚えた瞬間の確認音(短く明るい1音)。Assets/Sound/SE/learned.wav があればそれ、無ければ合成音
-		SE_NEXT_STEP,	// 工程が進んだ合図(中央の札「〜完了 → 次」と同時。低い鐘2つ)。Assets/Sound/SE/next_step.wav があればそれ、無ければ合成音
-		SE_SEG_DONE,	// 研ぎの区域が仕上がった「チン」(小さな区切り。面の完成 SE_FACE_DONE とは別)。Assets/Sound/SE/seg_done.wav があればそれ、無ければ合成音
-		SE_BELLOWS_PUMP,	// ふいごを1回踏んだ「フッ」(押す毎に1回。炉火の唸りの上に乗る)。Assets/Sound/SE/bellows_pump.wav があればそれ、無ければ合成音
+		SE_LEARNED,	// チュートリアル: 操作を覚えた瞬間の確認音(短く明るい1音)。Assets/Sound/SE/ui_lesson_learned.wav があればそれ、無ければ合成音
+		SE_NEXT_STEP,	// 工程が進んだ合図(中央の札「〜完了 → 次」と同時。低い鐘2つ)。Assets/Sound/SE/ui_next_step.wav があればそれ、無ければ合成音
+		SE_SEG_DONE,	// 研ぎの区域が仕上がった「チン」(小さな区切り。面の完成 SE_FACE_DONE とは別)。Assets/Sound/SE/grind_seg_done.wav があればそれ、無ければ合成音
+		SE_BELLOWS_PUMP,	// ふいごを1回踏んだ「フッ」(押す毎に1回。炉火の唸りの上に乗る)。Assets/Sound/SE/forge_bellows.wav があればそれ、無ければ合成音
 		// 試し切り(2026-11-02)。素材が無ければ無音
 		SE_CUT_SWING,	// 放した瞬間の重い風切り音
 		SE_CUT_SEVER,	// 藁人形を斬り切った
@@ -53,6 +53,9 @@ namespace Audio
 		// 足音(2026-11-09)。1歩ごとに1と2を交互に。素材が無ければ無音
 		SE_STEP_WOOD_1, SE_STEP_WOOD_2,	// 家の中(木・石の床)
 		SE_STEP_DIRT_1, SE_STEP_DIRT_2,	// 外(土・草)
+		SE_DOOR_OPEN,	// 扉: 開け始めた
+		SE_DOOR_CLOSE,	// 扉: 閉め始めた(軋み)
+		SE_DOOR_THUD,	// 扉: 閉まり切った時の「ドン」
 		// ※BGM_* は必ず最後にまとめる(IsBgm が BGM_TITLE..BGM_RESULT の範囲で判定する)
 		BGM_TITLE,	// タイトル画面BGM(TITLE状態でループ)
 		BGM_PLAY,	// ゲーム中BGM その1(PLAY状態でループ)。2026-10-29: Kevin MacLeod "Crusade"

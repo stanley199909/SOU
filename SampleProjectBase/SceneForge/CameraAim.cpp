@@ -290,7 +290,8 @@ bool SceneForge::PlanDoorRoute()
 	const XMVECTOR houseC = XMVectorSet((hmn.x + hmx.x) * 0.5f, 0.0f, (hmn.z + hmx.z) * 0.5f, 0.0f);
 	if (XMVectorGetX(XMVector3Dot(out, XMVectorSubtract(XMVectorSetY(c, 0.0f), houseC))) < 0.0f) out = XMVectorNegate(out);	// 家の中心から離れる向き = 外
 	const float eyeY = m_walkFloorY + m_walkEyeH;
-	XMStoreFloat3(&m_routeDoor, c);
+	// 扉を見る点は目の高さ(水平に見る)。扉の箱の中心を見ると、扉の上の方を見上げた(2026-11-10 F5)
+	XMStoreFloat3(&m_routeDoor, XMVectorSetY(c, m_walkFloorY + m_walkEyeH));
 	XMStoreFloat3(&m_routeIn,  XMVectorSetY(XMVectorSubtract(c, XMVectorScale(out, ROUTE_DOOR_STAND)), eyeY));
 	XMStoreFloat3(&m_routeOut, XMVectorSetY(XMVectorAdd(c, XMVectorScale(out, ROUTE_DOOR_OUT)), eyeY));
 
@@ -418,7 +419,7 @@ void SceneForge::UpdateModeTrans(float tick)
 	if (m_doorRoute && !m_doorRouteOpened && m_transTimer >= m_routeSeg[0])
 	{
 		m_doorRouteOpened = true;
-		if (!m_door.IsOpen()) m_door.Toggle();
+		if (!m_door.IsOpen()) ToggleDoor();
 	}
 	if (m_transTimer < m_transDur) return;
 

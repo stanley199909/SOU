@@ -893,6 +893,13 @@ private:
 	CottageDoor::Hinge m_doorHinge;				// 蝶番の軸と「室内へ開く」回転方向(読込時に自動計算)
 	Collision2D::Hull  m_doorHullLocal;			// 扉板の凸包(家のモデル空間 XZ。閉じた姿勢)
 	DirectX::XMMATRIX  DoorWorld();				// 扉のワールド行列 = 蝶番の回転 × 家の配置
+	DirectX::XMFLOAT3  DoorCenter();			// 扉の箱の中心(ワールド)= 扉の音の声源
+	void  ToggleDoor();							// 開閉を切り替え + 開ける/閉める音(E で開ける時も、試し切りへ向かう道で開ける時も)
+	void  UpdateDoorSound();					// 閉まり切った瞬間の「ドン」
+	float m_doorPrevAngle = 0.0f;				// 前のフレームの扉の角度(閉まり切った瞬間を捉える)
+	static constexpr float DOOR_OPEN_VOLUME  = 0.8f;
+	static constexpr float DOOR_CLOSE_VOLUME = 0.7f;
+	static constexpr float DOOR_THUD_VOLUME  = 0.9f;
 
 	//--- 調整値の永続化(Assets/forge_tuning.txt)。Initで読み, Uninit/Saveボタンで書く。
 	void  LoadTuning();

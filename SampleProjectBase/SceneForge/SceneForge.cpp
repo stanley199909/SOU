@@ -462,6 +462,7 @@ void SceneForge::ResetRunState()
 	m_walkPitch = 0.0f;
 	m_player.Init(DirectX::XMFLOAT3(0.0f, m_walkFloorY, -2.0f), 0.0f);	// 開始位置/向きを戻す
 	m_door.Reset();			// 裏口の扉は閉じた状態から
+	m_doorPrevAngle = 0.0f;	// (開いたまま新しく始めても「ドン」と鳴らない様に)
 	ResetTestCut();			// 試し切りの藁人形を切る前の姿へ(作り直しは次の更新で)
 	m_score    = 0;
 	m_forging.Reset();		// 鉄を厚板・無傷・進捗0へ(表面が上に戻る。目標形状も再生成)
@@ -2284,6 +2285,7 @@ void SceneForge::Update(float tick)
 	m_lessonClock += tick * LessonSpeed();	// 教学アニメの時計(設定の速さ。一時停止中も進む=設定の見本が動く)
 	m_fade.Update(tick);	// 画面フェード(黒幕)を進める。遷移はTransitionの黒転じで実行される
 	m_door.Update(tick);	// 扉の開閉の回転(E で切り替えた後、入力と無関係に最後まで回り切る)
+	UpdateDoorSound();		// 閉まり切った瞬間の音
 	m_grassMapDt += tick;	// 草の踏み跡が薄れる時間(GPU の Fade は Draw の最初でまとめて)
 
 	if (IsKeyTrigger(VK_F2)) m_lightPanelOpen = !m_lightPanelOpen;	// 設計者用: ライティング確認パネル(HUD.cpp DrawLightPanel)

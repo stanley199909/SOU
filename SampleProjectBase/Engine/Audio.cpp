@@ -454,7 +454,7 @@ namespace
 		case Audio::SE_SEG_DONE:
 		{
 			// 仮の合図(ユーザーが素材を選ぶまで): 研ぎの区域が仕上がった「チン」。短く高い金属の1音。
-			//   面の完成(SE_FACE_DONE)より小さく短い=「小さな区切り」。素材は Assets/Sound/SE/seg_done.wav で差し替え
+			//   面の完成(SE_FACE_DONE)より小さく短い=「小さな区切り」。素材は Assets/Sound/SE/grind_seg_done.wav で差し替え
 			const float NOTE      = 2093.0f;	// C7(高い=小さな金属片が鳴る感じ)
 			const float INHARMONIC= 2.76f;		// 金属の打音の非整数倍音(棒の振動の第2モード比に近い)=鈴でなく金属に聞こえる
 			const float PARTIAL   = 0.35f;		// その倍音の混ぜ具合
@@ -607,40 +607,42 @@ namespace Audio
 		}
 
 		static const char* files[SE_MAX] = {
-			"Assets/Sound/SE/face_done.wav",	// SE_FACE_DONE(無ければ合成音)
-			"Assets/Sound/hammer.wav",
-			"Assets/Sound/cold.wav",
-			"Assets/Sound/sizzle.wav",
-			"Assets/Sound/swing.wav",			// SE_SWING(無ければ合成音)
-			"Assets/Sound/SE/anvil_hit_1.wav",	// SE_ANVIL1
-			"Assets/Sound/SE/anvil_hit_2.wav",	// SE_ANVIL2
-			"Assets/Sound/SE/quench.wav",		// SE_QUENCH(無ければ合成音)
-			"Assets/Sound/SE/forge_loop.wav",	// SE_FORGE_LOOP(無ければ合成音)
-			"Assets/Sound/SE/success.wav",		// SE_SUCCESS(無ければ合成音)
-			"Assets/Sound/SE/burn_loop.wav",	// SE_BURN_LOOP(無ければ合成音)
-			"Assets/Sound/SE/grind_loop.wav",	// SE_GRIND_LOOP(無ければ合成音)
-			"Assets/Sound/SE/steam.wav",		// SE_STEAM(無ければ合成音)
-			"Assets/Sound/SE/title_fade.wav",	// SE_TITLE_FADE(ロゴ淡出。無ければ無音)
-			"Assets/Sound/SE/pencil.wav",		// SE_PENCIL(取り消し線を引く。無ければ合成音)
-			"Assets/Sound/SE/eraser.wav",		// SE_ERASER(取り消し線を消す。無ければ合成音)
-			"Assets/Sound/SE/learned.wav",		// SE_LEARNED(操作を覚えた確認音。無ければ合成音)
-			"Assets/Sound/SE/next_step.wav",	// SE_NEXT_STEP(工程が進んだ合図。無ければ合成音)
-			"Assets/Sound/SE/seg_done.wav",	// SE_SEG_DONE(研ぎの区域が仕上がった。無ければ合成音)
-			"Assets/Sound/SE/bellows_pump.wav",	// SE_BELLOWS_PUMP(ふいごを1回踏んだ。無ければ合成音)
+			// 名前 = 「類別_内容」(2026-11-10 整理)。forge_ 鍛造 / grind_ 研ぎ / quench_ 焼入れ / cut_ 試し切り /
+			//   result_ 結算 / ui_ 画面 / step_ 足音 / door_ 扉 / bgm_ 音楽。元の録音・入手した MP3 は SE/_source, BGM/_source
+			"Assets/Sound/SE/forge_face_done.wav",	// SE_FACE_DONE(無ければ合成音)
+			"Assets/Sound/SE/forge_hammer.wav",		// SE_HAMMER(無ければ合成音)
+			"Assets/Sound/SE/forge_cold.wav",		// SE_COLD(無ければ合成音)
+			"Assets/Sound/SE/forge_sizzle.wav",		// SE_SIZZLE(無ければ合成音)
+			"Assets/Sound/SE/forge_swing.wav",		// SE_SWING(無ければ合成音)
+			"Assets/Sound/SE/forge_anvil_1.wav",	// SE_ANVIL1
+			"Assets/Sound/SE/forge_anvil_2.wav",	// SE_ANVIL2
+			"Assets/Sound/SE/quench_plunge.wav",	// SE_QUENCH(無ければ合成音)
+			"Assets/Sound/SE/forge_fire_loop.wav",	// SE_FORGE_LOOP(無ければ合成音)
+			"Assets/Sound/SE/forge_success.wav",	// SE_SUCCESS(無ければ合成音)
+			"Assets/Sound/SE/forge_burn_loop.wav",	// SE_BURN_LOOP(無ければ合成音)
+			"Assets/Sound/SE/grind_loop.wav",		// SE_GRIND_LOOP(無ければ合成音)
+			"Assets/Sound/SE/quench_steam.wav",		// SE_STEAM(無ければ合成音)
+			"Assets/Sound/SE/ui_title_fade.wav",	// SE_TITLE_FADE(ロゴ淡出。無ければ無音)
+			"Assets/Sound/SE/ui_tracker_pencil.wav",	// SE_PENCIL(取り消し線を引く。無ければ合成音)
+			"Assets/Sound/SE/ui_tracker_eraser.wav",	// SE_ERASER(取り消し線を消す。無ければ合成音)
+			"Assets/Sound/SE/ui_lesson_learned.wav",	// SE_LEARNED(操作を覚えた確認音。無ければ合成音)
+			"Assets/Sound/SE/ui_next_step.wav",		// SE_NEXT_STEP(工程が進んだ合図。無ければ合成音)
+			"Assets/Sound/SE/grind_seg_done.wav",	// SE_SEG_DONE(研ぎの区域が仕上がった。無ければ合成音)
+			"Assets/Sound/SE/forge_bellows.wav",	// SE_BELLOWS_PUMP(ふいごを1回踏んだ。無ければ合成音)
 			"Assets/Sound/SE/cut_swing.wav",	// SE_CUT_SWING
 			"Assets/Sound/SE/cut_sever.wav",	// SE_CUT_SEVER
 			"Assets/Sound/SE/cut_bite.wav",		// SE_CUT_BITE
 			"Assets/Sound/SE/cut_pull.wav",		// SE_CUT_PULL
 			"Assets/Sound/SE/cut_fall.wav",		// SE_CUT_FALL
 			"Assets/Sound/SE/cut_slam.wav",		// SE_CUT_SLAM
-			"Assets/Sound/SE/focus_glint.wav",	// SE_FOCUS_GLINT
-			"Assets/Sound/SE/heartbeat.wav",	// SE_HEARTBEAT
+			"Assets/Sound/SE/cut_focus_glint.wav",	// SE_FOCUS_GLINT
+			"Assets/Sound/SE/cut_heartbeat.wav",	// SE_HEARTBEAT
 			"Assets/Sound/SE/ui_move.wav",		// SE_UI_MOVE
 			"Assets/Sound/SE/ui_confirm.wav",	// SE_UI_CONFIRM
 			"Assets/Sound/SE/ui_back.wav",		// SE_UI_BACK
 			"Assets/Sound/SE/ui_slider.wav",	// SE_UI_SLIDER
 			"Assets/Sound/SE/ui_pause.wav",		// SE_UI_PAUSE
-			"Assets/Sound/SE/quill_write.wav",	// SE_QUILL
+			"Assets/Sound/SE/result_quill.wav",	// SE_QUILL
 			"Assets/Sound/SE/result_glint.wav",	// SE_RESULT_GLINT
 			"Assets/Sound/SE/result_slam.wav",	// SE_RESULT_SLAM
 			"Assets/Sound/SE/result_legendary.wav",	// SE_RESULT_LEGENDARY
@@ -648,10 +650,13 @@ namespace Audio
 			"Assets/Sound/SE/step_wood_2.wav",	// SE_STEP_WOOD_2
 			"Assets/Sound/SE/step_dirt_1.wav",	// SE_STEP_DIRT_1
 			"Assets/Sound/SE/step_dirt_2.wav",	// SE_STEP_DIRT_2
-			"Assets/Sound/BGM/title_bgm.wav",	// BGM_TITLE(工場環境音。無ければ無音)
-			"Assets/Sound/BGM/Crusade_Kevin_MacLeod.wav",		// BGM_PLAY(Kevin MacLeod, CC BY 4.0。無ければ無音)
-			"Assets/Sound/BGM/Five_Armies_Kevin_MacLeod.wav",	// BGM_PLAY_2(Kevin MacLeod, CC BY 4.0。無ければ無音)
-			"Assets/Sound/BGM/result_bgm.wav",	// BGM_RESULT(無ければ無音)
+			"Assets/Sound/SE/door_open.wav",	// SE_DOOR_OPEN
+			"Assets/Sound/SE/door_close.wav",	// SE_DOOR_CLOSE
+			"Assets/Sound/SE/door_thud.wav",	// SE_DOOR_THUD
+			"Assets/Sound/BGM/bgm_title.wav",	// BGM_TITLE(工場環境音。無ければ無音)
+			"Assets/Sound/BGM/bgm_play_crusade.wav",		// BGM_PLAY(Kevin MacLeod "Crusade", CC BY 4.0。無ければ無音)
+			"Assets/Sound/BGM/bgm_play_five_armies.wav",	// BGM_PLAY_2(Kevin MacLeod "Five Armies", CC BY 4.0。無ければ無音)
+			"Assets/Sound/BGM/bgm_result.wav",	// BGM_RESULT(無ければ無音)
 		};
 		for (int i = 0; i < SE_MAX; ++i)
 		{
