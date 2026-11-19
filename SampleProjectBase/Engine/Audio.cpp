@@ -228,18 +228,6 @@ namespace
 			}
 			break;
 		}
-		case Audio::SE_SWING:
-		{
-			int n = sr * 18 / 100;	// 0.18s の「ヒュッ」(空を切る音=帯域ノイズが立ち上がって減衰)
-			w.resize(n);
-			for (int i = 0; i < n; ++i)
-			{
-				float t = (float)i / sr;
-				float env = (1.0f - expf(-t * 60.0f)) * expf(-t * 18.0f);	// 素早く立ち上がり素早く減衰
-				w[i] = noise() * 0.22f * env;
-			}
-			break;
-		}
 		case Audio::SE_QUENCH:
 		{
 			// 淬火: 熱鋼を水に入れた「ジュワ〜」。高周波ノイズを一次ローパスで蒸気っぽくし、急峻に立ち上げ緩やかに減衰。
@@ -613,7 +601,6 @@ namespace Audio
 			"Assets/Sound/SE/forge_hammer.wav",		// SE_HAMMER(無ければ合成音)
 			"Assets/Sound/SE/forge_cold.wav",		// SE_COLD(無ければ合成音)
 			"Assets/Sound/SE/forge_sizzle.wav",		// SE_SIZZLE(無ければ合成音)
-			"Assets/Sound/SE/forge_swing.wav",		// SE_SWING(無ければ合成音)
 			"Assets/Sound/SE/forge_anvil_1.wav",	// SE_ANVIL1
 			"Assets/Sound/SE/forge_anvil_2.wav",	// SE_ANVIL2
 			"Assets/Sound/SE/quench_plunge.wav",	// SE_QUENCH(無ければ合成音)

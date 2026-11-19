@@ -65,35 +65,15 @@ void SceneForge::ApplyCamera()
 
 	cam->SetFovY(m_camFov);	// 狭画角=寄り=鉄匠目線の沈浸感
 
-	// 刃の長手(Z)に沿った狙い位置追従: m_aimRailSmooth(0=手前,1=奥)が指す刃上の点へ、
-	// 注視点とカメラ本体をZ方向に寄せる。中央(rail=0.5)が既定 m_camLook/Pos の位置。
-	// これで下半段(手前)も準心に入り、KCDのように「視角と錘が一緒に付いてくる」。
-	float railZ  = (m_barAnchor.z - m_barLen * 0.5f) + m_aimRailSmooth * m_barLen;
-	float deltaZ = (railZ - m_barAnchor.z) * m_camPanGain;	// 中央基準のZずれ
+	// KCD2式の固定カメラ(2026-11 審査会): 歩く時と同じ目の高さから打撃点を見下ろす(StationView)。
+	//   視線の先 = 打撃点 = 鎚が落ちる所 → 鎚がそのまま画面中心の照準になる。マウスでは視角を回さない
+	//   (マウス縦は鉄を滑らせる。UpdateMouseLook)。生きている感じは下の呼吸/微顫だけで出す。
+	XMFLOAT3 eye, lf; StationView(Station::Anvil, eye, lf);
+	XMStoreFloat3(&m_camFwd, XMVector3Normalize(XMVectorSubtract(XMLoadFloat3(&lf), XMLoadFloat3(&eye))));	// 照準射線に使う
 
-	// FPS式受限環視: 基準視線(m_camPos→m_camLook)を、マウス累積の yaw だけ回す。
-	// 準心は常に画面中心=カメラ正前方。上下は追従(deltaZ)で表現する。
-	XMVECTOR pos  = XMVectorSet(m_camPos[0],  m_camPos[1],  m_camPos[2]  + deltaZ * m_camFollowZ, 0);
-	XMVECTOR base = XMVectorSet(m_camLook[0], m_camLook[1], m_camLook[2] + deltaZ, 0);
-	XMVECTOR fwd0 = XMVector3Normalize(XMVectorSubtract(base, pos));	// 基準の正前方
-
-	// yaw(世界Y軸回り) → pitch(カメラ右軸回り) の順に回す
-	XMMATRIX rotY = XMMatrixRotationY(m_lookYaw);
-	XMVECTOR fwd  = XMVector3TransformNormal(fwd0, rotY);
-	XMVECTOR right= XMVector3Normalize(XMVector3Cross(XMVectorSet(0,1,0,0), fwd));
-	XMMATRIX rotP = XMMatrixRotationAxis(right, m_lookPitch);
-	fwd = XMVector3Normalize(XMVector3TransformNormal(fwd, rotP));
-
-	XMStoreFloat3(&m_camFwd, fwd);	// 照準射線に使う
-	XMVECTOR look = XMVectorAdd(pos, fwd);
-
-	XMFLOAT3 lf; XMStoreFloat3(&lf, look);
-
-	// 打撃の反冲をカメラに伝える。m_shake(打撃で~0.9→0へ減衰)を振幅に、その値自身で
-	// 位相を回して減衰振動を作る(sin(shake*K))=別のタイマ不要で「ガッ」と一発揺れて収まる。
-	// pos と look を同じ量だけ縦に動かす→視線方向(m_camFwd=照準)は不変。framing だけ揺れる。
 	// === 手持ち感の三層(すべて極小振幅) =================================
-	// 第3層(既存): 落錘の冲撃。m_shake(打撃で~0.9→0へ減衰)で「ガッ」と一発縦揺れして収まる。
+	// 第3層: 落錘の冲撃。m_shake(打撃で~0.9→0へ減衰)で「ガッ」と一発縦揺れして収まる。
+	// pos と look を同じ量だけ縦に動かす→視線方向(m_camFwd=照準)は不変。framing だけ揺れる。
 	float dy = ShakeOffsetY();
 
 	// 第1層: 呼吸(常駐)。低頻ノイズで機位を三軸ともゆっくり漂わせる=「据えてるが生きてる」。
@@ -119,11 +99,10 @@ void SceneForge::ApplyCamera()
 	//   grip : 注視点を刃(砧面アンカー)へ、機位を m_gripDolly だけ刃へ寄せる(夹む手元を覗き込む)。
 	// 目標はプロップ/アンカーから毎フレーム取る=配置を動かしても運鏡が追従する。
 	// ※照準の m_camFwd は上で保存済みの「通常の視線」のまま(翻面中は叩けないので影響なし)。
-	XMFLOAT3 eye(m_camPos[0], m_camPos[1], m_camPos[2]);
 	if (m_camTongsW > 0.0f)
 	{
 		// 火钳は左腰に掛けてある(作業台ではない)。HipPoint は工位では金床カメラの「通常の機位と視線」
-		// (m_camPos/m_camLook)から求める=運鏡で動いた後のカメラに引きずられない(Carry.cpp)。
+		// (StationView)から求める=運鏡で動いた後のカメラに引きずられない(Carry.cpp)。
 		const XMFLOAT3 t = HipPoint();
 		const float w = m_camTongsW, lean = m_tongsLean * m_camTongsW;
 		lf  = XMFLOAT3(lf.x + (t.x - lf.x) * w,     lf.y + (t.y - lf.y) * w,     lf.z + (t.z - lf.z) * w);
@@ -258,7 +237,6 @@ void SceneForge::BeginEnterStation(Station s)
 	SetupStationView(s);
 
 	// 工位の視点は「正面の既定」から始める(前回の視角のずれを持ち越さない)。
-	m_lookYaw = 0.0f; m_lookPitch = 0.0f;
 	m_cutLookYaw = 0.0f; m_cutLookPitch = 0.0f;	// 試し切りも藁人形の正面から
 	m_modeTrans  = ModeTrans::Enter;
 	m_transTimer = 0.0f;
@@ -665,12 +643,16 @@ XMFLOAT3 SceneForge::StationRight() const
 }
 
 //--- 刃の長軸(向き付け後のワールド方向)を StationRight へ揃える追加 yaw。
-//    金床は従来の向き(m_wpYaw 等。forge_tuning.txt)のまま=0。
+//    金床は従来の向き(m_wpYaw 等。forge_tuning.txt。長手 = 世界Z)を、鉄の向き AnvilIronDir の水平角だけ回す(斜めに置く)。
 //    Y 軸回転 θ はベクトルの水平角 atan2(x,z) に θ を足すので、差を取れば揃う。
 float SceneForge::StationAlignYaw() const
 {
 	// 置いた時の左右反転(m_restFlip): 火钳で掴んだ端が玩家側に来る様に、置く時に半回転して置いた(Sequence.cpp)
-	if (!m_carrying && m_workAt == Station::Anvil) return m_restFlip ? XM_PI : 0.0f;
+	if (!m_carrying && m_workAt == Station::Anvil)
+	{
+		const XMFLOAT3 d = AnvilIronDir();
+		return atan2f(d.x, d.z) + (m_restFlip ? XM_PI : 0.0f);
+	}
 	const int la = AimSystem::LongAxis(m_wpMin, m_wpMax);
 	XMVECTOR axis = XMVectorSet(la == 0 ? 1.0f : 0.0f, la == 1 ? 1.0f : 0.0f, la == 2 ? 1.0f : 0.0f, 0.0f);
 	XMFLOAT3 L; XMStoreFloat3(&L, XMVector3TransformNormal(axis, XMMatrixRotationRollPitchYaw(m_wpPitch, m_wpYaw, m_wpRoll)));
@@ -684,13 +666,37 @@ float SceneForge::StationAlignYaw() const
 	return atan2f(D.x, D.z) - atan2f(L.x, L.z);
 }
 
+//--- 金床の上の鉄の長手(水平・単位・奥向き)= 金床の yaw + m_anvilIronYaw の向き。金床を回すと鉄も付いて回る。
+XMFLOAT3 SceneForge::AnvilIronDir() const
+{
+	float yaw = m_anvilIronYaw;
+	for (const Prop& p : m_props)
+		if (p.key == "StAnvil") { yaw += p.yaw; break; }
+	return XMFLOAT3(sinf(yaw), 0.0f, cosf(yaw));
+}
+
+//--- 金床カメラの水平の向き = 鉄の長手から m_anvilViewSkew だけ左。鉄は画面で手前下から奥右へ斜めに伸びる(KCD2の構図)。
+float SceneForge::AnvilViewYaw() const
+{
+	const XMFLOAT3 d = AnvilIronDir();
+	return atan2f(d.x, d.z) - m_anvilViewSkew;
+}
+
 //--- 工位の視点(eye)と注視点(target)。金床は工位カメラの既定値、他は作業点から相対で決める。
 void SceneForge::StationView(Station s, XMFLOAT3& eye, XMFLOAT3& target)
 {
 	if (s == Station::Anvil)
 	{
-		eye    = XMFLOAT3(m_camPos[0], m_camPos[1], m_camPos[2]);
+		// 金床: 打撃点(砧面の中心 = 鎚が落ちる所)を、歩く時と同じ目の高さから、m_anvilViewDist 離れて見下ろす。
+		//   目の高さが決まっているので、高さの差 dh と距離 L から水平の距離 = √(L² − dh²)(三平方の定理)。
+		//   見下ろす角はその結果(sin = dh / L)。L が dh より短ければ真上から見下ろす。水平の向きは AnvilViewYaw(鉄の長手から少し左)。
+		//   金床の高さや鉄の向きを変えても、この式で立つ所が決まり直す(座標のベタ書き無し)。
 		target = m_barAnchor;
+		const float eyeY  = m_walkFloorY + m_walkEyeH;
+		const float dh    = fmaxf(eyeY - target.y, 0.0f);
+		const float horiz = sqrtf(fmaxf(m_anvilViewDist * m_anvilViewDist - dh * dh, 0.0f));
+		const float yaw   = AnvilViewYaw();
+		eye = XMFLOAT3(target.x - sinf(yaw) * horiz, eyeY, target.z - cosf(yaw) * horiz);
 		return;
 	}
 	if (s == Station::TestCut)
@@ -769,92 +775,55 @@ void SceneForge::UpdateMouseLook()
 {
 	float dx, dy;
 	if (!ReadMouseDelta(dx, dy)) return;
-	// 手柄: 左スティック上下 = 狙い(手で鎚を刃の長手に沿って動かす)/ 右スティック左右 = 少し見回す(視点)
-	float hx, hy, lx, ly;
+	// 手柄: 左スティック上下 = 鉄を滑らせる(手で鉄を長手に沿って動かす)。視点は回さない(固定カメラ)。
+	float hx, hy;
 	InputActions::HandDelta(hx, hy);
-	InputActions::LookDelta(lx, ly);
-	dx += lx;
 	dy += hy;
+	(void)dx;	// マウス左右は使わない(KCD2の鍛冶は据えカメラ。2026-11 審査会で視点の回転を廃止)
 
-	const float SENS = 0.0017f;			// 左右(yaw)の感度(rad/px)。低め=据わった視点
-	m_lookYaw += dx * SENS;
-	// 左右は小さく夹住(KCDの鍛冶は据えカメラ寄り)。上下(pitch)の自由回転は使わない=
-	// 代わりにマウス縦で「刃の長手上の狙い位置」m_aimRail を動かし、カメラごと寄せる。
-	const float YAW_LIM = 0.26f;
-	if (m_lookYaw >  YAW_LIM) m_lookYaw =  YAW_LIM;
-	if (m_lookYaw < -YAW_LIM) m_lookYaw = -YAW_LIM;
-
-	// マウスを上げる(dy<0)=奥(far, rail 1)へ / 下げる(dy>0)=手前(near, rail 0)へ。
-	// ※ここの符号が「瞄準の上下反転」を決める。rail→世界Z の写像(UpdateAim/ApplyCamera の
-	//   rz = anchor.z - half + rail*len)と対で効く。どちらか片方だけ反すと反転する。
+	// ★確定(2026-11-19 ユーザーが F5 で確認): マウスを上げる = 画面の鉄が上へ動く(掴んで動かす感覚)。
+	//   この符号はユーザーの実機確認で決めた。理屈で推して変えないこと(2回推して2回外した)。
 	// 感度 m_aimSens は F5「照準の感度」で調整。低い=同じ移動に鼠標を多く要る=慎重で「重い」手応え。
+	// 0..1 に収める = 鉄の端が鎚の下を越えない = 空振りは起きない。
 	m_aimRail -= dy * m_aimSens;
 	if (m_aimRail < 0.0f) m_aimRail = 0.0f;
 	if (m_aimRail > 1.0f) m_aimRail = 1.0f;
 	// 中心へ戻す処理は ReadMouseDelta 内で済んでいる。
 }
 
-//--- FPS式ヒットスキャン照準。準心(画面中心=カメラ正前方 m_camFwd)から射線を飛ばし、
-//    武器を長手にNSEG分割したボックス群と交差させる。当たった一番手前の区域が照準区域。
-//    どの区域にも当たらなければ空振り(m_aimValid=false)。判定対象が「武器の実体」なので、
-//    準心が刃に乗っている＝射線が刃に当たる、が一致する(Valorant等と同じ原理)。
+//--- 照準(KCD2式 "Move workpiece", 2026-11 審査会)。鎚は打撃点(砧面の中心 = 画面中心)に固定で、
+//    鉄の方が長手に滑って来る(WorkAnchor)。今ハンマーの真下にある鉄の位置 = m_aimRailSmooth(0=手前..1=奥)。
+//    rail は 0..1 に収まる = 鎚の下には必ず鉄がある = 空振りは起きない(m_aimValid は常に true)。
 void SceneForge::UpdateAim()
 {
 	// 格子寸法の別名(唯一の定義は ForgingSim。ここは読みやすさのための局所別名)。
 	const int NL = ForgingSim::NL, NW = ForgingSim::NW, NSEG = ForgingSim::NSEG;
+	const float rail = m_aimRailSmooth;	// 鉄が実際に滑った位置(見えている通りの所を打つ)
+	m_aimI = (int)(rail * NL);
+	if (m_aimI < 0) m_aimI = 0; if (m_aimI > NL - 1) m_aimI = NL - 1;
+	m_aimJ = NW / 2;					// 幅は自動で中央
+	m_aimValid = true;
 	if (m_wpOk)
 	{
-		// 狙いは m_aimRail(マウス縦で動く 0=手前..1=奥)で直接決める。射線の当たり外れに依存しないので、
-		// カメラが3段のどこに居ても、刃の全長(下半段=手前も)にハンマーが必ず付いてくる。
-		// カメラの追従(ApplyCamera)も同じ railZ 式を使うので、視角・準心・ハンマーが一致する。
-		float half = m_barLen * 0.5f;
-		float rz   = (m_barAnchor.z - half) + m_aimRail * m_barLen;	// 刃上のワールドZ(ハンマー位置)
-		m_aimWorld = XMFLOAT3(m_barAnchor.x, m_barAnchor.y, rz);
+		m_aimWorld = m_barAnchor;		// 打撃点 = 砧面の中心(動かない)
 
 		// 命中/高亮の段は「武器の局部長軸」規約(WeaponRender の SegCoordLocal)で決まる。
-		// m_wpYaw 等で武器が回っていると局部軸と世界Zは向きが逆になり得るので、ハンマーの
-		// 世界位置を武器ローカルへ逆変換してから段を求める → 「命中段=ハンマー真下の段」で一致。
+		// m_wpYaw 等で武器が回っていると局部軸と世界Zは向きが逆になり得るので、打撃点を
+		// 武器ローカルへ逆変換してから段を求める(滑らせたずれも WeaponWorld に入っている)
+		// → 「命中段 = ハンマー真下の段」で一致。
 		XMVECTOR lp = XMVector3TransformCoord(XMLoadFloat3(&m_aimWorld),
 			XMMatrixInverse(nullptr, WeaponWorld()));
 		XMFLOAT3 lpf; XMStoreFloat3(&lpf, lp);
 		float sc = AimSystem::SegCoordLocal(lpf, m_wpMin, m_wpMax, NSEG);	// 0..NSEG
 		m_aimSeg = (int)sc;
 		if (m_aimSeg < 0) m_aimSeg = 0; if (m_aimSeg > NSEG - 1) m_aimSeg = NSEG - 1;
-		m_aimI = (int)(m_aimRail * NL);
-		if (m_aimI < 0) m_aimI = 0; if (m_aimI > NL - 1) m_aimI = NL - 1;
-		m_aimJ = NW / 2;
-		m_aimValid = true;				// 常に刃のどこかを狙っている(空振り無し)
 		return;
 	}
 
-	// --- フォールバック(武器FBXが無い時): 旧・射線×砧面水平矩形 ---
-	XMFLOAT3 o = { m_camPos[0], m_camPos[1], m_camPos[2] };
-	XMFLOAT3 d = m_camFwd;
-	// 板の上面を代表する水平面 y = planeY と交差
-	float planeY = m_barAnchor.y + m_forging.Start() * 0.5f;
-	if (fabsf(d.y) < 1e-5f) { m_aimValid = false; return; }
-	float t = (planeY - o.y) / d.y;
-	if (t <= 0.0f) { m_aimValid = false; return; }	// 前方でない
-	float hx = o.x + d.x * t;
-	float hz = o.z + d.z * t;
-
-	// ワールド → 工件の footprint(長手×幅)内の正規化座標。FPS判定=準心が実際に鉄の上に無ければ
-	//   空振り(m_aimValid=false)。端に夹まない=狙っていない所を叩いても無効(空揮音のみ)。
+	// --- フォールバック(武器FBXが無い時): 旧の高さ場の板は滑らないので、鎚の方が板の上を動く ---
 	float half = m_barLen * 0.5f;
-	float nj = (hx - (m_barAnchor.x - m_barWidth)) / (2.0f * m_barWidth);	// 0..1(幅)
-	float ni = (hz - (m_barAnchor.z - half)) / m_barLen;					// 0..1(長さ)
-	if (ni < 0.0f || ni > 1.0f || nj < 0.0f || nj > 1.0f) { m_aimValid = false; return; }
-	if (ni > 0.9999f) ni = 0.9999f;
-	if (nj > 0.9999f) nj = 0.9999f;
-	m_aimI = (int)(ni * NL);
-	m_aimJ = (int)(nj * NW);
-	if (m_aimI < 0) m_aimI = 0; if (m_aimI > NL - 1) m_aimI = NL - 1;
-	if (m_aimJ < 0) m_aimJ = 0; if (m_aimJ > NW - 1) m_aimJ = NW - 1;
-	// 照準セルの中心のワールド座標(ハンマー配置に使う)
-	float cx = (m_barAnchor.x - m_barWidth) + 2.0f * m_barWidth * ((m_aimJ + 0.5f) / NW);
-	float cz = (m_barAnchor.z - half)       + m_barLen        * ((m_aimI + 0.5f) / NL);
-	m_aimWorld = XMFLOAT3(cx, m_barAnchor.y + m_forging.Height(m_aimI, m_aimJ), cz);
-	m_aimValid = true;
+	float cz = (m_barAnchor.z - half) + m_barLen * ((m_aimI + 0.5f) / NL);	// 照準セルの中心(長さ)
+	m_aimWorld = XMFLOAT3(m_barAnchor.x, m_barAnchor.y + m_forging.Height(m_aimI, m_aimJ), cz);
 }
 
 //--- 金床のAABBを現在のワールド変換で評価し、砧面(上面)の高さに鉄条を乗せる
@@ -885,10 +854,14 @@ void SceneForge::UpdateBarAnchor()
 		if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
 	}
 	m_groundY = botY;	// 床の高さ=金床の底面。装飾もこの床に自動設置する
-	// 砧面中心(X/Z)＋上面の高さ。鉄条の下面がここに接するよう厚み分持ち上げる
+	// 砧面中心(X/Z)＋上面の高さ。鉄の下面がここに接するよう、鉄の中心から一番低い点までの深さだけ持ち上げる。
+	//   武器モデルの深さは「置いて休んでいる向き」の箱から(DepthBelowCentre)= 実際の刃の厚みで砧面に貼り付く。
+	//   旧: いつも m_barThick(旧・高さ場の板の半分の厚み 0.18)= 薄い刃が砧面から浮いていた(2026-11-19 F5 で発覚)。
+	//   ※深さは粗坯(stage_0)の箱 = 打って薄くなると少しだけ浮く。
+	const float restDepth = m_wpOk ? DepthBelowCentre(XMMatrixRotationRollPitchYaw(m_wpPitch, m_wpYaw, m_wpRoll)) : m_barThick;
 	m_barAnchor.x = (minX + maxX) * 0.5f;
 	m_barAnchor.z = (minZ + maxZ) * 0.5f;
-	m_barAnchor.y = topY + m_barThick + m_barLift;
+	m_barAnchor.y = topY + restDepth + m_barLift;
 	m_barY = m_barAnchor.y;	// 表示用
 }
 
@@ -974,7 +947,6 @@ void SceneForge::SaveTuning()
 	fprintf(fp, "restlift %.5f\n",   m_hammer.restLift);
 	fprintf(fp, "hscale %.5f\n",     m_hammerScale);
 	fprintf(fp, "hrot %.5f %.5f %.5f\n", m_hammerRot[0], m_hammerRot[1], m_hammerRot[2]);
-	fprintf(fp, "hoff %.5f %.5f %.5f\n", m_hammerOff[0], m_hammerOff[1], m_hammerOff[2]);
 	fprintf(fp, "stiffness %.5f\n",  m_hammer.stiffness);
 	fprintf(fp, "damping %.5f\n",    m_hammer.damping);
 	fprintf(fp, "mass %.5f\n",       m_hammer.mass);
@@ -1006,12 +978,9 @@ void SceneForge::SaveTuning()
 	fprintf(fp, "vmsway %.5f\n",              m_vmSwayLambda);
 	fprintf(fp, "carrywalk %.5f %.5f %.5f %.5f\n", m_carrySpeedMul, m_bobAmp, m_bobSideAmp, m_bobPerMeter);
 	fprintf(fp, "hipoff %.5f %.5f %.5f\n",   m_hipOff[0], m_hipOff[1], m_hipOff[2]);
-	fprintf(fp, "campos %.5f %.5f %.5f\n",  m_camPos[0],  m_camPos[1],  m_camPos[2]);
-	fprintf(fp, "camlook %.5f %.5f %.5f\n", m_camLook[0], m_camLook[1], m_camLook[2]);
+	fprintf(fp, "anvilcam %.5f %.5f %.5f\n", m_anvilIronYaw, m_anvilViewSkew, m_anvilViewDist);	// 金床の構図: 鉄の向き(rad) / 視線のずれ(rad) / 目からの距離(m)
 	fprintf(fp, "camfov %.5f\n",     m_camFov);
-	fprintf(fp, "followz %.5f\n",    m_camFollowZ);
-	fprintf(fp, "pangain %.5f\n",    m_camPanGain);
-	fprintf(fp, "camlerp %.5f\n",    m_camLerpRate);
+	fprintf(fp, "ironslide %.5f\n",  m_ironSlideRate);	// 鉄がマウスに付いて来る速さ
 	// -- 武器アライン --
 	fprintf(fp, "wpyaw %.5f\n",      m_wpYaw);
 	fprintf(fp, "wppitch %.5f\n",    m_wpPitch);
@@ -1083,7 +1052,6 @@ void SceneForge::TuningRefs(std::vector<float*>& out)
 		// -- Hammer --
 		&m_hammer.restLift, &m_hammerScale,
 		&m_hammerRot[0], &m_hammerRot[1], &m_hammerRot[2],
-		&m_hammerOff[0], &m_hammerOff[1], &m_hammerOff[2],
 		&m_hammer.stiffness, &m_hammer.damping, &m_hammer.mass,
 		&m_hammer.swingSpeedMin, &m_hammer.swingSpeedGain, &m_hammer.swingAccel,
 		&m_hammer.restitutionHot, &m_hammer.restitutionCold, &m_hammer.restitutionAnvil,
@@ -1094,9 +1062,8 @@ void SceneForge::TuningRefs(std::vector<float*>& out)
 		// -- Aim & follow --
 		&m_aimSens, &m_hammerFollow,
 		// -- Camera (view / follow) --
-		&m_camPos[0], &m_camPos[1], &m_camPos[2],
-		&m_camLook[0], &m_camLook[1], &m_camLook[2],
-		&m_camFov, &m_camFollowZ, &m_camPanGain, &m_camLerpRate,
+		&m_anvilIronYaw, &m_anvilViewSkew, &m_anvilViewDist,
+		&m_camFov, &m_ironSlideRate,
 		// -- Title camera --
 		&m_titleCamPos[0], &m_titleCamPos[1], &m_titleCamPos[2],
 		&m_titleCamLook[0], &m_titleCamLook[1], &m_titleCamLook[2], &m_titleIntroTime, &m_logoFadeTime,
@@ -1164,7 +1131,6 @@ void SceneForge::LoadTuning()
 		if      (strcmp(key, "restlift")   == 0) sscanf_s(v, "%f", &m_hammer.restLift);
 		else if (strcmp(key, "hscale")     == 0) sscanf_s(v, "%f", &m_hammerScale);
 		else if (strcmp(key, "hrot")       == 0) sscanf_s(v, "%f %f %f", &m_hammerRot[0], &m_hammerRot[1], &m_hammerRot[2]);
-		else if (strcmp(key, "hoff")       == 0) sscanf_s(v, "%f %f %f", &m_hammerOff[0], &m_hammerOff[1], &m_hammerOff[2]);
 		else if (strcmp(key, "stiffness")  == 0) sscanf_s(v, "%f", &m_hammer.stiffness);
 		else if (strcmp(key, "damping")    == 0) sscanf_s(v, "%f", &m_hammer.damping);
 		else if (strcmp(key, "mass")       == 0) sscanf_s(v, "%f", &m_hammer.mass);
@@ -1194,12 +1160,9 @@ void SceneForge::LoadTuning()
 		else if (strcmp(key, "vmsway")       == 0) sscanf_s(v, "%f", &m_vmSwayLambda);
 		else if (strcmp(key, "carrywalk")    == 0) sscanf_s(v, "%f %f %f %f", &m_carrySpeedMul, &m_bobAmp, &m_bobSideAmp, &m_bobPerMeter);
 		else if (strcmp(key, "hipoff")       == 0) sscanf_s(v, "%f %f %f", &m_hipOff[0], &m_hipOff[1], &m_hipOff[2]);
-		else if (strcmp(key, "campos")     == 0) sscanf_s(v, "%f %f %f", &m_camPos[0],  &m_camPos[1],  &m_camPos[2]);
-		else if (strcmp(key, "camlook")    == 0) sscanf_s(v, "%f %f %f", &m_camLook[0], &m_camLook[1], &m_camLook[2]);
+		else if (strcmp(key, "anvilcam")   == 0) sscanf_s(v, "%f %f %f", &m_anvilIronYaw, &m_anvilViewSkew, &m_anvilViewDist);
 		else if (strcmp(key, "camfov")     == 0) sscanf_s(v, "%f", &m_camFov);
-		else if (strcmp(key, "followz")    == 0) sscanf_s(v, "%f", &m_camFollowZ);
-		else if (strcmp(key, "pangain")    == 0) sscanf_s(v, "%f", &m_camPanGain);
-		else if (strcmp(key, "camlerp")    == 0) sscanf_s(v, "%f", &m_camLerpRate);
+		else if (strcmp(key, "ironslide")  == 0) sscanf_s(v, "%f", &m_ironSlideRate);
 		else if (strcmp(key, "wpyaw")      == 0) sscanf_s(v, "%f", &m_wpYaw);
 		else if (strcmp(key, "wppitch")    == 0) sscanf_s(v, "%f", &m_wpPitch);
 		else if (strcmp(key, "wproll")     == 0) sscanf_s(v, "%f", &m_wpRoll);

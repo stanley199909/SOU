@@ -191,7 +191,9 @@ private:
 	DirectX::XMFLOAT3 m_lastStrikeOrigin = { 0, 0, 0 };	// 最後に打撃の火花が出た点(F4「道具の箱」で十字を描く)
 	DirectX::XMFLOAT3 m_hammerHeadLocal = { 0, 0, 0 };	// ハンマーの頭の中心(モデル空間。初回に頂点から求めて覚える)
 	bool  m_hammerHeadReady = false;
+	std::vector<DirectX::XMFLOAT3> m_hammerHeadVerts;	// 頭の頂点(モデル空間)。構えた向きで一番低い点 = 打つ面(FindHammerHeadLocal が埋める)
 	DirectX::XMFLOAT3 FindHammerHeadLocal(Model* hammer);	// 長軸の両端で断面の広い方 = 頭
+	float IronTopAt(float x, float z) const;			// 鉄の上面の高さ(打撃点の真下。今の変形後の頂点から)
 	bool  HammerOnHip() const;							// 右腰に下げているか(金床で作業していない時)
 	int   BuildBarMesh();		// 高さ場 m_h[][] から3D鉄板の頂点を生成(戻り値=頂点数)
 	void  Draw3DBillet();		// 3Dの光る鉄板を描画
@@ -551,12 +553,10 @@ private:
 	//    SceneForge は m_forging へ「打撃を適用/状態を読む」だけ。玩家の動作は ForgeStep。
 	ForgingSim m_forging;
 	float m_match  = 0.0f;			// 成形の進捗(平均) 0..1。表示用に SceneForge が保持
-	//--- FPS式照準: 画面中心の準心から射線を飛ばし、板に当たったセルを求める
+	//--- 照準: 金床では鎚は打撃点(画面中心)に固定、鉄が滑って来る(KCD2式 "Move workpiece")。ハンマーの真下のセル
 	int   m_aimI = ForgingSim::NL / 2, m_aimJ = ForgingSim::NW / 2;	// 現在照準しているセル
-	bool  m_aimValid = false;					// 準心が板の上にあるか
-	DirectX::XMFLOAT3 m_aimWorld = { 0, 0, 0 };	// 準心が当たった板上のワールド座標
-	//--- FPS式の受限環視カメラ(マウスで視角を回す。準心は常に画面中心=カメラ正前方)
-	float m_lookYaw = 0.0f, m_lookPitch = 0.0f;	// 基準視線からのマウス累積回転(夹住)
+	bool  m_aimValid = false;					// 準心が板の上にあるか(金床は常に true=空振り無し。フォールバックの射線判定のみ外れ得る)
+	DirectX::XMFLOAT3 m_aimWorld = { 0, 0, 0 };	// 打撃点のワールド座標(金床では砧面の中心に固定)
 	DirectX::XMFLOAT3 m_camFwd = { 0, 0, 1 };	// 現在のカメラ正前方(照準射線に使う)
 	void  UpdateMouseLook();		// マウス移動を視角(yaw/pitch)へ累積(再センタリング方式)
 	void  UpdateCursorVisibility();	// OS の光標を出すか(毎フレーム1か所で決める): メニュー/タイトルでキーボード・マウス操作中 or 設計者用パネル(F2/F4/F5)
@@ -770,7 +770,7 @@ private:
 	bool  CameraBasis(DirectX::XMVECTOR& eye, DirectX::XMVECTOR& fwd, DirectX::XMVECTOR& right, DirectX::XMVECTOR& up);	// 今のカメラの位置と向き
 	DirectX::XMFLOAT3 BodyForward();				// 体の水平前方(走動=玩家の向き / 工位=その工位の既定カメラの水平視線)
 	DirectX::XMFLOAT3 BodyPosition();				// 体の位置(走動=玩家の足元 / 工位=その工位の既定カメラの真下)。腰の道具はここ基準
-	void  StationBodyPose(DirectX::XMFLOAT3& eye, DirectX::XMFLOAT3& target);	// 今の工位の既定カメラ(金床=m_camPos/Look、他=StationView)
+	void  StationBodyPose(DirectX::XMFLOAT3& eye, DirectX::XMFLOAT3& target);	// 今の工位の既定カメラ(= StationView)
 	DirectX::XMFLOAT3 HipPoint();					// 左腰の点(火钳を掛ける所。翻面の運鏡もここを見る)
 	DirectX::XMMATRIX TongsWorld(const DirectX::XMFLOAT3& approach, const DirectX::XMFLOAT3& barDir,
 	                             const DirectX::XMFLOAT3& gripAt);	// 挟む点を gripAt に、柄→口を approach へ、輪を barDir が通る様に
@@ -918,20 +918,21 @@ private:
 	bool  m_show3D  = true;
 
 	//--- ゲーム用固定カメラ(KCD風の見下ろし)
-	// KCD2の一人称に寄せる: 目線の高さから砧・炉を見下ろし、工件と炉膛が視界を占める。
-	float m_camPos[3]  = { 0.0f, 2.30f, -0.95f };	// 低く・近く(鉄匠の頭の位置)
-	float m_camLook[3] = { 0.0f, 1.15f,  0.55f };	// 強めに見下ろす(砧・炉膛が画面に入る)
+	// KCD2の一人称に寄せる(2026-11 審査会): 歩く時と同じ目の高さ(m_walkFloorY + m_walkEyeH)から打撃点を見下ろす。
+	//   入っても視点が上がらない(旧: 金床だけ高いカメラ=「背が伸びた」と言われた)。視線は打撃点=鎚が画面中心の照準になる。
+	//   構図(KCD2): 鉄は金床を斜めに横切り、画面では手前下から奥右へ斜めに伸びる。滑らせる向きも鉄の長手(斜め)。
+	float m_anvilIronYaw   = 0.50f;					// 金床の上の鉄の向き: 金床の yaw からの水平角(rad)。0 = 世界Z(旧の向き)
+	float m_anvilViewSkew  = 0.60f;					// 視線の水平方向が鉄の長手から左へずれる角(rad)。大=鉄が画面で寝る / 0=鉄が画面で縦
+	float m_anvilViewDist  = 1.25f;					// 目から打撃点までの距離(m)。目の高さは固定なので、見下ろす角はこの距離から決まる(近い=真下寄り)
+	DirectX::XMFLOAT3 AnvilIronDir() const;			// 金床の上の鉄の長手(水平・奥向き)
+	float AnvilViewYaw() const;						// 金床カメラの水平の向き(atan2(x,z))。鎚もこの向きに構える
+	float DepthBelowCentre(DirectX::FXMMATRIX rot) const;	// 刃の中心から一番低い点までの深さ(与えた回転で)
 	float m_camFov     = 0.8901f;					// 縦画角(rad)≒51°。KCDの画角に近い(狭すぎない)
-	// --- 刃の長手に沿った「狙い位置」追従カメラ(KCDの視角移動) ---
-	// マウス縦で m_aimRail(0=手前/near, 1=奥/far)を動かし、注視点とカメラをZ方向に寄せる。
-	// これで刃の下半段(手前)も準心に入り、視角と錘が一緒に付いてくる。
-	float m_aimRail       = 0.5f;					// 目標の狙い位置(0..1)。連続=ハンマー/打撃はこれ
-	float m_aimRailSmooth = 0.5f;					// 平滑後の「カメラ用」rail(3段の停位へ吸着)
-	static const int NVIEW = 3;						// KCDの固定カメラ段数(刃を3分割)
-	int   m_viewSeg       = 1;						// 現在のカメラ段(0=手前,1=中,2=奥)
-	float m_camFollowZ    = 0.55f;					// カメラ本体がZ追従する割合(0=注視点だけ動く)
-	float m_camPanGain    = 1.0f;					// 追従量の倍率(狙える範囲を微調整)
-	float m_camLerpRate   = 4.0f;					// 3段カメラ切替の速さ(小=ゆっくり重い,大=機敏)
+	// --- 鉄を滑らせる(KCD2 "Move workpiece") ---
+	// マウス縦で m_aimRail(0=手前/near, 1=奥/far)を動かす = 鉄のどこを鎚の下へ持って来るか。鎚もカメラも動かない。
+	float m_aimRail       = 0.5f;					// 目標: 鎚の下へ持って来たい鉄の位置(0..1)
+	float m_aimRailSmooth = 0.5f;					// 鉄が実際に滑った位置(m_aimRail を追う)= 今ハンマーの真下にある所。打撃・高亮はこれ
+	float m_ironSlideRate = 12.0f;					// 鉄がマウスに付いて来る速さ(小=重くゆっくり, 大=機敏)
 	float m_camSway    = 0.30f;					// マウスに応じた視点の揺れ幅
 	bool  m_cursorShown = true;					// OSカーソルの表示状態(PLAY中は隠す)
 	//--- 一時停止メニュー(ESC。2026-10-08 ユーザー要望)。開いている間は世界の更新を止める。
@@ -1291,7 +1292,6 @@ private:
 	//--- 3Dハンマー(向きは forge_tuning.txt。蓄力で上がり打撃で振り下ろす)
 	float m_hammerScale  = 0.02f;
 	float m_hammerRot[3] = { 3.14f, -0.20f, -1.58f };	// 向き(ラジアン)。調整済み既定
-	float m_hammerOff[3] = { 0.06f, 0.0f, 0.0f };		// 打撃点からの位置微調整
 	// 鎚の縦運動(高さ/速度)と弾簧-阻尼の係数は Physics/HammerPhysics に切り出した。
 	//   ForgeStep が Hold/Strike で駆動し、Update で静止高へ収束する。係数は F5 で調整・tuning に保存。
 	HammerPhysics m_hammer;
@@ -1671,9 +1671,6 @@ private:
 	// 冷打: 硬い鉄を叩いた「ガツン」。手応えが悪い=衝撃だけ大きく、軽い錘(鋭い)が主
 	static constexpr Rumble RUMBLE_COLD_HIT          = { 0.6f, 1.0f, 0.0f, 1.0f };
 	static constexpr float  RUMBLE_COLD_HIT_SEC      = 0.20f;
-	// 空振り(鉄でなく金床だけを打った)。軽く
-	static constexpr Rumble RUMBLE_SWING             = { 0.25f, 0.1f, 0.0f, 0.2f };
-	static constexpr float  RUMBLE_SWING_SEC         = 0.08f;
 	// ふいご(踏んでいる間ずっと): 風の低いうなり + 踏んでいる左扳机(LT)に軽く
 	static constexpr Rumble RUMBLE_BELLOWS           = { 0.15f, 0.0f, 0.2f, 0.0f };
 	// 研ぎ(当てている間ずっと): 量は研ぎ音(m_grindVol 0..1)に掛ける。細かいザラザラ=軽い錘が主 + 刃を当てている左扳机(LT)

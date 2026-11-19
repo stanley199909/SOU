@@ -494,7 +494,7 @@ void SceneForge::ResetRunState()
 	m_aimI = ForgingSim::NL / 2; m_aimJ = ForgingSim::NW / 2; m_aimSeg = 0; m_aimValid = false;
 	m_aimWorld = m_barAnchor;	// 最初の有効照準までのハンマー既定位置(板中心)
 	m_impactTime = -1000.0f;	// 前の回の打撃の光を消す
-	m_lookYaw = 0.0f; m_lookPitch = 0.0f;
+	m_aimRail = m_aimRailSmooth = 0.5f;	// 鉄は金床の中央に(滑らせたずれを持ち越さない)
 	m_canStrike   = false;		// SPACEを一度離すまで蓄力しない
 	m_shake        = 0.0f;
 	m_popupLife    = 0.0f;
@@ -667,7 +667,6 @@ void SceneForge::StartAtStep(int idx, bool placeNow)
 	SetupStationView(s);
 	m_walkMode = false;
 	m_modeTrans = ModeTrans::None;
-	m_lookYaw = 0.0f; m_lookPitch = 0.0f;
 }
 
 //====================================================================
@@ -1013,13 +1012,14 @@ void SceneForge::UpdateTitle(float tick)
 }
 
 //--- 鎚の横位置を平滑追従: 準心が格子単位で跳ぶのを Lerp::Damp で滑らかに。
-//    目標は現在の照準点(m_aimWorld)＋既定オフセット。Draw はこの m_hammerPos を読む。
+//    目標は現在の照準点(m_aimWorld)。Draw はこの m_hammerPos を読む(頭をこの真上に置くのは HammerWorld)。
 void SceneForge::UpdateHammerFollow(float tick)
 {
+	// 頭の中心をここ(打撃点)の真上に置く計算は HammerWorld がモデルから行う(手で合わせるオフセットは無い)。
 	DirectX::XMFLOAT3 tgt = {
-		m_aimWorld.x + m_hammerOff[0],
-		0.0f,							// y は使わない(高さは m_hammerLift のアニメで別途)
-		m_aimWorld.z + m_hammerOff[2],
+		m_aimWorld.x,
+		0.0f,							// y は使わない(高さは HammerWorld が鉄の上面 + Lift から決める)
+		m_aimWorld.z,
 	};
 	if (!m_hammerPosInit) { m_hammerPos = tgt; m_hammerPosInit = true; }	// 起動時は瞬間セット
 	m_hammerPos = Lerp::Damp(m_hammerPos, tgt, m_hammerFollow, tick);
@@ -1352,20 +1352,6 @@ void SceneForge::DoStrike(float power)	// power 0..1 = 錘が当たった速さ(
 	bool inGroove = (m_rhythmStreak >= GROOVE_HITS);	// テンポが乗ると効率アップ
 	float grooveMult = inGroove ? GROOVE_MULT : 1.0f;	// 変形効率の上昇
 
-	// 準心が板の上に無いなら空振り: 変形も評価もせず、鉄には当たっていないので打鉄音も出さない
-	// (冷打音は誤解のもと。清脆な打鉄音が鳴らないこと自体が「外した」合図になる)。
-	if (!m_aimValid)
-	{
-		// 空振り = 金床の面を直接打った: 硬い鋼の面なのでよく跳ね返る(鉄は変形しないだけ)
-		m_hammer.Rebound(m_hammer.restitutionAnvil);
-		StartReboundHaptics();
-		Audio::PlayAt(Audio::SE_SWING, m_aimWorld, 0.7f);	// 空を切る「ヒュッ」(鉄に当たっていない合図。文字は出さない)
-		Haptics::Pulse(RUMBLE_SWING, RUMBLE_SWING_SEC);	// 金床だけを打った軽い手応え
-		m_reboundHardness = REBOUND_HARDNESS_HARD;		// 金床(硬い鋼)を直接打った = よく跳ね返る
-	
-		NoteLessonMistake(LessonId::Aim);	// 救急: 空振りを重ねたら狙い方を見せる
-		return;
-	}
 
 	// 温度係数(冷たい→ほぼ効かない, 過熱→効くが品質悪, 適温→最大)。玩家側で算した修正値。
 	float heatFactor = cold ? HEAT_EFF_COLD : (over ? HEAT_EFF_OVER : 1.0f);
@@ -2392,16 +2378,9 @@ void SceneForge::Update(float tick)
 			UpdateMouseLook();				// 金床: 従来のFPS式受限環視(準心/rail)
 		}
 	}
-	// カメラは KCD式に3つの固定視角へ吸着する。狙い(m_aimRail)自体は連続でハンマーは全長を動くが、
-	// カメラ用の rail は現在の段(m_viewSeg)の中心へ寄せる → 視角は3段でカチッと切り替わる。
-	{
-		int vs = (int)(m_aimRail * NVIEW);
-		if (vs < 0) vs = 0; if (vs > NVIEW - 1) vs = NVIEW - 1;
-		m_viewSeg = vs;
-		float railCam = (m_viewSeg + 0.5f) / (float)NVIEW;	// 段の中心(1/6, 1/2, 5/6)
-		float k = tick * m_camLerpRate; if (k > 1.0f) k = 1.0f;	// 速さは m_camLerpRate(forge_tuning.txt)
-		m_aimRailSmooth += (railCam - m_aimRailSmooth) * k;	// 停位へ滑らかに切替(リアリティ)
-	}
+	// 鉄を滑らせる: 実際の位置 m_aimRailSmooth が目標 m_aimRail を指数的に追う(Lerp::Damp = フレームレート非依存)。
+	//   少し遅れて付いて来る = 鉄の重さ。鎚とカメラは動かない(KCD2 "Move workpiece")。
+	m_aimRailSmooth = Lerp::Damp(m_aimRailSmooth, m_aimRail, m_ironSlideRate, tick);
 	// 過渡中=補間カメラ / 走動=玩家目線 / 工位=FPS式受限環視カメラ(編集は STAGESETTING シーンで行う)。
 	ApplyViewCamera();
 	UpdateListener();	// 3D音の聞き手をカメラに合わせる(声源の左右/遠近が振り向きに追従)

@@ -467,10 +467,16 @@ int SceneForge::GrindSide() const
 //    フィットの大きさで運んだ最小の y。WeaponWorld が箱の中心を原点に寄せてから回す規約と同じ。
 float SceneForge::BladeDepthBelowCentre() const
 {
+	return DepthBelowCentre(WeaponRot());
+}
+
+//--- 同じ深さを、与えた回転で。金床の砧面アンカーは「置いて休んでいる向き」(裏返しの回転を含まない)で求める
+//    = 裏返しの最中にアンカー(鎚・カメラの注視点)が上下しない(UpdateBarAnchor)。
+float SceneForge::DepthBelowCentre(FXMMATRIX rot) const
+{
 	const float ex = m_wpMax.x - m_wpMin.x, ey = m_wpMax.y - m_wpMin.y, ez = m_wpMax.z - m_wpMin.z;
 	const float MIN_EXTENT = 1e-5f;
 	const float fit = (m_barLen / fmaxf(fmaxf(ex, fmaxf(ey, ez)), MIN_EXTENT)) * m_wpScale;
-	const XMMATRIX rot = WeaponRot();
 	float lowest = 0.0f;
 	for (int i = 0; i < 8; ++i)
 	{
@@ -494,7 +500,16 @@ XMFLOAT3 SceneForge::WorkAnchor()
 	{
 	case Station::Anvil:
 		a.x += m_wpOff[0]; a.y += m_wpOff[1]; a.z += m_wpOff[2];
+	{
+		// 鉄を長手(斜め = AnvilIronDir)に滑らせる(KCD2 "Move workpiece")。鉄の rail の所が打撃点(砧面の中心)の真下に来るずれ:
+		//   rail の点は中心から (rail - 0.5) * 長さ の所 → 鉄全体を逆へ同じだけ動かす。rail = 0.5 で真ん中が打撃点の上。
+		//   長さ = 実際に描いている長さ(m_barLen * m_wpScale。WeaponWorld のフィットと同じ)。
+		const XMFLOAT3 d = AnvilIronDir();
+		const float slide = (0.5f - m_aimRailSmooth) * m_barLen * m_wpScale;
+		a.x += d.x * slide;
+		a.z += d.z * slide;
 		break;
+	}
 	case Station::Hearth:
 	{
 		// 炭床に平らに、斜めに寝かせた鉄の中心。先端が炭床の中の決まった点
@@ -932,23 +947,45 @@ XMFLOAT3 SceneForge::FindHammerHeadLocal(Model* hammer)
 		for (int a = 0; a < 3; ++a) if (a != la) s *= (&b.bmx.x)[a] - (&b.bmn.x)[a];
 		return s;
 	};
-	const Band& head = (spread(ends[1]) > spread(ends[0])) ? ends[1] : ends[0];
+	const int headEnd = (spread(ends[1]) > spread(ends[0])) ? 1 : 0;
+	const Band& head = ends[headEnd];
 	if (head.n == 0) return XMFLOAT3((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f, (mn.z + mx.z) * 0.5f);
+	// 頭の頂点も覚える: 構えた向きで一番低い点 = 打つ面が鉄の上面に当たる高さを求める(HammerWorld)
+	m_hammerHeadVerts.clear();
+	for (const XMFLOAT3& p : v)
+	{
+		const float t = ((&p.x)[la] - lo) / fmaxf(hi - lo, 1e-6f);
+		if (headEnd == 0 ? (t < END_BAND) : (t > 1.0f - END_BAND)) m_hammerHeadVerts.push_back(p);
+	}
 	return XMFLOAT3(head.sum.x / head.n, head.sum.y / head.n, head.sum.z / head.n);
 }
 
+//--- 鉄の上面の高さ = 点(x, z)から水平に STRIKE_PROBE_RADIUS 以内にある、変形後の頂点(m_wpVtx = 前フレームの形)の一番高い y。
+//    打って薄くなった所はそのぶん低い = 鎚は今の形の表面にちょうど当たる。近くに頂点が無ければ砧面アンカーの上面で代用。
+float SceneForge::IronTopAt(float x, float z) const
+{
+	const float STRIKE_PROBE_RADIUS = 0.03f;	// 鎚の頭の下で鉄の表面を探す半径(m)。頂点の間隔より広く、頭の大きさより狭く
+	const float r2 = STRIKE_PROBE_RADIUS * STRIKE_PROBE_RADIUS;
+	float top = -FLT_MAX;
+	if (m_wpOk)
+		for (const WpVtx& v : m_wpVtx)
+		{
+			const float dx = v.pos.x - x, dz = v.pos.z - z;
+			if (dx * dx + dz * dz <= r2 && v.pos.y > top) top = v.pos.y;
+		}
+	return (top > -FLT_MAX) ? top : m_barAnchor.y + m_forging.Start();	// 武器FBXが無い(旧・高さ場の板)/ 頂点がまだ無い
+}
+
 //--- 金床で構えている(打っている)ハンマーのワールド行列。
+//    置き方はモデルから求める(手で合わせたオフセットは使わない): 構えた向きで
+//      水平 = 頭の中心が打撃点(m_hammerPos)の真上 / 高さ = 頭の一番低い点(打つ面)が「鉄の上面 + Lift」。
+//    → Lift = 0(ばねが接触と判定する高さ)の時、打つ面がちょうど鉄の表面に当たる。火花の点(HammerStrikePoint)も頭から取るので一致する。
 XMMATRIX SceneForge::HammerWorld(Model* hammer, bool withRecoil)
 {
-
-	// 準心が当たっているセルの真上にハンマーを置く。準心が板の外に出ても、m_aimWorld/m_aimI/J は
-	// 最後に有効だった位置を保持している(UpdateAimは無効時に値を更新しない)ので、そのまま使う=
-	// 中央にリセットせずハンマーは最後の位置に留まる(操作の異様感を無くす)。
-	// 横位置(XZ)は UpdatePlay で Lerp::Damp 済みの m_hammerPos を読む(格子跳びを吸収)。
-	// オフセットは平滑化の目標に既に含まれているので、ここでは足さない。
+	if (!m_hammerHeadReady) { m_hammerHeadLocal = FindHammerHeadLocal(hammer); m_hammerHeadReady = true; }
 	// 反冲(後座)の位相 rp: 奥行き後退＋錘頭の上翻り。バネの縦速度から直接求める=物理と一致。
 	// 打撃直後は上向き速度が最大(=接触の反作用が最も強い)→ rp=1、上昇するにつれ減衰→頂点で0。
-	// これで縦の跳ね(m_hammerLift 側)と、後退＋上翻り(ここ)が同じ物理タイミングで起きる。
+	// これで縦の跳ね(m_hammer.Lift 側)と、後退＋上翻り(ここ)が同じ物理タイミングで起きる。
 	float rp = 0.0f;
 	float vLaunch = m_hammer.ReboundSpeed();		// 最後に鉄から跳ね返った速さ(= 当たった速さ × 反発係数)
 	if (withRecoil && vLaunch > 0.0001f && m_hammer.Velocity() > 0.0f)
@@ -957,25 +994,36 @@ XMMATRIX SceneForge::HammerWorld(Model* hammer, bool withRecoil)
 		if (rp > 1.0f) rp = 1.0f;
 	}
 
-	// ハンマーの高さは固定(砧面+平坦時の板厚)。旧2D高度場 m_h は DoStrike で叩いた格子だけ
-	// 凹むため、それを読むと「叩いた位置に戻ると錘が沈む」不具合になる。武器モーフの刃面は
-	// ほぼ平なので、位置に依らない一定の barTop にする(高さは回弾アニメ m_hammerLift のみで変える)。
-	float barTop = m_barAnchor.y + m_forging.Start();
+	// 構えの向きは「金床カメラから見た」向き(m_hammerRot / m_hammerStowOff は視線が +Z の時に合わせた値)。
+	//   カメラの水平の向き(AnvilViewYaw)だけ回す = カメラを斜めにしても鎚は体の側から構える。
+	const float yaw = AnvilViewYaw();
+	const XMMATRIX base = hammer->GetScaleBaseMatrix() * XMMatrixScaling(m_hammerScale, m_hammerScale, m_hammerScale);
+	const XMMATRIX restRot = base * XMMatrixRotationRollPitchYaw(m_hammerRot[0], m_hammerRot[1], m_hammerRot[2]) * XMMatrixRotationY(yaw);
+
+	// 構えた向き(反冲・置く傾き無し)での頭の中心と、頭の一番低い点(原点からの相対)
+	XMFLOAT3 head; XMStoreFloat3(&head, XMVector3TransformCoord(XMLoadFloat3(&m_hammerHeadLocal), restRot));
+	float lowest = head.y;
+	for (const XMFLOAT3& p : m_hammerHeadVerts)
+		lowest = fminf(lowest, XMVectorGetY(XMVector3TransformCoord(XMLoadFloat3(&p), restRot)));
+
 	// 翻面中はハンマーを置く: 構え位置から m_hammerStowOff だけずらし、m_hammerStowTilt だけ寝かせる(重みで補間)。
 	const float sw = m_hammerStowW;
+	const float cy = cosf(yaw), sy = sinf(yaw);
+	const float lx = m_hammerStowOff[0] * sw, lz = m_hammerStowOff[2] * sw - HAMMER_RECOIL_BACK * rp;	// 反作用で鉄匠側(手前)へ後退
+	const float ironTop = IronTopAt(m_hammerPos.x, m_hammerPos.z);
 	XMFLOAT3 pos = {
-		m_hammerPos.x + m_hammerStowOff[0] * sw,
-		barTop + m_hammer.Lift() + m_hammerOff[1] + m_hammerStowOff[1] * sw,
-		m_hammerPos.z - HAMMER_RECOIL_BACK * rp + m_hammerStowOff[2] * sw,		// 反作用で鉄匠側(-Z)へ後退
+		m_hammerPos.x - head.x + lx * cy + lz * sy,
+		ironTop + m_hammer.Lift() - lowest + m_hammerStowOff[1] * sw,
+		m_hammerPos.z - head.z - lx * sy + lz * cy,
 	};
 
 	XMMATRIX world =
-		XMMatrixScaling(m_hammerScale, m_hammerScale, m_hammerScale) *
 		XMMatrixRotationRollPitchYaw(m_hammerRot[0] - HAMMER_RECOIL_TILT * rp	// 錘頭が上へ翻る
 			+ m_hammerStowTilt * sw,											// 置く時は寝かせる
 			m_hammerRot[1], m_hammerRot[2]) *
+		XMMatrixRotationY(yaw) *
 		XMMatrixTranslation(pos.x, pos.y, pos.z);
-	return hammer->GetScaleBaseMatrix() * world;
+	return base * world;
 }
 
 //--- ハンマーを右腰に下げているか: 遊んでいて、金床で作業していない時(歩いている / 他の工位 / 移動中)。

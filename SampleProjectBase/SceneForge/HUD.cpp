@@ -2623,6 +2623,12 @@ void SceneForge::DrawFeelPanel()
 	ImGui::SeparatorText((const char*)u8"鍛造");
 	ImGui::SliderFloat((const char*)u8"1面の打数", &m_forging.strikesPerFace, 4.0f, 40.0f, "%.0f");
 	ImGui::SliderFloat((const char*)u8"照準の感度", &m_aimSens, 0.0006f, 0.0050f, "%.4f");	// 低=重い
+	ImGui::SliderFloat((const char*)u8"鉄が付いて来る速さ", &m_ironSlideRate, 2.0f, 40.0f, "%.1f");	// 小=重い
+	// 金床の構図(KCD2): 鉄の向き / 画面で斜めにする角 / 見下ろす角。目の高さは歩く時と同じで固定
+	ImGui::SliderAngle((const char*)u8"鉄の向き（金床に対して）", &m_anvilIronYaw, -90.0f, 90.0f);
+	ImGui::SliderAngle((const char*)u8"鉄の画面での斜め", &m_anvilViewSkew, -80.0f, 80.0f);
+	ImGui::SliderFloat((const char*)u8"金床からの距離", &m_anvilViewDist, 0.4f, 2.5f, "%.2f m");	// 近い=真下寄り / 遠い=浅く
+	ImGui::SliderAngle((const char*)u8"画角", &m_camFov, 30.0f, 90.0f);
 	ImGui::SliderFloat((const char*)u8"打つ時の画面の揺れ", &CAM_SHAKE_AMP, 0.0f, 0.2f, "%.3f");
 
 	// --- ハンマー(ばね-ダンパ = 打った後の跳ね返り) ---

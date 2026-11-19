@@ -22,13 +22,12 @@
 
 using namespace DirectX;
 
-//--- 工位で体が居る所 = その工位の「既定の」カメラ(金床 = m_camPos/m_camLook、他 = StationView)。
+//--- 工位で体が居る所 = その工位の「既定の」カメラ(StationView)。
 //    今のカメラでなく既定値を使う: 翻面の運鏡/研ぎの視点でカメラが振り向いても、体(=腰の道具)は動かない。
 //    旧: 工位なら常に金床カメラを使っていた → 炉/砥石/水槽では腰の道具が金床の所に浮いていた(2026-10-08 F5)。
 void SceneForge::StationBodyPose(XMFLOAT3& eye, XMFLOAT3& target)
 {
-	if (m_station == Station::Anvil) { eye = XMFLOAT3(m_camPos[0], m_camPos[1], m_camPos[2]); target = XMFLOAT3(m_camLook[0], m_camLook[1], m_camLook[2]); }
-	else StationView(m_station, eye, target);
+	StationView(m_station, eye, target);
 }
 
 //--- 体の水平前方。走動=玩家の向き / 工位=その工位の既定カメラの水平視線。
@@ -369,6 +368,7 @@ void SceneForge::PutIronAt(Station s)
 {
 	m_workAt   = s;
 	m_carrying = false;
+	if (s == Station::Anvil) m_aimRail = m_aimRailSmooth = 0.5f;	// 金床には中央に置く(前に滑らせたずれを持ち越さない)
 	++m_putCount;		// 操作の案内: 置いた(LessonMetric: PutDown)
 }
 
