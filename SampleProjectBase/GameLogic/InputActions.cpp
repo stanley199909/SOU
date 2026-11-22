@@ -41,6 +41,7 @@ namespace
 		{ Action::MoveBack,    { 'S' } },
 		{ Action::MoveLeft,    { 'A' } },
 		{ Action::MoveRight,   { 'D' } },
+		{ Action::Peek,        { VK_TAB },               { P::Back } },
 	};
 	static_assert(_countof(BINDINGS) == (size_t)Action::Count, "every Action needs exactly one row in BINDINGS");
 

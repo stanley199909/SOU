@@ -622,8 +622,6 @@ namespace Audio
 			"Assets/Sound/SE/cut_pull.wav",		// SE_CUT_PULL
 			"Assets/Sound/SE/cut_fall.wav",		// SE_CUT_FALL
 			"Assets/Sound/SE/cut_slam.wav",		// SE_CUT_SLAM
-			"Assets/Sound/SE/cut_focus_glint.wav",	// SE_FOCUS_GLINT
-			"Assets/Sound/SE/cut_heartbeat.wav",	// SE_HEARTBEAT
 			"Assets/Sound/SE/ui_move.wav",		// SE_UI_MOVE
 			"Assets/Sound/SE/ui_confirm.wav",	// SE_UI_CONFIRM
 			"Assets/Sound/SE/ui_back.wav",		// SE_UI_BACK

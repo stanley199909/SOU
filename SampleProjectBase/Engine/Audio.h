@@ -36,8 +36,6 @@ namespace Audio
 		SE_CUT_PULL,	// 刃を引き抜く
 		SE_CUT_FALL,	// 上半分が地面に落ちた(実際に当たった瞬間)
 		SE_CUT_SLAM,	// 「一刀両断」の札が叩き付けられた
-		SE_FOCUS_GLINT,	// 集中: 切っ先が光った(放す合図)
-		SE_HEARTBEAT,	// 集中: 心臓の音
 		// メニュー(2026-11-02)。素材が無ければ無音
 		SE_UI_MOVE,		// 選ぶ項目が変わった
 		SE_UI_CONFIRM,	// 決定

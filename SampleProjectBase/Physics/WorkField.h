@@ -33,6 +33,7 @@ public:
     // AlreadyDone (nothing taken) when no unfinished cell is really within reach.
     Result Apply(float coord, float amount, float spread, Spill spill);
 
+    void  CompleteCell(int i) { if (i >= 0 && i < N) m_left[i] = 0.0f; } // finish one cell (grinding auto-finish sweeps cell by cell)
     float CellProgress(int i) const { return 1.0f - m_left[i]; }   // 0..1
     bool  CellDone(int i)     const { return m_left[i] <= 0.0f; }  // exact: work is floored at 0
     float SegProgress(int s, int nseg) const;                      // mean of the segment's cells

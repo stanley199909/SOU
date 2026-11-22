@@ -57,17 +57,17 @@ const SceneForge::LessonDef SceneForge::LESSONS[] =
 	{ LessonId::Plunge,   LessonAnim::PressKey,      Action::Use,      (const char*)u8"{Use}で、刃を水に入れる",                 1.0f,  3.0f,  0 },
 	{ LessonId::Stir,      LessonAnim::MouseVertical, NO_KEY,           (const char*)u8"{Hand}を上下に動かして、水の中で刃を揺する",   0.15f, 3.0f,  0 },
 	// --- 試し切り(2026-10-22 構えと集中の一太刀)。救急: 斬らずに 6 秒 / 落ち着かないまま離して 2 回止まったら ---
-	{ LessonId::Slash,     LessonAnim::StrikeHold,    NO_KEY,           (const char*)u8"{Use}長押しで構えて胴を狙い、照準の揺れが止まった瞬間に離して斬る", 1.0f, 6.0f, 2 },
+	{ LessonId::Slash,     LessonAnim::StrikeHold,    NO_KEY,           (const char*)u8"{Use}を押している間に狙い、A/D で刃の角度を回して、離して一太刀", 1.0f, 6.0f, 2 },
 };
 
 //====================================================================
 //  状況と「できた」量(コード)。新しい課はここに case を足す。
 //====================================================================
 
-//--- 炉で目指す温度: 研ぎまで進んでいれば焼入れ用(火花が散る)、まだなら「十分に熱い」(FORGE_FULL_TEMP。案内文と同じ基準)。
+//--- 炉で目指す温度 = 「十分に熱い」(FORGE_FULL_TEMP。案内文と同じ基準)。
 float SceneForge::HearthTargetTemp() const
 {
-	return StepReached(StepName::Grind) ? ForgingSim::BURN_TEMP : FORGE_FULL_TEMP;
+	return FORGE_FULL_TEMP;	// 鍛造でも焼入れでも同じ「十分に熱い」線(2026-11-21: 焼入れ用の火花の温度は過熱の印になったので廃止)
 }
 
 //--- 今の状況でその課が意味を持つか。チュートリアルでも救急でも同じ条件(=同じ場面で同じ案内)。
@@ -290,7 +290,7 @@ void SceneForge::UpdateLessons(float dt)
 	}
 	// 覚えた直後の待ちの間は救急も出さない(覚えた課の弾ける演出だけを見せる)
 	if (m_tutorial && (m_time - m_lessonLearnedAt) < LESSON_NEXT_DELAY_SEC) rescue = -1;
-	m_lessonShown       = (teach >= 0) ? teach : rescue;
+	m_lessonShown       = !LessonsAllowed() ? -1 : (teach >= 0) ? teach : rescue;	// マイスター: 課は出さない(KCD2 の様に案内なし)
 	m_lessonShownRescue = (teach < 0 && rescue >= 0);
 
 	// 確認音: 弾ける時刻が来た課だけ1回(音は Draw でなく Update で鳴らす)
@@ -306,8 +306,8 @@ void SceneForge::UpdateLessons(float dt)
 //  描画: 動く絵 + 一言(全ての課で同じ位置・同じ見た目・同じ確認音)
 //  動く絵は m_lessonClock(設定の「教学アニメの速さ」を掛けた時計)で動かす。押した長さの輪など「実際の進み」は速さに関係しない
 //====================================================================
-static const float LESSON_CENTER_X  = 0.70f;	// 画面の横位置(画面幅比)。中央は金床と刃=作業する所なので右へ寄せる(2026-10-17 試遊: 中央の案内が視界を塞ぐ)
-static const float LESSON_CENTER_Y  = 0.60f;	// 画面の縦位置(刃の少し下)=淬火/研ぎの動く案内と同じ
+static const float LESSON_CENTER_X  = 0.50f;	// 画面の横位置(画面幅比)= 中央。2026-11 審査会: UI を下の中央の1列へ集める(課はその列の上)。旧 0.70(右)
+static const float LESSON_CENTER_Y  = 0.62f;	// 画面の縦位置(画面高さ比)= 下の列(独白の欄 HUD_MONOLOGUE_Y_RATIO)のすぐ上
 static const float LESSON_ICON_RATIO = 0.085f;	// アイコンの大きさ(画面高さ比)=同上
 static const float LESSON_SHADOW_PX  = 2.0f;
 static const float LESSON_RING_GAP   = 0.72f;	// 溜まる輪の半径(アイコンの大きさに対する比)

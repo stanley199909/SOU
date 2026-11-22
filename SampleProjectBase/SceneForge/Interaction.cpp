@@ -27,7 +27,7 @@ const SceneForge::Interactable SceneForge::INTERACTABLES[] = {
 	{ "StForge",  SceneForge::InteractAction::EnterStation, Station::Hearth,     1.0f },	// 炉 → 加熱(いつでも再加熱できる)
 	{ "StGrind",  SceneForge::InteractAction::EnterStation, Station::Grindstone, 0.9f },	// 砥石 → 研磨
 	{ "StTrough", SceneForge::InteractAction::EnterStation, Station::Trough,     1.0f },	// 水槽 → 淬火
-	{ SceneForge::CUT_TARGET_KEY, SceneForge::InteractAction::EnterStation, Station::TestCut, 1.2f },	// 藁人形 → 試し切り(道具ではない: 箱は m_cutTarget から)
+	{ SceneForge::CUT_TARGET_KEY, SceneForge::InteractAction::EnterStation, Station::TestCut, 1.2f },	// 藁人形 → 試し切り(道具ではない: 箱は一列の藁人形 CutRowBox から)
 	{ SceneForge::IRON_KEY,  SceneForge::InteractAction::GripIron,   Station::Anvil, 1.2f },	// 置いてある鉄 → 火钳で掴んで運ぶ(station は使わない)
 	// 裏口の扉 → 開閉(station は使わない)。reach は他より長い: 壁が厚く(約 1.07)扉は壁の穴の奥(室内の壁面から約 0.86)に
 	//   嵌まっている。1.0 だと室内の壁の前に立った足(壁から半径 0.3 離れる)が範囲に約 0.16 届かず、
@@ -123,7 +123,7 @@ bool SceneForge::InteractBox(const Interactable& it, XMFLOAT3& mn, XMFLOAT3& mx)
 	}
 	// 藁人形も道具ではない: 立っている部分の箱(切られると小さくなる)
 	if (it.action == InteractAction::EnterStation && it.station == Station::TestCut)
-		return m_cutTarget.WorldBox(mn, mx);
+		return CutRowBox(mn, mx);	// 一列の藁人形全体
 	Prop* p = GetProp(it.propKey);
 	if (!p || p->hidden) return false;
 	return PropWorldBox(*p, mn, mx);

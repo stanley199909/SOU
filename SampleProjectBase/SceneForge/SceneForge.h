@@ -52,7 +52,8 @@ public:
 
 	//--- 工程(step)状態が呼び出す窓口(StateMachine/Player の各 Step から使う) ---
 	float HeatValue() const { return m_forging.Heat(); }	// 現在の温度 0..1
-	bool  IsBurning() const { return m_forging.IsBurning(); }	// 鋼が燃えている(火花を噴く)=加熱工程の完了条件
+	bool  HeatReady() const { return m_forging.Heat() >= FORGE_FULL_TEMP; }	// 炉で十分に熱くなった=加熱工程の完了条件(旧: 火花が散る温度。火花は過熱の印へ移した)
+	friend void HeatSample(float h, float& r, float& g, float& b, float& intensity);	// 熱色の表は温度ゲージと同じ線(private の温度定数)で帯を分ける
 	bool  BothSidesDone() const;				// 両面とも成形完了したか(鍛打工程の完了条件)
 	bool  AllSharp() const { return m_forging.AllSharp(); }	// 刃が全区域研ぎ上がったか(研磨工程の完了条件)
 	bool  AtStation(Station s) const;			// 玩家が今その工位で作業中か(移動アニメ中は false)
@@ -389,6 +390,16 @@ private:
 	static constexpr float GLINT_TWINKLE_GAP_MIN = 0.8f;	// きらめきの間隔(秒)の下限。毎回ランダム=規則的に点滅しない
 	static constexpr float GLINT_TWINKLE_GAP_MAX = 2.0f;	// 〃 上限
 	static constexpr int   GLINT_MAX             = 16;		// 同時に出る光芒の上限(念のため)
+	//--- 研ぎの自動仕上げ(2026-11 審査会: 初めての人が「最後の数か所」を探して止まった)。面の研ぎが m_grindAutoFinish に届いたら、
+	//    残りは刃の根元 → 切っ先へ GRIND_SWEEP_SEC かけて1セルずつ仕上がる(磨いた面が根元から光って走る + 光芒が付いて行く)。
+	float m_grindAutoFinish = 0.85f;					// この割合まで研いだら残りは自動で仕上がる(F5 で調整。1 = 自動仕上げなし)
+	float m_grindSweepAt[ForgingSim::NSIDES] = { -1.0f, -1.0f };	// その面の仕上げが始まった時刻(m_time)。負 = まだ / もう済んだ
+	bool  m_grindSweepDone[ForgingSim::NSIDES] = {};	// その面の自動仕上げをもう使ったか(1回だけ。済んだ面を2度走らせない)
+	static constexpr float GRIND_SWEEP_SEC        = 0.8f;	// 根元 → 切っ先 を走り切る秒
+	static constexpr int   GRIND_SWEEP_GLINT_STEP = 2;		// 光芒を何セルごとに出すか(全セルだと上限 GLINT_MAX に当たる)
+	void  UpdateGrindSweep(int faceSide);			// 自動仕上げの開始判定と、走っている間のセルの仕上げ
+	bool  GrindRootAtLowEnd();						// 刃の根元(幅の広い端)が長手の小さい側(セル 0)にあるか。モデルの形から1回だけ求める
+	int   m_grindRootLow = -1;						// その答えの記録(-1 = まだ求めていない / 0 / 1)
 	void  DrawGrindGlints();							// 光芒(スターグリント, PS_Glint)を刃先に、カメラ向きの板で加算
 	bool  GrindSegGlintPos(int seg, float lenT, bool atWheel, DirectX::XMFLOAT3& out);	// 光芒を出す点 = 区域の長手の lenT の位置 × 刃先
 	static constexpr float GLINT_SIZE        = 0.10f;	// 光芒の大きさ(半径, m)。一番大きくなった時
@@ -999,7 +1010,19 @@ private:
 	//--- チュートリアル(2026-10-09 ユーザー要望: 初めての人向け)。タイトルで「チュートリアル / 通常モード」を選ぶ。
 	//    チュートリアルの時だけ: 右の説明パネル / 刃の未完成の所を青く光らせる / 温度ゲージの「ここで叩く」/ 研ぎの角度計 /
 	//    研ぎの誤りの案内をすぐ出す。通常モードの遊び方・判定は一切変えない(表示を足すだけ)。
-	enum class ModeItem { Tutorial, Guided, Normal, Quit, Count };	// 並び順 = 選択パネルの上から(終了は一番下=誤って選びにくい)
+	enum class ModeItem { Apprentice, Craftsman, Meister, Tutorial, Quit, Count };	// 並び順 = 選択パネルの上から(難しさ3つ → チュートリアル → 終了は一番下=誤って選びにくい)
+	//--- 難しさ = 鍛冶の身分(2026-11 審査会: 初心者向けの易しい道 + 上手い人と差が付く罰 + KCD2 の様に UI を消した道)。
+	//    見習い  = 遊びながら操作を教わる(旧「ガイド付き」= チュートリアルの課を順に出す)。冷打の罰なし
+	//    職人    = 案内は最小限(課は迷った時の救急だけ)。冷打で出来栄えが下がる
+	//    マイスター = 温度ゲージ・一言の目標・課なし(KCD2 の様に鉄の色で読む)。冷打で出来栄えが下がる
+	//    チュートリアル(課程を選ぶ)は見習いの規則。タイトルで選んだ値を次に選ぶまで保つ。
+	enum class Difficulty { Apprentice, Craftsman, Meister };
+	Difficulty m_difficulty = Difficulty::Craftsman;
+	bool  ShowHeatGauge()    const { return m_difficulty != Difficulty::Meister; }		// 温度ゲージ(焼き戻しの色見本も)を出すか。マイスター = 鉄の色で読む
+	bool  ShowGoalLine()     const { return m_difficulty != Difficulty::Meister; }		// 一言の目標(今何をするか)を出すか
+	bool  LessonsAllowed()   const { return m_difficulty != Difficulty::Meister; }		// 課(チュートリアル・救急)を出してよいか
+	bool  ColdHitPenalized() const { return m_difficulty != Difficulty::Apprentice; }	// 冷打で打撃の品質を下げるか(見習い = 下げない)
+	const char* DifficultyName() const;			// 記録用の名前(playtest_log)
 	//    Guided(ガイド付き。2026-10-27, 10-23 試遊の要望): 通常の一通りを、チュートリアルの課(教える順・覚えた合図)付きで遊ぶ
 	//    = m_tutorial かつ課程なし(m_courseIdx = -1)。新しい教え方は作らず、チュートリアルの仕組みをそのまま使う
 	bool  Guided() const { return m_tutorial && m_courseIdx < 0; }
@@ -1135,7 +1158,7 @@ private:
 	static constexpr float FACE_DONE_VOLUME      = 0.8f;	// 面(表/裏)が仕上がった瞬間の「完成」の合図(SE_FACE_DONE)の音量
 	static constexpr float FACE_DONE_FINAL_PITCH = 1.12f;	// 両面とも済んだ(工程の完了)時は一段高く鳴らす(連続撃破音の様に上がっていく)
 	static constexpr float GROOVE_RING_PITCH = 1.12f;		// リズムに乗った打撃の金床音の音程倍率(少し高い=澄んだ「キン」)
-	float m_wpHotGain    = 2.0f;				// 熱い鋼の発光全体の明るさ(高=通体が光る)。白飛びして平らに見えたら下げる
+	float m_wpHotGain    = 1.0f;				// 熱い鋼の発光全体の明るさ。2026-11-21: 2.53 → 1.0(黄白に飛んで色で温度が読めなかった)。適温帯の赤・橙が ACES の肩を越えて白くならない明るさに
 	float m_wpHotTint    = 0.15f;				// 発光に混ぜる地の明るさ。低=鋼のテクスチャの濃淡が発光に出る(光っていても金属に見える)
 	float m_wpHotEmisMin = 0.35f;				// 発射率の下限。低=法線マップと角度で発光に凹凸が出る / 高=どの角度でも同じ明るさ(平ら)
 	int   m_wpN = 0;							// 1段の頂点数
@@ -1493,10 +1516,15 @@ private:
 	void  PopLesson(LessonState& l);			// 「できた」: 弾ける演出と確認音を予約
 	void  DrawLessonPrompts();					// 出している課の絵と一言(弾ける演出を含む)
 	void  DrawLessonAnim(const LessonDef& d, float alpha, float scale, unsigned int tint);	// 課の絵を種類で描き分け
+	//--- 画面下の中央の1列(2026-11 審査会: UI が4か所に散っていた → 1か所へ)。下から: 操作ガイド / 温度ゲージ / 一言の目標 / 独白。
+	//    課(チュートリアル・救急)はこの列の上(Tutorial.cpp の LESSON_CENTER_Y)。値はすべて画面高さ比(縦位置の中心 or 上端)。
+	static constexpr float HUD_HINTS_Y_RATIO     = 0.955f;	// 操作ガイドの縦位置
+	static constexpr float HUD_GOAL_Y_RATIO      = 0.805f;	// 一言の目標(今何をするか)の縦位置(中心)
+	static constexpr float HUD_MONOLOGUE_Y_RATIO = 0.750f;	// 独白・翻面の字幕・過熱の警告の縦位置(中心)。同じ欄を優先順で使う
 	//--- 温度ゲージの位置(DrawHeatGauge と課の「ゲージを指す」で共有=指す所とゲージが必ず一致)
-	static constexpr float HEAT_TRACK_W_RATIO = 0.46f;	// 槽の幅(画面幅比)。画面中央に置く。槽の左端=温度0 / 右端=温度1
+	static constexpr float HEAT_TRACK_W_RATIO = 0.40f;	// 槽の幅(画面幅比)。画面中央に置く。槽の左端=温度0 / 右端=温度1
 	static constexpr float HEAT_TRACK_H_RATIO = 0.026f;	// 槽の高さ(画面高さ比)
-	static constexpr float HEAT_TRACK_Y_RATIO = 0.80f;	// 槽の上端(画面高さ比)
+	static constexpr float HEAT_TRACK_Y_RATIO = 0.865f;	// 槽の上端(画面高さ比)= 操作ガイドのすぐ上
 	static constexpr float GAUGE_IDLE_ALPHA   = 0.20f;	// 温度を使わない所(歩いている等)のゲージの濃さ。消すと「鉄が冷めていく」が見えなくなるので薄く残す
 	static constexpr float GAUGE_FADE_OUT_LAMBDA = 1.5f;	// 薄くなる速さ(Damp率, 1/秒)。ゆっくり(約2秒)=目を引かない
 	static constexpr float GAUGE_FADE_IN_LAMBDA  = 6.0f;	// 濃くなる速さ。使う所に着いたらすぐ読める様に速く(課の出る速さと同じ)
@@ -1590,6 +1618,13 @@ private:
 	std::string m_bannerText;						// 札の文(工程が進んだ時に作る)
 	float m_bannerAt = -1000.0f;					// 札を出した時刻(m_time)
 	DirectX::XMFLOAT2 m_trackerNowPos = { 0.0f, 0.0f };	// 工程リストの「今」の行の位置(画面 px)。札の飛び先(DrawStepTracker が毎フレーム書く)
+	//--- 工程リストは普段は隠す。工程が変わった時に少しの間 / Tab(手柄: ビュー)を押している間だけ左から滑り出る(LoL の得点表の様に)
+	float m_trackerSlide    = 0.0f;		// 今どれだけ出ているか(0 = 画面の左の外 / 1 = 出ている)
+	float m_trackerPopUntil = -1000.0f;	// この時刻(m_time)までは出しておく(工程が変わった時。札が飛び込んだ後 TRACKER_POP_SEC)
+	int   m_trackerDoneFaces = -1;		// 前のフレームの「仕上がった面(表/裏)」の数。増えた瞬間に出す(-1 = まだ数えていない)
+	static constexpr float TRACKER_POP_SEC      = 2.0f;	// 札が飛び込んでから / 面が仕上がってから 引っ込むまでの秒
+	static constexpr float TRACKER_PEEK_EDGE    = 0.12f;	// 引っ込んでいる時に画面に残す端の幅(パネルの幅に対する比)
+	static constexpr float TRACKER_SLIDE_LAMBDA = 10.0f;	// 滑る速さ(Damp率, 1/秒)
 	Station m_hiStation = Station::Anvil;			// 光らせている工位
 	float m_hiAlpha = 0.0f;							// その光の濃さ(淡入/淡出)
 	static constexpr float BANNER_IN_SEC     = 0.30f;	// 札が出るまで(淡入+少し大きくなる)
@@ -1695,11 +1730,11 @@ private:
 	// 打撃CDは調整しやすいようメンバー変数(m_strikeCDMax)。自然冷却速度は m_forging.coolRate
 	// 緑帯に「実際に居られる時間」を2倍に(2026-10-12 試遊: 皆が短すぎると感じた。ユーザー決定=帯の幅と冷え方を半々で):
 	//   時間 ∝ 帯の幅 / 冷える速さ。帯を 1.5 倍(0.30 → 0.45, 下へ広げる)× 冷え方を 0.75 倍(coolRate / STRIKE_COOL)= 1.5 / 0.75 = 2 倍。
-	//   上へは広げられない(すぐ上が過熱 OVERHEAT。START_HEAT=IDEAL_MAX は BURN_TEMP 以上の制約もある)ので下限を下げる。
+	//   上へは広げられない(すぐ上が過熱 OVERHEAT。START_HEAT=IDEAL_MAX は FORGE_FULL_TEMP 以上の制約もある)ので下限を下げる。
 	//   下限は冷打の線(COLD_LIMIT)より上に保つ=「緑の外の冷たい鉄」はまだ残る。
 	static constexpr float IDEAL_MIN = 0.40f;	// 最適温度帯(下限)。旧 0.55
 	static constexpr float IDEAL_MAX = 0.85f;	// 最適温度帯(上限)
-	static constexpr float OVERHEAT  = 0.92f;	// これ以上は過熱(鋼を痛める)
+	static constexpr float OVERHEAT  = ForgingSim::BURN_TEMP;	// これ以上は過熱(鋼を痛める)= 鋼が燃えて火花を噴く温度(唯一の定義は ForgingSim)
 	static constexpr float FORGE_READY_MARGIN = 0.05f;	// 加熱の行が「済」になるのは緑帯の下端よりこれだけ上(済/未済のチラつき防止)
 	// 炉で「十分に熱い」= 金床へ戻ってよい温度(2026-10-12 ユーザーが温度ゲージに印を付けて決定: 緑帯の上の方〜過熱の手前)。
 	//   緑帯に入った所(ReadyTemp)でも叩けるが、すぐ冷めて叩ける回数が少ない → ここまで待つ様に案内する。
@@ -1711,15 +1746,15 @@ private:
 	//   → 淬火は「QUENCH_MIN_TEMP 以上、QUENCH_MAX_TEMP 以下」の窓の中だけ(ユーザー同意 2026-10-02)。
 	static constexpr float QUENCH_MAX_TEMP = OVERHEAT;
 	// 開局の鉄の温度 = 適温帯の上限(ユーザー決定)。タイトルで打ち続けていた「熱い鉄」をそのまま受け継ぐ。
-	//   BURN_TEMP 以上なので配方の最初の「加熱」工程は即完了=鍛打から始まる(配方は変えない)。
+	//   FORGE_FULL_TEMP 以上なので配方の最初の「加熱」工程は即完了=鍛打から始まる(配方は変えない)。
 	static constexpr float START_HEAT = IDEAL_MAX;
 	// 炭火だけの温度は過熱より上でなければならない(=炉に置いたままなら上がり続けて過熱する。炉が勝手に温度を保たない)。
 	// 調整で崩したらコンパイルエラーで気付ける様にする。
 	static_assert(COAL_FIRE_TEMP > OVERHEAT && COAL_FIRE_TEMP <= BELLOWS_FIRE_TEMP,
 	              "COAL_FIRE_TEMP must be above OVERHEAT (iron left in the fire keeps heating) and not above the bellows fire");
-	// 開局の温度が燃える温度を下回ると、最初の「加熱」工程が即完了せず「鍛打から開始」が崩れる。
-	static_assert(START_HEAT >= ForgingSim::BURN_TEMP && START_HEAT < OVERHEAT,
-	              "START_HEAT must be burning-hot (skips the first Heat step) but not overheated");
+	// 開局の温度が「十分に熱い」線を下回ると、最初の「加熱」工程が即完了せず「鍛打から開始」が崩れる。
+	static_assert(START_HEAT >= FORGE_FULL_TEMP && START_HEAT < OVERHEAT,
+	              "START_HEAT must be hot enough to work (skips the first Heat step) but not overheated");
 
 	//--- 打撃パラメータ
 	static constexpr float CHARGE_RATE = 1.6f;	// 蓄力速度(/秒, 満蓄力まで約0.6秒)
@@ -1740,6 +1775,7 @@ private:
 	static constexpr float QUALITY_PERFECT = 1.0f;	// PERFECT打の品質
 	static constexpr float QUALITY_GOOD    = 0.7f;	// GOOD打の品質
 	static constexpr float QUALITY_WEAK    = 0.4f;	// WEAK打の品質
+	static constexpr float QUALITY_COLD_HIT = -0.5f;	// 冷打の品質(職人/マイスター)。負 = 平均を下げる罰(2026-11 審査会: 上手い人と差を付ける)。試遊で調整
 	static constexpr float GROOVE_QUALITY_BONUS = 0.20f;	// リズム時の品質ボーナス
 	static constexpr int   SCORE_PER_QUALITY = 100;	// 品質1.0あたりの得点
 	static constexpr float POPUP_LIFE = 0.8f;		// 打撃フィードバック文字の表示時間(秒)
@@ -1767,16 +1803,24 @@ private:
 	//   胴を両断したら工程の完了(TestCutStep)。
 	//   「どう斬るか」(入力・振り・力)はここ、「何がどう切れるか」(形・胴の真ん中・切断・物理)は CutTarget に分けた
 	//   =後で別の武器の動作(例: 日本刀の居合)へ替えても CutTarget はそのまま使える(デカップリング)。
-	CutTarget m_cutTarget;
+	//   2026-11 審査会: 藁人形は一列に4体(達成感 = 何体斬れたか)。手前の1体目が m_cutPosXZ、残りはその後ろへ並ぶ。
+	static constexpr int   CUT_DUMMY_COUNT = 4;		// 一列の藁人形の数
+	static constexpr float CUT_ROW_SPACING = 1.0f;	// 前後の藁人形の間(m)。斬られた上半分が落ちる場所を空ける
+	static constexpr float CUT_ROW_STAGGER = 0.35f;	// 2体目からは左右へ交互にこれだけずらす(m)= 正面から4体とも見える
+	CutTarget m_cutTargets[CUT_DUMMY_COUNT];		// この列の藁人形
+	CutTarget::Tuning m_cutParams;					// 4体で共有する手応えの調整値(落ちる物理・柱の揺れ・傷の開き)。毎フレーム各体へ渡す
+	DirectX::XMFLOAT3 CutDummyFoot(int i);			// i 体目の柱の根元(ワールド)
+	int   CutSeveredCount() const;					// 両断された藁人形の数(結算の「両断 N/4」)
+	bool  CutRowBox(DirectX::XMFLOAT3& mn, DirectX::XMFLOAT3& mx) const;	// 立っている藁人形全体の箱(互動の範囲)
+	int   CutRowRayHit(const DirectX::XMFLOAT3& origin, const DirectX::XMFLOAT3& dir, float& t) const;	// 射線に一番近く当たる藁人形の番号(-1 = 無し)
 	static const CutTarget::PartDef CUT_PARTS[];	// 藁人形の部品の表(データ。TestCut.cpp)
 	static const int NUM_CUT_PARTS;
 	float m_cutPosXZ[2] = { 0.0f, -8.0f };	// 藁人形の柱の根元(ワールド XZ。高さは歩く床)。F4「わら人形を目の前に置く」で決め forge_tuning.txt へ
 	float m_cutYaw      = 0.0f;				// 藁人形の向き(rad)
 	float m_cutReach    = 2.4f;				// この距離(m)より遠い所には刃が届かない(空振り)
+	float CutRowReach() const { return m_cutReach + CUT_ROW_SPACING * (CUT_DUMMY_COUNT - 1); }	// 列の一番奥の藁人形まで届く距離(2026-11-22: 1体用の m_cutReach のままだと奥の2体に届かなかった)
 	float m_cutSlashTilt = 0.95f;			// 斬撃の斜めの傾き(rad。0 = 水平に薙ぐ / π/2 = 真上から)。Zornhau = 急な斜め
 	float m_cutStandDist = 1.5f;			// 構える位置: 藁人形の柱から何 m 手前に立つか(近すぎると構えた剣が藁人形に入る。2026-10-21 F5)
-	float m_cutPowerMin = 0.5f;				// 1太刀の力: 一番悪い時機で放した時(F5。低すぎると悪い剣が何十太刀もかかる)
-	float m_cutPowerMax = 1.5f;				// 〃 一番静かな瞬間に放した時(F5)
 	float m_cutHitstopCut   = 0.18f;		// 当たった瞬間に試し切りの全てが止まる秒(ヒットストップ): 斬り抜けた時(F5)。0.12 では感じ取れなかった(2026-11-10)
 	float m_cutHitstopStuck = 0.28f;		// 〃 刃が止まった時(長く止める=藁に止められた重さ)(F5)
 	float m_swordRecoil    = 0.0f;			// 当たった反動で手が押し戻された量(m)。ばね-ダンパで戻る(鎚・藁人形と同じ)
@@ -1809,9 +1853,7 @@ private:
 	static constexpr float CUT_STEP_OVER = 0.15f;	// 落ちた断片の上端がこれ(m, 床から)より低ければ歩く時にぶつからない(跨いで通る)
 	bool  m_cutNeedsBuild = true;			// 次の更新で藁人形を作り直す(ResetTestCut が立てる。GPU の作成は更新の中だけで行う)
 	// 1回の試し切りの記録(ResetTestCut で戻す)
-	int   m_cutHits      = 0;				// 胴の真ん中を斬った太刀の数(それ以外は数えない)
-	bool  m_cutSevered   = false;			// 胴を両断した(工程の完了)
-	int   m_cutSeveredHits = 0;				// 両断した時の太刀の数(結果画面の「N 太刀で両断」)
+	bool  m_cutSevered   = false;			// 試し切りが終わった(6a: 4体とも両断した = 工程の完了。6b からは時間切れ)
 	int   m_cutStrikes   = 0;				// 振った回数(操作の案内の「できた」量)
 	// 視点(脚は固定、見回しだけ)
 	float m_cutLookYaw = 0.0f, m_cutLookPitch = 0.0f;	// 藁人形の正面からのずれ(rad)
@@ -1820,12 +1862,15 @@ private:
 	// 剣の振り(手続き的なアニメーション: 姿勢 = 鍔の位置 + 刃の向き + 刃先の向き を時間で補間)
 	struct SwordPose { DirectX::XMFLOAT3 guard, dir, edge; };	// 鍔(手)の位置 / 鍔→切っ先の向き / 刃先が向く向き
 	// Stuck = 力が足りず刃が藁人形の中で止まった(2026-10-29) / PullOut = 刃を振りの道に沿って引き抜く(自動)
+	// Focus = 使うを押している: ゆっくり振りかぶり、世界が遅くなり、狙いと刃の角度を決める(離すと一太刀)
 	enum class SlashPhase { Idle, Focus, Swing, Stuck, PullOut, Recover };
 	// 斬る計画: 離した瞬間に決める(準心の所・平面・強さ、それで斬れるか/どこで止まるか)。
 	//   振りの円弧もこの瞬間の視線で描く = 刃は狙った所を通り、止まる所で正確に止まる(振りの間のカメラの傾きに引かれない)
 	struct StrikePlan
 	{
 		bool  valid = false;				// 今の振りに計画があるか(Idle に戻ると消える)
+		int   target = -1;					// 斬る藁人形(m_cutTargets の番号。-1 = 届かない)
+		bool  cutSomething = false;			// この一太刀が何かを斬った(どれか1体でも)= 試し切りの終わり
 		DirectX::XMFLOAT3 eye{ 0, 0, 0 }, fwd{ 0, 0, 1 };	// 離した瞬間の目と視線
 		bool  reach = false;				// 藁人形が届く所にいた(false = 空振り)
 		CutTarget::Aim aim{};
@@ -1848,15 +1893,16 @@ private:
 	SwordPose m_resultAnvilPose{};			// 結算: 金床の上の姿勢(展示へ浮かび始める所。StartResultStage で記録)
 	int   m_swordTipSign = 0;				// 切っ先は刃のローカル長軸の +側(+1)か -側(-1)か。0 = まだ調べていない
 	std::shared_ptr<MeshBuffer> m_hiltMetal, m_hiltGrip;	// 柄(鍔+柄頭 / 握り)。最初に描く時に作る
-	// 集中(構えている間): 呼吸で照準が揺れる。息を吐き切った所が一番静か = 離し時
-	float m_focusTime    = 0.0f;			// 構えてからの秒(実時間)
-	float m_focusSway    = 0.0f;			// 今の揺れの大きさ 0..1(1 = 一番大きい)
-	float m_focusQuality = 0.0f;			// 離した時の集中の良さ 0..1(静かなほど 1)
-	DirectX::XMFLOAT2 m_focusAim = { 0.0f, 0.0f };	// 呼吸の揺れによる照準のずれ(rad)
-	float m_focusFade    = 0.0f;			// 集中の画面効果(周りが暗く・視野が狭く)の濃さ 0..1
-	float m_heartbeatAt  = -1.0f;			// 最後に心臓の音を鳴らした時刻
-	float FocusQualityNow() const;			// 今離した時の集中の良さ(揺れが小さいほど 1)
-	float CutNeed() const;					// 両断に要る力の累積(剣の等級 = 太刀数)
+	// 一太刀の試し切り(2026-11-22 ユーザー決定: 集中 → 狙う → 一太刀)。使うを押している間 = 集中: ゆっくり振りかぶり、世界が遅くなる
+	//   (刃とカメラは実時間 = 狙える)。その間に準心で狙い、刃の角度を回す(A/D・左スティック。MGR の斬鉄の様に角度は自由)。
+	//   離した瞬間に一太刀。何かを斬ったらその一太刀で試し切りは終わり、結果は「両断 N/4」。空を斬った時はやり直せる。
+	float m_focusTimeScale = 0.2f;			// 集中している間の世界の速さの倍率(F5)
+	float m_cutAngle       = 0.0f;			// 刃の振る向き(画面の角度 rad: 0 = 右へ、π/2 = 上へ)。集中の間に回す
+	float m_raiseTime      = 0.0f;			// 集中(振りかぶり)を始めてからの秒(実時間)
+	bool  FocusSlowsWorld() const;			// 今、世界が遅くなっているか(集中 / 離して刃が届くまで)
+	void  DrawCutLine();					// 集中している間: 準心を通る刃の線(角度の見本)。HUD
+	void  FinishTestCut();					// 一太刀が何かを斬った: 試し切りの終わり(「両断 N/4」の札)
+	void  AfterCut();						// 一太刀が終わった: 何かを斬っていれば終わり / 空なら剣を下ろしてやり直せる
 	float CutGroundY();						// 藁人形が立つ地面の高さ(外の地面の上面。家の床 m_walkFloorY より低い)
 	// 刀光(ウェポントレイル): 振りの円弧を式で持っているので、残像は「尾の角度〜頭の角度」の円弧をその場で作る(フレームレートに依らず滑らか)
 	float m_trailHead = 0.0f, m_trailTail = 0.0f;	// 刀光の頭(=今の刃)と尾の角度(rad)
@@ -1873,7 +1919,6 @@ private:
 	float m_cutFovPunch  = 0.0f;			// 当たった瞬間に画角が狭まる量(割合)。すぐ戻る
 	float m_cutSlowmo    = 0.0f;			// スローモーションの残り(実時間の秒)
 	float m_cutSlowmoScale = 1.0f;			// その間の時間の倍率
-	float m_chargeGlintAt = -1.0f;			// 一番静かな瞬間の切っ先の光芒の時刻
 	// 両断の札(1太刀 =「一刀両断」の筆文字 / それ以上 =「N太刀で両断」)
 	float m_cutBannerAt  = -1.0f;			// 出た時刻(-1 = 無し)
 	bool  m_cutBannerBrush = false;			// 筆文字の画像か(else 文字)
@@ -1889,7 +1934,6 @@ private:
 	void  BuildHilt();
 	float TestCutTimeScale() const;			// 試し切りの時間の倍率(スローモーション中 < 1)
 	void  DrawSeverBanner();				// 両断の札(HUD の上。終幕の黒帯の間も)
-	void  DrawFocusOverlay();				// 集中: 画面の周りを暗く + 照準(揺れの大きさで輪が広がる)
 	bool  SwordInHand() const;				// 柄を付けた剣を手に持っているか(歩いている時も工位でも)
 	bool  SwordAtStation() const;			// 藁人形の前で構えられる状態か(工位に立っている)
 	DirectX::XMMATRIX SwordRotation() const;	// 手に持った剣の回転(WeaponRot が使う)

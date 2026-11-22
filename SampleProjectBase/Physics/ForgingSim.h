@@ -75,20 +75,23 @@ public:
     // Seconds of valid grinding (pressed on a spinning wheel) one bevel needs. Valid grinding
     // removes work at a fixed rate. Tunable (15 -> 8 on 2026-10-22: ~3 min run; 8 -> 15 on
     // 2026-10-26: one segment took only 1.6 s, user: "a region finishes too fast").
-    float grindSecondsPerSide = 15.0f;
+    // 15 -> 8 on 2026-11-21 (review: grinding was the longest step; the last 15% now finishes by itself).
+    float grindSecondsPerSide = 8.0f;
     // How far the wheel's grinding spreads along the length: Gaussian sigma in length cells,
     // like strikeSpread. Small = only the spot under the wheel gains, so the blade must be
     // slid along to finish it. Tunable.
-    float grindSpread = 1.0f;
+    // 1.0 -> 1.5 on 2026-11-21: less hunting for the last cells.
+    float grindSpread = 1.5f;
     // How far one strike's shaping spreads along the length: the standard deviation of
     // the Gaussian falloff, in length cells. Small = only the spot under the hammer moves
     // (precise but more strikes to cover the blade); large = feels like the old segments.
     float strikeSpread = 1.5f;
 
-    // At this temperature the steel starts to throw sparks from its surface ("burning").
-    // It is the visible signal a smith reads: the iron is ready (Heat step target).
-    // Kept below the scene's OVERHEAT line, so there is a window to pull it out in time.
-    static constexpr float BURN_TEMP = 0.80f;
+    // At this temperature the steel starts to throw sparks from its surface ("burning", like a sparkler).
+    // Real steel only does this when it is overheated and being ruined, so this IS the overheat line
+    // (SceneForge::OVERHEAT is defined from it). 2026-11-21: was 0.80 = inside the forging band, used as
+    // the "ready" signal -- that contradicted the heat gauge. The ready signal is now SceneForge::FORGE_FULL_TEMP.
+    static constexpr float BURN_TEMP = 0.92f;
     bool  IsBurning() const { return m_heat >= BURN_TEMP; }
 
     // --- edge sharpness (grinding) ---
@@ -98,6 +101,7 @@ public:
     // Grind bevel `side` for dt seconds at lenCoord (contact along the length, cells 0..NL).
     // Call only while the grinding is valid (pressed, wheel spinning fast enough).
     GrindOutcome ApplyGrind(int side, float lenCoord, float dt);
+    void  CompleteEdgeCell(int side, int i) { m_edge[side ? 1 : 0].CompleteCell(i); } // auto-finish: grind this cell of the bevel to done
     float EdgeCellProgOf(int side, int i) const { return m_edge[side ? 1 : 0].CellProgress(i); } // per cell: F4 readout + the renderer (ground cells lose the temper color)
     bool  EdgeCellDoneOf(int side, int i) const { return m_edge[side ? 1 : 0].CellDone(i); }
     bool  SharpDoneOf(int side, int s)  const { return m_edge[side ? 1 : 0].SegDone(s, NSEG); }     // F4 readout

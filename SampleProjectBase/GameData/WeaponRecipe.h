@@ -29,7 +29,7 @@ enum class Station
     Hearth,      // the forge fire (heating). Always usable: re-heat whenever the iron cools
     Grindstone,  // pedal-driven sharpening wheel
     Trough,      // water trough (quenching)
-    TestCut,     // the straw dummy outside the cottage (test cut). Not a prop: SceneForge::m_cutTarget
+    TestCut,     // the straw dummy outside the cottage (test cut). Not a prop: SceneForge::m_cutTargets (a row of dummies)
 };
 
 // One entry in a recipe = one step. Holds only fields common to every step.

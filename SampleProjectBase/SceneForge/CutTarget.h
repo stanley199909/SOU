@@ -14,9 +14,10 @@ class Texture;
 MeshSlicer::Mesh MakeBoxMesh(const DirectX::XMFLOAT3& center, const DirectX::XMFLOAT3& halfSize);
 
 // The test-cut target (tameshigiri): a straw dummy made of separate closed parts
-// (post, straw hips, torso, head) that the player's slash really cuts. Only a slash through the
-// MIDDLE of the torso counts: its power adds up, and when enough has gathered the dummy is cut in
-// two (Strike). Until then the blade stops inside a WOUND that really opens (see OpenWound).
+// (post, straw hips, torso, head) that the player's slash really cuts. Every slash that crosses a part
+// counts: its power adds up, and when enough has gathered the plane cuts off what it crosses; through
+// the torso = the dummy is cut in two (Severed). Until then the blade stops inside a WOUND that really
+// opens (see OpenWound).
 //
 // Owns the geometry only; WHO swings and HOW (input, animation, weapon quality)
 // is decided outside (SceneForge/TestCut.cpp). That keeps the attack system free to
@@ -69,11 +70,11 @@ public:
     struct StrikeResult
     {
         bool hit       = false;   // the plane crossed at least one standing part
-        bool coreHit   = false;   // ... through the middle of the torso (within coreZone): only these slashes count
-        bool cut       = false;   // ... and enough has gathered: the dummy was cut in two
+        bool coreHit   = false;   // ... and it crosses the torso: cutting through it = the dummy is cut in two (Severed)
+        bool cut       = false;   // ... and enough has gathered: everything the plane crosses is cut off
         // otherwise the blade stops INSIDE (2026-10-29, user's design)
         bool  stuck    = false;
-        float depth    = 0.0f;    // share of the cross-section's AREA it can open, 0..1 (from gathered / needed; offBite off the middle)
+        float depth    = 0.0f;    // share of the cross-section's AREA it can open, 0..1 (from gathered / needed)
         float reach    = 0.0f;    // where that puts the blade: 0..1 of the way along the cut (decided by the mesh's shape)
         // the slit on the surface facing the eye, along the swing (world). Valid when hit.
         DirectX::XMFLOAT3 entry{ 0, 0, 0 };   // where the blade comes in
@@ -83,17 +84,6 @@ public:
         float depthAlongView = 0.0f;                   // distance from the eye to the surface along the line of sight (m)
     };
 
-    // Tunables (strike strength = F5; the rest = forge_tuning.txt / defaults).
-    RigidBody::Params physics;
-    float density   = 250.0f;   // kg/m^3 of a fallen chunk's bounding box (straw + wood, rough)
-    float pushSpeed = 1.6f;     // m/s the blade gives the cut-off part along the swing (x the slash's push scale)
-    float sepSpeed  = 0.4f;     // m/s the cut-off part moves away from the cut face
-    // Passing the test (2026-11-01, user): a slash counts when its plane passes within coreZone of the
-    // torso's center. The cut only ever happens on such a slash, so it always goes through the middle
-    // (never a chip off the side).
-    float coreZone = 0.12f;     // m (F5)
-    float offBite  = 0.15f;     // how deep the blade goes (0..1) on a slash off the middle
-    float woundOpen = 0.35f;    // rad: how far the upper part would tip at full depth (F5; x depth squared)
     // The standing dummy sways on its post (2026-10-29, user: "the dummy should react like a real one"):
     // a spring-damper about the foot of the post, the same model as the forging hammer
     //   I * phi'' = -k * phi - c * phi' + (blade's torque),  phi = the tilt (rad, a rotation vector)
@@ -106,7 +96,20 @@ public:
         float damping   = 56.0f;    // N m s / rad (~0.15 of critical: it rocks a few times and settles)
         float maxTilt   = 0.25f;    // rad: never leans further than this (a hard knock cannot topple it)
     };
-    Sway sway;
+    // Tunables (F5 / forge_tuning.txt). One set is shared by every dummy in the row: the owner keeps
+    // the one copy and hands it to each target (SetTuning), so tuning one tunes them all.
+    struct Tuning
+    {
+        RigidBody::Params physics;
+        float density   = 250.0f;   // kg/m^3 of a fallen chunk's bounding box (straw + wood, rough)
+        float pushSpeed = 1.6f;     // m/s the blade gives the cut-off part along the swing (x the slash's push scale)
+        float sepSpeed  = 0.4f;     // m/s the cut-off part moves away from the cut face
+        float woundOpen = 0.35f;    // rad: how far the upper part would tip at full depth (F5; x depth squared)
+        Sway  sway;
+    };
+    void SetTuning(const Tuning& t) { m_tuning = t; }
+    // The torso was cut through (the dummy is cut in two). 2026-11-22: the row of dummies counts these.
+    bool Severed() const { return m_severed; }
 
     // (Re)build the intact dummy. meshes[i] (local space, same order as defs) replaces part i's box
     // when given and not empty.
@@ -124,11 +127,10 @@ public:
              float pushScale = 1.0f, float holdSec = 0.0f);
 
     // One slash with the player's power. needed = the power that must gather to cut the dummy in two.
-    //   gathered += power, only for a slash through the middle of the torso (coreHit).
-    //   gathered >= needed -> cut in two: the upper part falls.
+    //   gathered += power for every slash that crosses a part.
+    //   gathered >= needed -> what the plane crosses is cut off and falls (through the torso = Severed).
     //   Not enough -> the blade stops inside (stuck), deeper the more has gathered, and the wound
     //   opens to that depth. There is one wound: once it exists, a slash that counts goes into it.
-    //   Off the middle -> it stops at offBite; nothing gathers, nothing is left behind.
     //   holdSevered: how long the falling half hangs when this slash cuts the dummy in two.
     StrikeResult Strike(const Aim& aim, float power, float needed, float pushScale, float holdSevered);
     // The same judgement without changing anything (the swing asks at the release where it will stop).
@@ -203,8 +205,9 @@ private:
     RigidBody::PlaneCollider Ground() const;
 
     std::vector<PartDef>  m_defs;
+    Tuning                m_tuning;
+    bool                  m_severed = false;   // the torso has been cut through
     Wound                 m_wound;
-    DirectX::XMFLOAT3     m_coreCenter{ 0, 0, 0 };   // center of the intact torso's bounding box (local)
     float                 m_gathered = 0.0f;   // the power of every slash that counted so far
     bool                  m_landedNow = false; // TakeLanded: a piece touched the ground ...
     DirectX::XMFLOAT3     m_landedAt{ 0, 0, 0 };   // ... here

@@ -75,25 +75,61 @@ float4 main(PIN i):SV_TARGET{ return i.col; }
 // 光る炭ベッド用シェーダーは Assets/Shader/VS_Coal.cso / PS_Coal.cso として
 // .hlsl から fxc でコンパイルし、Init で Load する(実行時Compileの文字列は廃止)。
 
-//--- 温度(0..1)を鋼の色勾配(7ストップ)でサンプル。r,g,b は 0..1。
-//    HeatRGB(3D武器/鉄条)と HUD の HeatColor がこの1つの表を共有する(表の二重定義を避ける)。
+//--- 温度(0..1)→ 熱い鋼の色(r,g,b 0..1 = 色相)と、光の強さ(intensity)。
+//    温度ゲージと同じ線(冷打 COLD_LIMIT / 適温 IDEAL_MIN..IDEAL_MAX / 過熱 OVERHEAT)で帯に分け、
+//    線を越える所で色を一気に変える(帯の中はゆっくり)= ゲージが無くても「線を越えた」が鉄の色で一目で分かる(2026-11 審査会)。
+//    旧: 9点のなめらかな勾配 → 線を越えても色がほとんど変わらず、ゲージを見るしかなかった。
+//    HUD(HeatColor = 色相だけ)と 3D の刃(HeatGlowRGB = 色相 × 強さ)がこの1つの表を共有する。
+void HeatSample(float h, float& r, float& g, float& b, float& intensity)
+{
+	struct Band { float r0, g0, b0, i0;  float r1, g1, b1, i1; };	// 帯の始まりの色と強さ / 終わりの色と強さ
+	static const Band BANDS[] = {
+		// 色相(r,g,b)と強さ。強さは発光の明るさ(× m_wpHotGain)。適温帯は ACES の肩より下に収める = 赤・橙の色が白く飛ばない。
+		{ 0.15f, 0.04f, 0.03f, 0.00f,   0.45f, 0.05f, 0.02f, 0.25f },	// 冷打の線より下: 光らない → かすかな暗い赤
+		{ 0.55f, 0.06f, 0.02f, 0.35f,   0.60f, 0.07f, 0.02f, 0.35f },	// 冷打の線 〜 適温の下端: 暗い血の赤(まだ適温ではない)
+		{ 0.85f, 0.12f, 0.03f, 0.70f,   1.00f, 0.42f, 0.06f, 1.00f },	// 適温: はっきりした桜色(チェリー)→ 橙
+		{ 1.00f, 0.78f, 0.22f, 1.30f,   1.00f, 0.86f, 0.38f, 1.30f },	// 適温の上端 〜 過熱: 黄(注意)
+		{ 1.00f, 0.97f, 0.90f, 2.50f,   1.00f, 1.00f, 1.00f, 2.50f },	// 過熱: 白(わざと明るく、白く飛ばす)
+	};
+	// 帯の境目 = 温度ゲージと同じ定数(唯一の定義は SceneForge)。両端は温度の範囲 0..1。
+	const float EDGES[] = { 0.0f, SceneForge::COLD_LIMIT, SceneForge::IDEAL_MIN, SceneForge::IDEAL_MAX, SceneForge::OVERHEAT, 1.0f };
+	constexpr int NB = (int)_countof(BANDS);
+	static_assert(_countof(EDGES) == NB + 1, "one more edge than bands");
+	// 境目で色が切り替わる温度の幅(この幅の中だけで隣の帯の色へ移る)。小 = 急に変わる / 0 = 段差
+	constexpr float HEAT_EDGE_BLEND = 0.015f;
+
+	h = fminf(fmaxf(h, 0.0f), 1.0f);
+	auto at = [&](int k, float t, float out[4]) {	// 帯 k の中の位置 t(0..1)の色と強さ
+		const Band& B = BANDS[k];
+		out[0] = B.r0 + (B.r1 - B.r0) * t; out[1] = B.g0 + (B.g1 - B.g0) * t;
+		out[2] = B.b0 + (B.b1 - B.b0) * t; out[3] = B.i0 + (B.i1 - B.i0) * t;
+	};
+	int k = 0; while (k < NB - 1 && h >= EDGES[k + 1]) ++k;
+	float c[4]; at(k, (h - EDGES[k]) / (EDGES[k + 1] - EDGES[k]), c);
+	// 内側の境目の近く(±幅/2)では、下の帯の終わりの色 → 上の帯の始まりの色 を smoothstep で混ぜる
+	for (int e = 1; e < NB; ++e)
+	{
+		const float d = h - EDGES[e];
+		if (fabsf(d) >= HEAT_EDGE_BLEND * 0.5f) continue;
+		float lo[4], hi[4]; at(e - 1, 1.0f, lo); at(e, 0.0f, hi);
+		float w = (d + HEAT_EDGE_BLEND * 0.5f) / HEAT_EDGE_BLEND;
+		w = w * w * (3.0f - 2.0f * w);	// smoothstep
+		for (int j = 0; j < 4; ++j) c[j] = lo[j] + (hi[j] - lo[j]) * w;
+	}
+	r = c[0]; g = c[1]; b = c[2]; intensity = c[3];
+}
+
+//--- 色相だけ(HUD・旧の板)
 void HeatSampleRGB(float h, float& r, float& g, float& b)
 {
-	// 鍛冶の火色(heat colors。黒体放射の色): 冷 → かすかな赤 → 暗い赤 → 桜色(チェリー) → 明るい赤橙 → 橙 → 黄橙 → 黄 → 白。
-	//   2026-10-26 ユーザー: 「赤から急に黄色く明るくなる」→ 7点を 9点に増やし、隣どうしの色の差を小さくした(段が見えない)。
-	static const float sH[] = { 0.00f, 0.12f, 0.25f, 0.38f, 0.50f, 0.62f, 0.74f, 0.86f, 1.00f };
-	static const float sR[] = { 0.15f, 0.30f, 0.55f, 0.78f, 0.95f, 1.00f, 1.00f, 1.00f, 1.00f };
-	static const float sG[] = { 0.05f, 0.04f, 0.07f, 0.14f, 0.28f, 0.45f, 0.62f, 0.82f, 0.96f };
-	static const float sB[] = { 0.05f, 0.02f, 0.02f, 0.03f, 0.05f, 0.10f, 0.20f, 0.42f, 0.85f };
-	const int N = (int)_countof(sH);
-	static_assert(_countof(sH) == _countof(sR) && _countof(sH) == _countof(sG) && _countof(sH) == _countof(sB), "heat color table rows");
-	if (h < sH[0]) h = sH[0];
-	if (h > sH[N - 1]) h = sH[N - 1];
-	int i = 0; while (i < N - 1 && h > sH[i + 1]) ++i;
-	float t = (h - sH[i]) / (sH[i + 1] - sH[i]);
-	r = sR[i] + (sR[i + 1] - sR[i]) * t;
-	g = sG[i] + (sG[i + 1] - sG[i]) * t;
-	b = sB[i] + (sB[i + 1] - sB[i]) * t;
+	float intensity; HeatSample(h, r, g, b, intensity);
+}
+
+//--- 熱い刃の発光色 = 色相 × 強さ。冷たい鉄は 0(光らない)。金属の地の色は PS_Wp の反射が受け持つ。
+DirectX::XMFLOAT4 HeatGlowRGB(float h)
+{
+	float r, g, b, intensity; HeatSample(h, r, g, b, intensity);
+	return DirectX::XMFLOAT4(r * intensity, g * intensity, b * intensity, 1.0f);
 }
 
 //--- 温度(0..1)を鋼の色(float4)に変換。冷たいときも暗い金属色で見える
@@ -459,6 +495,7 @@ void SceneForge::ResetRunState()
 	m_focus = -1; m_promptAlpha = 0.0f;	// 互動の状態も初期化
 	m_grabFocus = -1; m_grabPromptAlpha = 0.0f; m_gripAfterExit = false;
 	m_bannerAt = -1000.0f; m_bannerText.clear(); m_hiAlpha = 0.0f;	// 工程の札・工位の光も初期化
+	m_trackerSlide = 0.0f; m_trackerPopUntil = -1000.0f; m_trackerDoneFaces = -1;	// 工程リストは隠した状態から
 	m_walkPitch = 0.0f;
 	m_player.Init(DirectX::XMFLOAT3(0.0f, m_walkFloorY, -2.0f), 0.0f);	// 開始位置/向きを戻す
 	m_door.Reset();			// 裏口の扉は閉じた状態から
@@ -599,6 +636,16 @@ void SceneForge::TickPlaytestTimer(float dt)
 
 //--- 完成した1プレイ分を1行追記する。形式: 日時 / モード / 合計 / 工程ごとの「時間(うち移動)」。
 //    追記(上書きしない)=何人分・何回分も溜まり、調整の前後を見比べられる。
+const char* SceneForge::DifficultyName() const
+{
+	switch (m_difficulty)
+	{
+	case Difficulty::Apprentice: return "apprentice";
+	case Difficulty::Meister:    return "meister";
+	default:                     return "craftsman";
+	}
+}
+
 void SceneForge::WritePlaytestLog() const
 {
 	if (!m_recipe) return;
@@ -609,7 +656,7 @@ void SceneForge::WritePlaytestLog() const
 	for (const StepTime& t : m_stepTimes) total += t.total;
 	fprintf(fp, "%04d-%02d-%02d %02d:%02d  %s  total %.1fs (budget %.0fs)",
 		now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute,
-		Guided() ? "guided" : (m_tutorial ? "tutorial" : "normal"), total, PLAYTEST_BUDGET_SEC);
+		(m_tutorial && !Guided()) ? "tutorial" : DifficultyName(), total, PLAYTEST_BUDGET_SEC);	// 見習い(旧 guided)/ 職人 / マイスター / チュートリアルの課程
 	for (size_t i = 0; i < m_stepTimes.size() && i < m_recipe->steps.size(); ++i)
 		fprintf(fp, "  | %s %.1fs (move %.1fs)", m_recipe->steps[i].label, m_stepTimes[i].total, m_stepTimes[i].move);	// label は UTF-8
 	fprintf(fp, "\n");
@@ -953,11 +1000,12 @@ void SceneForge::UpdateTitle(float tick)
 		if (req >= nCourse)	// 戻る
 		{
 			Audio::Play(Audio::SE_UI_BACK, UI_BACK_VOLUME);
-			m_modeSelectOpen = true; m_modeSel = (int)ModeItem::Tutorial; m_modeRequest = -1;
+			m_modeSelectOpen = true; m_modeSel = (int)ModeItem::Tutorial; m_modeRequest = -1;	// 戻った所 = 開いた項目(チュートリアル)
 			return;
 		}
 		Audio::Play(Audio::SE_UI_CONFIRM, UI_CONFIRM_VOLUME);
 		m_tutorial   = true;
+		m_difficulty = Difficulty::Apprentice;	// チュートリアルは見習いの規則
 		m_courseIdx  = req;
 		m_introPhase = IntroPhase::LogoFade;
 		m_introTimer = 0.0f;
@@ -970,7 +1018,7 @@ void SceneForge::UpdateTitle(float tick)
 		if (InputActions::Pressed(Action::Confirm))
 		{
 			Audio::Play(Audio::SE_UI_CONFIRM, UI_CONFIRM_VOLUME);
-			m_modeSelectOpen = true; m_modeSel = (int)ModeItem::Tutorial; m_modeRequest = -1;
+			m_modeSelectOpen = true; m_modeSel = (int)ModeItem::Apprentice; m_modeRequest = -1;
 		}
 		return;	// 開いたフレームは決定を読まない(同じ SPACE で即決定しない様に)
 	}
@@ -993,8 +1041,12 @@ void SceneForge::UpdateTitle(float tick)
 		m_modeRequest = -1;
 		return;
 	}
-	const bool tutorial = (m_modeRequest == (int)ModeItem::Tutorial);
-	const bool guided   = (m_modeRequest == (int)ModeItem::Guided);
+	const bool tutorial   = (m_modeRequest == (int)ModeItem::Tutorial);
+	const bool apprentice = (m_modeRequest == (int)ModeItem::Apprentice);
+	// 難しさ: チュートリアルは見習いの規則(はじめての人向け)
+	m_difficulty = (m_modeRequest == (int)ModeItem::Meister)   ? Difficulty::Meister
+	             : (m_modeRequest == (int)ModeItem::Craftsman) ? Difficulty::Craftsman
+	                                                           : Difficulty::Apprentice;
 	m_modeSelectOpen = false;
 	m_modeRequest    = -1;
 	if (tutorial)	// チュートリアル = まず課程の一覧を開く(選んだ課程から始まる)
@@ -1004,8 +1056,8 @@ void SceneForge::UpdateTitle(float tick)
 		m_courseRequest    = -1;
 		return;
 	}
-	m_tutorial   = guided;	// ガイド付き = チュートリアルの課を出しながら / 通常 = 救急だけ
-	m_courseIdx  = -1;	// 通常モード・ガイド付き = 最初から最後まで一通り
+	m_tutorial   = apprentice;	// 見習い = チュートリアルの課を順に出しながら(旧「ガイド付き」)/ 職人 = 救急だけ / マイスター = 課なし(LessonsAllowed)
+	m_courseIdx  = -1;	// 難しさの3つ = 最初から最後まで一通り
 	m_introPhase = IntroPhase::LogoFade;
 	m_introTimer = 0.0f;
 	Audio::Play(Audio::SE_TITLE_FADE, TITLE_FADE_SE_VOLUME);
@@ -1242,7 +1294,7 @@ void SceneForge::UpdatePlay(float tick)
 
 	// --- 工程(step)状態機を進める ---
 	//   各工程状態の OnUpdate が完了条件を見て AdvanceStep() を呼ぶ:
-	//     Heat  … 鋼が燃え始めたら(BURN_TEMP)次へ
+	//     Heat  … 炉で十分に熱くなったら(FORGE_FULL_TEMP)次へ
 	//     Forge … 両面の全区域が到位したら次へ(叩く行為自体は上の蓄力/DoStrike が担当)
 	//     Grind … 刃の全区域が研ぎ上がったら次へ(研ぐ行為は UpdateGrind が担当)
 	//     Quench… 水槽で左クリック→沈める→黒帯→完成(FinishGame)
@@ -1408,6 +1460,8 @@ void SceneForge::DoStrike(float power)	// power 0..1 = 錘が当たった速さ(
 	case ForgingSim::StrikeOutcome::ColdHit:
 		label = (const char*)u8"まだ冷たい…赤くなるまで熱して"; col = SAY_COLD_COL;
 		NoteLessonMistake(LessonId::LeaveCold);	// 救急: 冷えた鉄を叩き続けたら「離れて炉へ」を見せる
+		// 職人/マイスター: 冷打は負の品質 = 打撃の平均を下げる(罰は出来栄えだけ。失敗にはしない)。見習い: 0 のまま
+		if (ColdHitPenalized()) m_qualitySum += QUALITY_COLD_HIT;
 		break;
 	case ForgingSim::StrikeOutcome::OverHit:
 		// 緑帯の上: 過熱(鋼が焼ける)まで行っていれば強く、手前なら「少し冷ませ」(どちらも有効打ではない)
@@ -1483,9 +1537,73 @@ void SceneForge::UpdateBurnFx(float tick)
 void SceneForge::ResetGrindSegments()
 {
 	for (int side = 0; side < ForgingSim::NSIDES; ++side)
+	{
 		for (int s = 0; s < ForgingSim::NSEG; ++s) m_grindSegWasDone[side][s] = false;
+		m_grindSweepAt[side] = -1.0f;	// 研ぎの自動仕上げもまだ
+		m_grindSweepDone[side] = false;
+	}
 	m_glints.clear();
 	m_twinkleTimer = GLINT_TWINKLE_GAP_MIN;
+}
+
+//--- 刃の根元 = 幅の広い端(切っ先は細い)。成品(最後の段)の頂点で、長手の両端の帯の「断面の広がり」を比べる
+//    (ハンマーの頭を見つける FindHammerHeadLocal と同じ考え)。モデルを替えても自動で決まる。1回だけ求めて覚える。
+bool SceneForge::GrindRootAtLowEnd()
+{
+	if (m_grindRootLow >= 0) return m_grindRootLow == 1;
+	m_grindRootLow = 1;	// 求められない時(武器FBXが無い)の既定
+	if (!m_wpOk || m_wpStage.empty()) return true;
+	const std::vector<XMFLOAT3>& v = m_wpStage.back().pos;
+	const int la = AimSystem::LongAxis(m_wpMin, m_wpMax);
+	const float lo = (&m_wpMin.x)[la], hi = (&m_wpMax.x)[la];
+	const float END_BAND = 0.15f;	// 長手の両端この割合の帯を「端」とみなす
+	XMFLOAT3 bmn[2] = { { FLT_MAX, FLT_MAX, FLT_MAX }, { FLT_MAX, FLT_MAX, FLT_MAX } };
+	XMFLOAT3 bmx[2] = { { -FLT_MAX, -FLT_MAX, -FLT_MAX }, { -FLT_MAX, -FLT_MAX, -FLT_MAX } };
+	for (const XMFLOAT3& p : v)
+	{
+		const float t = ((&p.x)[la] - lo) / fmaxf(hi - lo, 1e-6f);
+		const int e = (t < END_BAND) ? 0 : (t > 1.0f - END_BAND ? 1 : -1);
+		if (e < 0) continue;
+		bmn[e] = XMFLOAT3(fminf(bmn[e].x, p.x), fminf(bmn[e].y, p.y), fminf(bmn[e].z, p.z));
+		bmx[e] = XMFLOAT3(fmaxf(bmx[e].x, p.x), fmaxf(bmx[e].y, p.y), fmaxf(bmx[e].z, p.z));
+	}
+	float spread[2];
+	for (int e = 0; e < 2; ++e)
+	{
+		spread[e] = 1.0f;
+		for (int a = 0; a < 3; ++a) if (a != la) spread[e] *= fmaxf((&bmx[e].x)[a] - (&bmn[e].x)[a], 0.0f);
+	}
+	m_grindRootLow = (spread[0] >= spread[1]) ? 1 : 0;
+	return m_grindRootLow == 1;
+}
+
+//--- 研ぎの自動仕上げ: 面の研ぎが m_grindAutoFinish に届いたら開始し、根元 → 切っ先へ1セルずつ仕上げる。
+//    仕上がったセルは磨いた面で描かれる(WeaponRender)= 光る面が根元から走る。光芒も GRIND_SWEEP_GLINT_STEP セルごとに付いて行く。
+void SceneForge::UpdateGrindSweep(int side)
+{
+	const int NL = ForgingSim::NL, per = ForgingSim::NL / ForgingSim::NSEG;
+	if (m_grindSweepAt[side] < 0.0f)
+	{
+		if (m_grindSweepDone[side] || m_forging.SharpProgress(side) < m_grindAutoFinish || m_forging.SharpProgress(side) >= 1.0f) return;
+		m_grindSweepAt[side] = m_time;
+		m_grindSweepDone[side] = true;
+		// 面の完成の合図はここ(走り始め)。両面ともこれで済むなら一段高く
+		const bool otherDone = m_forging.SharpProgress(1 - side) >= 1.0f;
+		Audio::Play(Audio::SE_FACE_DONE, FACE_DONE_VOLUME, otherDone ? FACE_DONE_FINAL_PITCH : 1.0f);
+	}
+	const float p = fminf((m_time - m_grindSweepAt[side]) / GRIND_SWEEP_SEC, 1.0f);
+	const int upTo = (int)ceilf(p * NL);	// 根元から数えて、ここまでのセルを仕上げる
+	const bool rootLow = GrindRootAtLowEnd();
+	for (int k = 0; k < upTo; ++k)
+	{
+		const int i = rootLow ? k : NL - 1 - k;
+		if (m_forging.EdgeCellDoneOf(side, i)) continue;
+		m_forging.CompleteEdgeCell(side, i);
+		if (k % GRIND_SWEEP_GLINT_STEP == 0) SpawnGlint(i / per, ((i % per) + 0.5f) / per, GRIND_SEG_FLASH_SEC, 1.0f, true);
+	}
+	// 区域の「チン」は鳴らさない(面の完成の音を走り始めに鳴らした)= 立ち上がりの記録だけ合わせる
+	for (int s = 0; s < ForgingSim::NSEG; ++s) m_grindSegWasDone[side][s] = m_forging.SharpDoneOf(side, s);
+	if (p >= 1.0f) m_grindSweepAt[side] = -1.0f;	// 走り切った
 }
 
 void SceneForge::SpawnGlint(int seg, float lenT, float life, float scale, bool atWheel)
@@ -1583,6 +1701,8 @@ void SceneForge::UpdateGrind(float tick, bool inputOn)
 	const float speed = m_wheel.Speed01();
 	constexpr float MIN_GRIND_SPEED = 0.02f;	// これ未満=砥石がほぼ止まっている(研げない・火花も出ない)
 	const bool grinding = pressing && speed > MIN_GRIND_SPEED;
+	// 研ぎの自動仕上げ(開始の判定と、走っている間の仕上げ)。押すのをやめても走り切る
+	for (int s = 0; s < ForgingSim::NSIDES; ++s) UpdateGrindSweep(s);
 	bool onDoneSpot = false;	// 研ぎ上がった所を研いでいる(火花が細り、音が軽く高くなる=もう削る物が無い)
 	if (grinding)
 	{
@@ -1606,7 +1726,7 @@ void SceneForge::UpdateGrind(float tick, bool inputOn)
 
 		// この面の刃が全部研ぎ上がった瞬間: 「完成」の合図(鍛造の面の完成と同じ音。両面とも済めば一段高く)
 		const bool faceJustDone = !faceWasDone && m_forging.SharpProgress(side) >= 1.0f;
-		if (faceJustDone)
+		if (faceJustDone && !m_grindSweepDone[side])	// 自動仕上げで済んだ面は、走り始めに鳴らし済み
 			Audio::Play(Audio::SE_FACE_DONE, FACE_DONE_VOLUME, m_forging.AllSharp() ? FACE_DONE_FINAL_PITCH : 1.0f);
 
 		// 区域(NSEG)が研ぎ上がった瞬間(立ち上がり): その区域の刃を光らせ、小さな「チン」。

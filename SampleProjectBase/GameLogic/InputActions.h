@@ -43,6 +43,7 @@ enum class Action
 	MoveBack,		// 歩く: 後ろ
 	MoveLeft,		// 歩く: 左
 	MoveRight,		// 歩く: 右
+	Peek,			// 押している間、工程リストを左から出して見る(普段は隠す。2026-11 審査会)
 	Count
 };
 

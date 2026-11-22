@@ -35,6 +35,7 @@ namespace
 		{ VK_DOWN,    KBM_DIR "keyboard_arrow_down", (const char*)u8"↓" },
 		{ VK_LEFT,    KBM_DIR "keyboard_arrow_left", (const char*)u8"←" },
 		{ VK_RIGHT,   KBM_DIR "keyboard_arrow_right",(const char*)u8"→" },
+		{ VK_TAB,     KBM_DIR "keyboard_tab",        "Tab" },
 	};
 
 	// 文字キーの絵/呼び名は文字から作る。作った文字列は覚えておく(返したポインタがずっと有効な様に)
@@ -115,6 +116,7 @@ namespace
 		{ AxisPrompt::Aim,            { KBM_DIR "mouse_move" },       MOUSE_NAME, KBM_DIR "mouse" },
 		{ AxisPrompt::HandVertical,   { KBM_DIR "mouse_vertical" },   MOUSE_NAME, KBM_DIR "mouse" },
 		{ AxisPrompt::HandHorizontal, { KBM_DIR "mouse_horizontal" }, MOUSE_NAME, KBM_DIR "mouse" },
+		{ AxisPrompt::CutAngle,       { KBM_DIR "keyboard_a", KBM_DIR "keyboard_d" }, (const char*)u8"A/Dキー", KBM_DIR "keyboard_a" },
 	};
 	const AxisInfo AXIS_PAD[] =
 	{
@@ -123,6 +125,7 @@ namespace
 		{ AxisPrompt::Aim,            { PAD_DIR "xbox_stick_l_vertical" },   LSTICK, PAD_DIR "xbox_stick_l" },
 		{ AxisPrompt::HandVertical,   { PAD_DIR "xbox_stick_l_vertical" },   LSTICK, PAD_DIR "xbox_stick_l" },
 		{ AxisPrompt::HandHorizontal, { PAD_DIR "xbox_stick_l_horizontal" }, LSTICK, PAD_DIR "xbox_stick_l" },
+		{ AxisPrompt::CutAngle,       { PAD_DIR "xbox_stick_l_horizontal" }, LSTICK, PAD_DIR "xbox_stick_l" },
 	};
 	const AxisInfo& Axis(AxisPrompt a)
 	{

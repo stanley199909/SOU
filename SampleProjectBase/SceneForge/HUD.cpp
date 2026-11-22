@@ -310,11 +310,11 @@ void SceneForge::DrawKeyHints(const KeyHint* hints, int count, float yRatio, flo
 	const float RIGHT_MARGIN_RATIO = 0.03f;	// 右揃えの時の画面右端からの余白(画面幅比)
 	// 64px 版(Default)。画面上は約45px(1080p)=ほぼ等倍。128px 版だと約2.8倍の縮小になり、ミップマップの平均でぼやけた。
 	// 絵は今の機器(キーボード・マウス / 手柄)に合わせて InputPrompts が選ぶ(パスも InputPrompts が持つ)。
-	const float ICON_RATIO      = 0.042f;	// アイコンの大きさ(画面高さ比)
+	const float ICON_RATIO      = 0.032f;	// アイコンの大きさ(画面高さ比)。2026-11 審査会: いつも出すが小さく(モンハン式。旧 0.042)
 	const float ICON_GAP_RATIO  = 0.002f;	// 1つの説明の中のアイコン同士の間
 	const float LABEL_GAP_RATIO = 0.004f;	// アイコンと一言の間
-	const float HINT_GAP_RATIO  = 0.030f;	// 説明と説明の間
-	const float TEXT_RATIO      = 0.024f;	// 一言の文字の高さ
+	const float HINT_GAP_RATIO  = 0.024f;	// 説明と説明の間
+	const float TEXT_RATIO      = 0.019f;	// 一言の文字の高さ(旧 0.024)
 	const float SHADOW_PX       = 2.0f;		// 影のずれ(px)
 	ImVec2 disp = ImGui::GetIO().DisplaySize;
 	ImDrawList* dl = HudDrawList();
@@ -677,10 +677,13 @@ void SceneForge::DrawTitleUI()
 	// 開始プロンプトは緩やかに明滅させて「操作可能」を伝える
 	if (m_modeSelectOpen)
 	{
-		static const char* LABELS[(int)ModeItem::Count] = { (const char*)u8"チュートリアル", (const char*)u8"ガイド付き", (const char*)u8"通常モード", (const char*)u8"ゲームを終了する" };
-		static const char* DESCS[(int)ModeItem::Count]  = { (const char*)u8"はじめての方へ。工程を一つずつ選んで、操作を順に覚えます",
-		                                                    (const char*)u8"はじめて遊ぶ方へ。最初から最後まで、遊びながら操作を教えます",
-		                                                    (const char*)u8"案内は最小限。自分の目と耳で鍛冶を進めます",
+		// 並びは ModeItem と同じ: 難しさ(鍛冶の身分)3つ → チュートリアル → 終了
+		static const char* LABELS[(int)ModeItem::Count] = { (const char*)u8"見習い", (const char*)u8"職人", (const char*)u8"マイスター",
+		                                                    (const char*)u8"チュートリアル", (const char*)u8"ゲームを終了する" };
+		static const char* DESCS[(int)ModeItem::Count]  = { (const char*)u8"はじめての方へ。遊びながら操作を教わる。冷たい鉄を叩いても失敗にならない",
+		                                                    (const char*)u8"案内は最小限。冷たい鉄を叩くと出来栄えが下がる",
+		                                                    (const char*)u8"温度ゲージなし。鉄の色で温度を読む",
+		                                                    (const char*)u8"工程を一つずつ選んで、操作を順に覚える",
 		                                                    (const char*)u8"ゲームを閉じます" };
 		const float PANEL_CENTER_Y = 0.70f;
 		const int clicked = DrawChoicePanel((const char*)u8"モードを選ぶ", LABELS, (int)ModeItem::Count, m_modeSel,
@@ -761,9 +764,13 @@ void SceneForge::DrawPlayUI()
 
 	ImFont* jp = DebugUI::FontJP();	// 指引 UI の日本語(游明朝)
 
+	DrawCutLine();	// 試し切りで集中している間: 準心を通る刃の線(角度の見本。TestCut.cpp)
 	// 温度ゲージ
-	if (Tempering()) DrawTemperChart();	// 焼き戻し: 温度でなく色で判断する工程=温度ゲージの代わりに色見本
-	else            DrawHeatGauge();
+	if (ShowHeatGauge() && m_slashPhase != SlashPhase::Focus)	// マイスター: 出さない(温度は鉄の色で読む = KCD2 と同じ)/ 試し切りで集中している間も出さない
+	{
+		if (Tempering()) DrawTemperChart();	// 焼き戻し: 温度でなく色で判断する工程=温度ゲージの代わりに色見本
+		else            DrawHeatGauge();
+	}
 
 	// 工程リスト(左)と、走動中に次に向かう点の目印(3D の上)
 	DrawStepTracker();
@@ -772,62 +779,51 @@ void SceneForge::DrawPlayUI()
 	// 案内文(宏観チュートリアル=「今何をするか」)。工程と状況で変わる(UpdateGuide)。
 	//   基本の文言は配方(GameData/WeaponRecipe)が持つ=換武器で自動的に差し替わる。
 	//   文が変わった瞬間は淡入+少し下から浮かせる=「変わった」ことに気付かせる(読み落とし防止)。
+	if (ShowGoalLine())	// マイスター: 出さない(工程リストの Tab と▼の目印だけ)
 	{
 		const char* text = (m_guideText && m_guideText[0]) ? m_guideText : CurrentStep().instruction;
 		text = InputPrompts::Format(text);	// {Flip} 等 → 今の機器の呼び名(「Fキー」/「Yボタン」)
 		const float FADE_IN_SEC   = 0.6f;	// 淡入にかける秒
 		const float RISE_RATIO    = 0.015f;	// 淡入中に浮き上がる量(画面高さ比)
-		const float TEXT_Y        = 0.10f;	// 文の縦位置(画面高さ比)
-		const float TEXT_SCALE    = 1.0f;	// 游明朝の焼き寸(30px)に対する倍率
+		const float TEXT_SCALE    = 0.85f;	// 游明朝の焼き寸(30px)に対する倍率。下の列に収まる大きさ
+		const ImU32 GOAL_COL      = IM_COL32(255, 244, 225, 255);	// 少し暖かい白
 		float t = fminf((m_time - m_guideChangedAt) / FADE_IN_SEC, 1.0f);
 		if (t < 0.0f) t = 0.0f;
-		// 紙片の上に墨で書く(工程リスト・メニューと同じ羊皮紙の見た目に揃える。2026-10-14 ユーザーと合意)。紙ごと淡入して浮き上がる
-		float y = TEXT_Y + RISE_RATIO * (1.0f - t);
-		DrawTextOnStrip(m_uiStrip.get(), text, y, jp->FontSize * TEXT_SCALE, jp, t);
+		// 下の列の「一言の目標」の欄。見た目は字幕と同じ半透明の箱(DrawSubtitle)= 背景の絵を替える時はそこ1か所だけ直す。
+		//   旧: 画面上の羊皮紙の紙片(2026-11 審査会: UI が4か所に散る → 下の1列へ)。箱ごと淡入して浮き上がる
+		float y = HUD_GOAL_Y_RATIO + RISE_RATIO * (1.0f - t);
+		DrawSubtitle(text, y, jp->FontSize * TEXT_SCALE, jp, (GOAL_COL & ~IM_COL32_A_MASK) | ((ImU32)(255 * t) << IM_COL32_A_SHIFT));
 	}
-	DrawStepBanner();	// 工程が進んだ瞬間の札(案内の紙片より手前。工程リストへ飛んで行く)
+	DrawStepBanner();	// 工程が進んだ瞬間の札(工程リストへ飛んで行く)
 
-	// 翻面の子状態ごとの操作ヒント(宏観チュートリアル)。運鏡ビート中は状況説明、
-	// 回している間は「押し続ける/離す」で何が起きるかを明示する。
-	const ImU32 BEAT_COL  = IM_COL32(255, 230, 180, 220);	// 運鏡中の状況説明(少し淡く)
-	const float FLIP_Y = 0.24f, FLIP_SCALE = 0.85f;
-	switch (m_flipPhase)
+	// 翻面: 押した長さの輪(F + 溜まる輪。離すと減る)。チュートリアルで未習得の間は案内(DrawLessonPrompts)が同じ物を描くので重ねない。
+	if (m_flipPhase == FlipPhase::Holding && !LessonDrawsFlip())
+		DrawFlipHoldPrompt(1.0f, 1.0f, IM_COL32(255, 255, 255, 255), (const char*)u8"長押しで裏返す");
+
+	// ※KCD2式: 画面中心の準心は「置かない」。鎚が画面中心に固定 = 鎚そのものが照準(CameraAim.cpp)。
+
+	// 下の列の「独白」の欄: 1つの欄を優先順で使う(重ねると読めない)。過熱の警告 > 主人公の独白 > 翻面の状況の字幕。
 	{
-	case FlipPhase::Holding:
-	{
-		switch (CurrentFlipBeat())
+		const ImU32 BEAT_COL       = IM_COL32(255, 230, 180, 220);	// 翻面の運鏡中の状況説明(少し淡く)
+		const float BEAT_SCALE     = 0.8f;
+		const float POPUP_SCALE    = 0.95f;
+		const float OVERHEAT_SCALE = 1.1f;
+		const float OVERHEAT_BLINK = 12.0f;		// 点滅の速さ(rad/秒)
+		const char* line = nullptr; ImU32 col = 0; float scale = 1.0f;
+		if (m_forging.Heat() > OVERHEAT)
 		{
-		case FlipBeat::Tongs: DrawSubtitle((const char*)u8"火ばさみを手に取る…", FLIP_Y, jp->FontSize * FLIP_SCALE, jp, BEAT_COL); break;
-		case FlipBeat::Grip:  DrawSubtitle((const char*)u8"刃を掴んでいる…",     FLIP_Y, jp->FontSize * FLIP_SCALE, jp, BEAT_COL); break;
-		default: break;
+			const float p = 0.5f + 0.5f * sinf(m_time * OVERHEAT_BLINK);
+			line = (const char*)u8"！！　過熱　！！"; col = IM_COL32(255, 70, 50, (int)(150 + p * 105)); scale = OVERHEAT_SCALE;
 		}
-		// 押した長さの輪(F + 溜まる輪。離すと減る)。チュートリアルで未習得の間は案内(DrawLessonPrompts)が同じ物を描くので重ねない。
-		if (!LessonDrawsFlip()) DrawFlipHoldPrompt(1.0f, 1.0f, IM_COL32(255, 255, 255, 255), (const char*)u8"長押しで裏返す");
-		break;
-	}
-	case FlipPhase::PutBack:  DrawSubtitle((const char*)u8"火ばさみを戻している…", FLIP_Y, jp->FontSize * FLIP_SCALE, jp, BEAT_COL); break;
-	default: break;
-	}
-
-	// ※KCD2式: 画面中心の準心は「置かない」。第一人称に固定十字は不自然で、しかも屏幕中央に
-	//   死んでいて動かせない。狙いの提示は「動くハンマー＋刃の高亮段」で行う(下の WeaponRender)。
-
-	// 過熱の警告(点滅)
-	if (m_forging.Heat() > OVERHEAT)
-	{
-		float p = 0.5f + 0.5f * sinf(m_time * 12.0f);
-		const float OVERHEAT_Y = 0.20f, OVERHEAT_SCALE = 1.3f;
-		DrawSubtitle((const char*)u8"！！　過熱　！！", OVERHEAT_Y, jp->FontSize * OVERHEAT_SCALE, jp, IM_COL32(255, 70, 50, (int)(150 + p * 105)));
-	}
-
-	// 打撃フィードバックのポップアップ(鉄条の上でフェード)
-	if (m_popupLife > 0.0f)
-	{
-		float a = m_popupLife / POPUP_LIFE;
-		if (a > 1.0f) a = 1.0f;
-		unsigned int c = (m_popupCol & 0x00FFFFFF) | ((unsigned int)(a * 255) << 24);
-		const float POPUP_Y = 0.36f, POPUP_SCALE = 1.15f;
-		DrawSubtitle(m_popupText, POPUP_Y, jp->FontSize * POPUP_SCALE, jp, c);	// 主人公の独白 = 字幕の見た目(游明朝)
+		else if (m_popupLife > 0.0f)	// 打撃などの独白(KCD式の負向フィードバック)。時間で淡出
+		{
+			const float a = fminf(m_popupLife / POPUP_LIFE, 1.0f);
+			line = m_popupText; col = (m_popupCol & 0x00FFFFFF) | ((unsigned int)(a * 255) << 24); scale = POPUP_SCALE;
+		}
+		else if (m_flipPhase == FlipPhase::Holding && CurrentFlipBeat() == FlipBeat::Tongs) { line = (const char*)u8"火ばさみを手に取る…";   col = BEAT_COL; scale = BEAT_SCALE; }
+		else if (m_flipPhase == FlipPhase::Holding && CurrentFlipBeat() == FlipBeat::Grip)  { line = (const char*)u8"刃を掴んでいる…";       col = BEAT_COL; scale = BEAT_SCALE; }
+		else if (m_flipPhase == FlipPhase::PutBack)                                          { line = (const char*)u8"火ばさみを戻している…"; col = BEAT_COL; scale = BEAT_SCALE; }
+		if (line) DrawSubtitle(line, HUD_MONOLOGUE_Y_RATIO, jp->FontSize * scale, jp, col);
 	}
 
 	// KCD式: 「叩く場所」は指示しない。誤打時だけ主人公の独白(m_popupText)で知らせる。
@@ -843,6 +839,7 @@ void SceneForge::DrawPlayUI()
 		{ AxisPrompt::Look,       (const char*)u8"見回す" },
 		{ Action::Interact,       (const char*)u8"使う" },
 		{ Action::Grab,           (const char*)u8"掴む" },
+		{ Action::Peek,           (const char*)u8"工程" },
 	};
 	static const KeyHint ANVIL_HINTS[] = {
 		{ AxisPrompt::Aim,        (const char*)u8"狙う" },
@@ -850,17 +847,20 @@ void SceneForge::DrawPlayUI()
 		{ Action::Flip,           (const char*)u8"長押し：裏返す" },
 		{ Action::Grab,           (const char*)u8"掴んで運ぶ" },
 		{ Action::Interact,       (const char*)u8"離れる" },
+		{ Action::Peek,           (const char*)u8"工程" },
 	};
 	static const KeyHint HEARTH_HINTS[] = {
 		{ Action::Bellows,        (const char*)u8"長押し：ふいごで風を送る" },
 		{ Action::Grab,           (const char*)u8"掴んで出す" },
 		{ Action::Interact,       (const char*)u8"離れる" },
+		{ Action::Peek,           (const char*)u8"工程" },
 	};
 	static const KeyHint TEMPER_HINTS[] = {	// 同じ炉の工位でも、焼き戻しの工程は刃を炭の上で動かす
 		{ AxisPrompt::HandHorizontal, (const char*)u8"左右：炭の上で刃を動かす" },
 		{ Action::Bellows,        (const char*)u8"長押し：ふいご(速く色が進む)" },
 		{ Action::Grab,           (const char*)u8"掴んで出す" },
 		{ Action::Interact,       (const char*)u8"離れる" },
+		{ Action::Peek,           (const char*)u8"工程" },
 	};
 	static const KeyHint GRIND_HINTS[] = {
 		{ Action::Pedal,          (const char*)u8"連打：ペダル" },
@@ -869,16 +869,24 @@ void SceneForge::DrawPlayUI()
 		{ Action::Flip,           (const char*)u8"長押し：裏返す" },
 		{ Action::Grab,           (const char*)u8"掴んで運ぶ" },
 		{ Action::Interact,       (const char*)u8"離れる" },
+		{ Action::Peek,           (const char*)u8"工程" },
 	};
 	static const KeyHint TROUGH_HINTS[] = {
 		{ Action::Use,            (const char*)u8"水に沈める" },
 		{ Action::Grab,           (const char*)u8"掴んで運ぶ" },
 		{ Action::Interact,       (const char*)u8"離れる" },
+		{ Action::Peek,           (const char*)u8"工程" },
 	};
-	static const KeyHint TESTCUT_HINTS[] = {	// 試し切り: 脚は固定、構えて集中し、離して一太刀
+	static const KeyHint TESTCUT_HINTS[] = {	// 試し切り: 脚は固定。使うを押している間 = 集中(振りかぶり・世界が遅くなる)
 		{ AxisPrompt::Look,       (const char*)u8"狙う" },
-		{ Action::Use,            (const char*)u8"長押し：構える／離す：斬る" },
+		{ Action::Use,            (const char*)u8"長押し：構える" },
 		{ Action::Interact,       (const char*)u8"離れる" },
+		{ Action::Peek,           (const char*)u8"工程" },
+	};
+	static const KeyHint FOCUS_HINTS[] = {	// 試し切りで集中している間(使うを押している): 狙い、刃の角度を回し、離して一太刀
+		{ AxisPrompt::Look,       (const char*)u8"狙う" },
+		{ AxisPrompt::CutAngle,   (const char*)u8"刃の角度" },
+		{ Action::Use,            (const char*)u8"離す：斬る" },
 	};
 	static const KeyHint QUENCH_STIR_HINTS[] = {
 		{ AxisPrompt::HandVertical, (const char*)u8"上下：刃を揺する" },
@@ -895,11 +903,11 @@ void SceneForge::DrawPlayUI()
 			break;
 		case Station::Grindstone: hints = GRIND_HINTS;  nHints = _countof(GRIND_HINTS);  break;
 		case Station::Trough:     hints = TROUGH_HINTS; nHints = _countof(TROUGH_HINTS); break;
-		case Station::TestCut:    hints = TESTCUT_HINTS; nHints = _countof(TESTCUT_HINTS); break;
+		case Station::TestCut:    { const bool focus = (m_slashPhase == SlashPhase::Focus); hints = focus ? FOCUS_HINTS : TESTCUT_HINTS; nHints = focus ? (int)_countof(FOCUS_HINTS) : (int)_countof(TESTCUT_HINTS); } break;
 		}
 		if (QuenchStirring()) { hints = QUENCH_STIR_HINTS; nHints = _countof(QUENCH_STIR_HINTS); }	// 淬火中: 離れられない=揺するだけ
 	}
-	const float GUIDE_Y = 0.93f;		// 操作ガイドの縦位置(画面高さ比)
+	const float GUIDE_Y = HUD_HINTS_Y_RATIO;	// 操作ガイドの縦位置 = 下の列の一番下
 	// 今その操作ができない間は出さない(出すと「押せば効く」と誤解させる。ユーザー指摘 2026-10-07):
 	//   翻面中(翻面の操作は上の専用の案内が出る) / 拍子表の再生中(掴む・置くの演出) / 走動⇔工位の移動中
 	const bool inputLocked = (m_flipPhase != FlipPhase::None) || SequencePlaying() || Transitioning();
@@ -1017,11 +1025,52 @@ void SceneForge::DrawStepTracker()
 	const float r      = disp.y * DOT_RATIO;
 	const float corner = disp.y * FRAME_CORNER_RATIO;
 
+	// 普段は隠す: 工程が変わった直後(m_trackerPopUntil まで)と、Tab(手柄: ビュー)を押している間だけ左から滑り出る。
+	//   2026-11 審査会: 4か所に散った UI の1つ。いつも出ていると視界を塞ぐ → 見たい時だけ見る(LoL の得点表の様に押している間)。
+	// 面(表/裏)が仕上がった時(その面の格子が全部緑になった時)も少しの間出す(2026-11-21 ユーザー決定: 区域ごとだと多すぎる → 面ごと)。
+	//   仕上がった面の数が増えた瞬間を見る(エッジ検出)。工程が変わって数が減った時は出さない(その時は札で出る)。
+	{
+		int doneFaces = 0;
+		for (int k = 0; k < nSub; ++k)
+		{
+			if (!subs[k].segmented) continue;
+			bool all = true;
+			for (int s = 0; s < ForgingSim::NSEG; ++s) all = all && subs[k].seg[s] >= 1.0f;
+			if (all) ++doneFaces;
+		}
+		if (m_trackerDoneFaces >= 0 && doneFaces > m_trackerDoneFaces)
+			m_trackerPopUntil = fmaxf(m_trackerPopUntil, m_time + TRACKER_POP_SEC);
+		m_trackerDoneFaces = doneFaces;
+	}
+	const bool wantShown = InputActions::Held(Action::Peek) || m_time < m_trackerPopUntil;
+	m_trackerSlide = Lerp::Damp(m_trackerSlide, wantShown ? 1.0f : 0.0f, TRACKER_SLIDE_LAMBDA, ImGui::GetIO().DeltaTime);
+	// 引っ込んだ位置 = パネルの右の端だけ(TRACKER_PEEK_EDGE)が画面の左に残る所。
+	//   端が見えている = 「ここに何かある、押せば出る」と気付ける(2026-11-21 ユーザー要望。完全に隠すと存在に気付かない)
+	const float panelW = disp.x * PANEL_W_RATIO;
+	const float hiddenX = -disp.x * PANEL_X_RATIO - panelW * (1.0f - TRACKER_PEEK_EDGE);
+	const float slideX  = hiddenX * (1.0f - m_trackerSlide);
+
 	// パネルの大きさは中身から決める(工程数・進捗バーの本数が変わっても枠が合う)
 	const float contentH = row * HEAD_GAP + row * n + subRow * nSub;
-	ImVec2 pa(disp.x * PANEL_X_RATIO, disp.y * PANEL_Y_RATIO);
-	ImVec2 pb(pa.x + disp.x * PANEL_W_RATIO, pa.y + corner * INSET_TOP + contentH + corner * INSET_BOTTOM);
+	ImVec2 pa(disp.x * PANEL_X_RATIO + slideX, disp.y * PANEL_Y_RATIO);
+	ImVec2 pb(pa.x + panelW, pa.y + corner * INSET_TOP + contentH + corner * INSET_BOTTOM);
 	DrawParchment(dl, m_uiFrame.get(), pa, pb, corner);
+
+	// 引っ込んでいる間は、残った端の横に「開く」キーの絵(Tab / ビュー)。出るにつれて消える
+	{
+		const float ICON_RATIO = 0.032f;	// 操作ガイドのアイコンと同じ大きさ(画面高さ比)
+		const float ICON_GAP   = 0.35f;		// 端からアイコンまでの隙間(アイコンの大きさに対する比)
+		const float hide = 1.0f - m_trackerSlide;
+		const char* icon = InputPrompts::Icon(Action::Peek);
+		std::shared_ptr<Texture> tex = icon ? TextureCache::Get((std::string(icon) + ".png").c_str()) : nullptr;
+		if (tex && tex->GetResource() && hide > 0.0f)
+		{
+			const float s = disp.y * ICON_RATIO;
+			const ImVec2 c(pb.x + s * (0.5f + ICON_GAP), (pa.y + pb.y) * 0.5f);
+			dl->AddImage((ImTextureID)tex->GetResource(), ImVec2(c.x - s * 0.5f, c.y - s * 0.5f), ImVec2(c.x + s * 0.5f, c.y + s * 0.5f),
+			             ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, (int)(255 * hide)));
+		}
+	}
 
 	const float x  = pa.x + corner * INSET_SIDE;
 	float       cy = pa.y + corner * INSET_TOP;
@@ -1174,7 +1223,7 @@ const char* SceneForge::GuideFor(Station& goal) const
 		if (m_quenchTurn > 0.0f) { goal = Station::Trough; return st.instruction; }
 		if (inFire)
 		{
-			if (heat < ReadyTemp(st.type)) { goal = Station::Hearth; return (const char*)u8"炉で、火花が散るまで熱する"; }
+			if (heat < ReadyTemp(st.type)) { goal = Station::Hearth; return (const char*)u8"炉で、明るい橙色になるまで熱する"; }
 			goal = Station::Trough;
 			return (const char*)u8"十分に熱くなった。水槽へ運ぶ";
 		}
@@ -1199,14 +1248,14 @@ void SceneForge::UpdateGuide()
 }
 
 //--- 加熱が「済」になる温度 = 次の工程を始めるのに十分な熱さ。
-//    鍛造: 温度ゲージの緑帯(適温)に入った所 / 焼入れ: 火花が散る(=加熱工程の完了条件と同じ)。
+//    鍛造: 温度ゲージの緑帯(適温)に入った所 / 焼入れ: 炉で十分に熱い(FORGE_FULL_TEMP = 加熱工程の完了条件と同じ)。
 float SceneForge::ReadyTemp(StepName next) const
 {
 	switch (next)
 	{
 	case StepName::Forge:  return IDEAL_MIN + FORGE_READY_MARGIN;	// 緑帯に少し入った所(下の MinWorkTemp との幅=ヒステリシス)
-	case StepName::Quench: return ForgingSim::BURN_TEMP;
-	default:               return ForgingSim::BURN_TEMP;
+	case StepName::Quench: return FORGE_FULL_TEMP;
+	default:               return FORGE_FULL_TEMP;
 	}
 }
 
@@ -1320,6 +1369,7 @@ void SceneForge::ShowStepBanner(int prevIdx)
 	m_bannerText += StationName(StepStation(next.type));
 	m_bannerText += (const char*)u8"へ）";
 	m_bannerAt = m_time;
+	m_trackerPopUntil = m_time + BANNER_IN_SEC + BANNER_HOLD_SEC + BANNER_FLY_SEC + TRACKER_POP_SEC;	// 札が飛び込む工程リストを出しておく
 	Audio::Play(Audio::SE_NEXT_STEP, BANNER_SE_VOLUME);
 }
 
@@ -1507,7 +1557,8 @@ float SceneForge::GradeScore() const
 float SceneForge::ForgeScore() const
 {
 	const float qAvg = (m_strikeCount > 0) ? (m_qualitySum / (float)m_strikeCount) : 0.0f;
-	return (GRADE_W_MATCH * m_match + GRADE_W_QUALITY * qAvg) / (GRADE_W_MATCH + GRADE_W_QUALITY);
+	const float s = (GRADE_W_MATCH * m_match + GRADE_W_QUALITY * qAvg) / (GRADE_W_MATCH + GRADE_W_QUALITY);
+	return fminf(fmaxf(s, 0.0f), 1.0f);	// 冷打の負の品質(QUALITY_COLD_HIT)で 0 を割り得る → 出来栄えと同じく 0..1 に収める
 }
 
 //--- 出来栄えを S/A/B/C に量子化(閾値は header の GRADE_*)。
@@ -1590,7 +1641,7 @@ void SceneForge::DrawResultUI()
 				case StepName::Quench: letter = LetterOf(QuenchScore()); break;
 				case StepName::Temper: letter = LetterOf(TemperScore()); break;
 				case StepName::TestCut:
-					if (m_cutSevered) { sprintf_s(rbuf, sizeof(rbuf), (const char*)u8"%d 太刀", m_cutSeveredHits); rFont = jp; }
+					{ sprintf_s(rbuf, sizeof(rbuf), (const char*)u8"両断 %d/%d", CutSeveredCount(), CUT_DUMMY_COUNT); rFont = jp; }	// 何体斬れたか(2026-11 審査会)
 					break;
 				default: break;
 				}
@@ -2373,7 +2424,6 @@ void SceneForge::DrawUI()
 		else if (m_shotMode != ShotMode::Normal && m_clearDecided) DrawLetterbox();	// 撮影モードでも終幕の黒帯は映像の一部として出す
 		if (!m_paused)
 		{
-			DrawFocusOverlay();	// 試し切り: 集中の暗い縁(撮影モードでは照準の輪だけ隠す。TestCut.cpp)
 			if (m_shotMode != ShotMode::CleanNoBanner) DrawSeverBanner();	// 「一刀両断」(終幕の間も出す)
 		}
 		if (m_paused) DrawPauseMenu();
@@ -2499,7 +2549,7 @@ void SceneForge::DrawToolsPanel()
 	ImGui::Checkbox((const char*)u8"影の範囲", &m_showShadowRange);	// 水色の正方形。線の外は影の計算をしない
 	ImGui::SameLine();
 	ImGui::TextDisabled((const char*)u8"（%s %.0fm）", ShadowCameraIndoors() ? (const char*)u8"屋内" : (const char*)u8"屋外", SunStage::Data().width);
-	ImGui::Checkbox((const char*)u8"切り株の断面・胴の真ん中（試し切り）", &m_showCutDebug);	// 断片が乗っている切り株の断面(橙の円) + 数える範囲(黄の円。切り口がこの円を通れば数える)
+	ImGui::Checkbox((const char*)u8"切り株の断面（試し切り）", &m_showCutDebug);	// 断片が乗っている切り株の断面(橙の円)
 	ImGui::Checkbox((const char*)u8"反射の部屋の箱", &ReflectionProbe::ShowRoomBox());	// 橙の箱 = 映り込みを壁へ投影する部屋(壁の内面に合っているか)
 	ImGui::Checkbox((const char*)u8"試遊の計時（右下）", &m_showPlaytestTimer);	// 工程ごとの所要時間。調整値と一緒に保存
 	bool vsync = GetVSyncEnabled();
@@ -2662,6 +2712,7 @@ void SceneForge::DrawFeelPanel()
 	ImGui::SeparatorText((const char*)u8"研ぎ");
 	ImGui::SliderFloat((const char*)u8"片側を研ぐ時間（秒）", &m_forging.grindSecondsPerSide, 3.0f, 60.0f, "%.0f");
 	ImGui::SliderFloat((const char*)u8"研げる範囲（セル）", &m_forging.grindSpread, 0.3f, 4.0f, "%.2f");	// 砥石が当たった所から長手に広がる幅(小=当てた所だけ)
+	ImGui::SliderFloat((const char*)u8"研ぎの自動仕上げ（割合）", &m_grindAutoFinish, 0.5f, 1.0f, "%.2f");	// ここまで研いだら残りは根元から自動で仕上がる。1 = 自動仕上げなし
 	ImGui::SliderFloat((const char*)u8"研ぎの火花：奥へ", &m_grindSparkOff.x, -0.4f, 0.4f, "%.3f m");	// 砥石と刃の接点からのずれ
 	ImGui::SliderFloat((const char*)u8"研ぎの火花：横へ", &m_grindSparkOff.y, -0.4f, 0.4f, "%.3f m");
 	ImGui::SliderFloat((const char*)u8"研ぎの火花：上へ", &m_grindSparkOff.z, -0.4f, 0.4f, "%.3f m");
@@ -2671,17 +2722,15 @@ void SceneForge::DrawFeelPanel()
 
 	// --- 試し切り ---
 	ImGui::SeparatorText((const char*)u8"試し切り");
-	ImGui::SliderFloat((const char*)u8"1太刀の力：最低", &m_cutPowerMin, 0.1f, 1.5f, "%.2f");	// 一番悪い時機で放した時
-	ImGui::SliderFloat((const char*)u8"1太刀の力：最高", &m_cutPowerMax, 0.5f, 3.0f, "%.2f");	// 一番静かな瞬間に放した時
-	ImGui::SliderFloat((const char*)u8"胴の真ん中の幅", &m_cutTarget.coreZone, 0.02f, 0.40f, "%.3f m");	// 切り口が胴の中心からこの距離以内なら数える(大=当てやすい)
-	ImGui::SliderFloat((const char*)u8"傷の開き", &m_cutTarget.woundOpen, 0.05f, 0.80f, "%.2f rad");	// 切れかかった時に上半分が傾く角度(大=大きく開く)
+	ImGui::SliderFloat((const char*)u8"傷の開き", &m_cutParams.woundOpen, 0.05f, 0.80f, "%.2f rad");	// 切れかかった時に上半分が傾く角度(大=大きく開く)
+	ImGui::SliderFloat((const char*)u8"集中している間の世界の速さ", &m_focusTimeScale, 0.05f, 1.0f, "%.2f");	// 小 = 遅い(刃と視点は実時間)
 	ImGui::SliderFloat((const char*)u8"ヒットストップ：斬り抜けた時", &m_cutHitstopCut, 0.0f, 0.4f, "%.2f 秒");	// 当たった瞬間に全てが止まる長さ
 	ImGui::SliderFloat((const char*)u8"ヒットストップ：止まった時", &m_cutHitstopStuck, 0.0f, 0.4f, "%.2f 秒");
 	ImGui::SliderFloat((const char*)u8"刃が止まる秒", &m_cutStuckSec, 0.1f, 1.5f, "%.2f");
 	ImGui::SliderFloat((const char*)u8"引き抜く秒", &m_cutPullSec, 0.1f, 1.5f, "%.2f");
-	ImGui::SliderFloat((const char*)u8"藁人形の揺れ：硬さ k", &m_cutTarget.sway.stiffness, 300.0f, 8000.0f, "%.0f");	// 大=速く小さく揺れる(柱が硬い)
-	ImGui::SliderFloat((const char*)u8"藁人形の揺れ：減衰 c", &m_cutTarget.sway.damping, 0.0f, 400.0f, "%.0f");	// 大=すぐ止まる
-	ImGui::TextDisabled((const char*)u8"等級 %c  累積 %.2f / 需要 %.0f", GradeLetter(), m_cutTarget.Gathered(), CutNeed());
+	ImGui::SliderFloat((const char*)u8"藁人形の揺れ：硬さ k", &m_cutParams.sway.stiffness, 300.0f, 8000.0f, "%.0f");	// 大=速く小さく揺れる(柱が硬い)
+	ImGui::SliderFloat((const char*)u8"藁人形の揺れ：減衰 c", &m_cutParams.sway.damping, 0.0f, 400.0f, "%.0f");	// 大=すぐ止まる
+	ImGui::TextDisabled((const char*)u8"等級 %c  両断 %d / %d", GradeLetter(), CutSeveredCount(), CUT_DUMMY_COUNT);
 	ImGui::TextDisabled((const char*)u8"剣の構え・溜めの姿勢は F6");
 
 	EndToolWindow();

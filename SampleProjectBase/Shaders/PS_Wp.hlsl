@@ -41,10 +41,9 @@ static const float3 LUMA_WEIGHTS   = float3(0.2126, 0.7152, 0.0722); // Rec.709 
 static const float3 BARE_STEEL     = float3(0.78, 0.80, 0.83);   // polished bare steel color
 static const float  POLISHED_ROUGH = 0.30;                        // polished (not mirror) face: catches the fire and room light broadly, so the temper colors read
 static const float  FILM_METALLIC  = 0.35;                        // metallic where the temper film has fully formed (lower = the film color shows more under any light)
-static const float  HOT_START = 0.06, HOT_FULL = 0.85;            // temperature where the glow starts / is full.
-                                                                  // 2026-10-26: was 0.45 -> the glow was already at full strength at dark red and only
-                                                                  // the hue changed after that (looked like a jump from red to bright yellow). Real
-                                                                  // glow keeps getting brighter all the way to white heat, so ramp over the whole range.
+// The glow brightness per temperature is in the CPU heat table (HeatSample in SceneForge.cpp: hue x intensity,
+// banded by the heat gauge lines). col.rgb arrives already scaled (0 = cold, no glow), so there is no ramp here
+// (2026-11-21: the old smoothstep ramp here doubled the CPU one).
 
 // Reflected light of a surface, from the scene's lights (sun with shadow, forge fire, room).
 float3 Reflected(float3 base, float rough, float metal, float3 n, float3 v, float3 l, float3 wp, float sunVisible)
@@ -99,8 +98,7 @@ float4 main(PIN i) : SV_TARGET
         n = PerturbNormal(geometryN, i.wp, i.uv, normalMap.Sample(samp, i.uv).xyz * 2 - 1);
     float3 l = sun.xyz / max(length(sun.xyz), EPSILON);
     float  sunVisible = shadow.x > .5 ? SunVisibility(i.wp, geometryN) : 1;
-    float  heat = smoothstep(HOT_START, HOT_FULL, i.col.a);
-    float  reflectKeep = lerp(1.0, hot.x, heat);   // 1 = the reflection stays fully while hot (physical)
+    float  reflectKeep = lerp(1.0, hot.x, saturate(i.col.a));   // 1 = the reflection stays fully while hot (physical). col.a = temperature 0..1
 
     // --- steel: PBR reflection ---
     // (2026-10-26: the ground-edge band was removed -- seen edge-on at the grindstone it read as a glowing line,
@@ -123,7 +121,7 @@ float4 main(PIN i) : SV_TARGET
     // lower = the normal map and the angle shape the glow more (metal surface reads while glowing).
     // base tint (hot.y): glow = heat color x (tint + (1-tint) x steel texture); lower = more texture in the glow.
     float3 glow = i.col.rgb * (hot.y + (1 - hot.y) * steel) * max(emissivity, hot.z) * hot.w;
-    col += glow * heat * scale2.z;
+    col += glow * scale2.z;
 
     // --- forge scale (black oxide): the more a face was hammered, the more it has flaked off ---
     //   mask grey = thickness. The face's forging progress is the threshold: thin scale goes first,
@@ -140,7 +138,7 @@ float4 main(PIN i) : SV_TARGET
     // 2026-10-17: before, it glowed a fixed dim red without the gain -> most of the blade (still scaled) looked
     // the same at every temperature.
     float3 scaleHeatCol = lerp(i.col.rgb, SCALE_EMBER * heatLuma, SCALE_REDDEN);
-    scaleCol += scaleHeatCol * scale.w * hot.w * heat * scale2.z;
+    scaleCol += scaleHeatCol * scale.w * hot.w * scale2.z;
     col = lerp(col, scaleCol, covered * scale.z);
     return float4(col, 1.0);
 }

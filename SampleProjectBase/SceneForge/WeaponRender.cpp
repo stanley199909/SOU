@@ -596,12 +596,12 @@ void SceneForge::BuildWeaponMorph()
 	//   polishing it. The forging state itself (heat, temper cells for the grade) is left as it is.
 	const bool  finished  = SwordInHand();
 	const float bladeHeat = finished ? 0.0f : m_forging.Heat();
-	XMFLOAT4 heat = HeatRGB(bladeHeat, 0.0f);
+	XMFLOAT4 heat = HeatGlowRGB(bladeHeat);	// 発光色 = 温度ゲージの線で帯を分けた熱色 × 強さ(冷たい鉄は 0)
 	const int NL = ForgingSim::NL;
 	// 打撃の跡の光: 打った所は少し熱い色(温度 + m_impactFlashHeat の HeatRGB)へ寄せ、時間で線形に戻す。
 	const float MIN_FLASH_TIME = 0.01f, MIN_FLASH_SPREAD = 0.1f;	// 0 割りの防止
 	const float flashLife = 1.0f - (m_time - m_impactTime) / fmaxf(m_impactFlashTime, MIN_FLASH_TIME);	// 1=打った瞬間 → 0
-	XMFLOAT4 flashCol = HeatRGB(fminf(m_forging.Heat() + m_impactFlashHeat, 1.0f), 0.0f);
+	XMFLOAT4 flashCol = HeatGlowRGB(fminf(m_forging.Heat() + m_impactFlashHeat, 1.0f));
 
 	// 進捗 p(0..1) → 段チェーン(stage_0..final)上の頂点 i の補間位置/法線(ローカル)。
 	//   Three or more stages (2026-11-01): the hammer runs stage_0 .. the stage before the last (the forged blade with its

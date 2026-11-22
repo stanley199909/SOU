@@ -1,0 +1,55 @@
+README & LICENSE — Dwarf Base Models
+
+Overview
+This package contains two stylized dwarf base models (male & female), including a Blender project file and exported FBX versions. The models are designed for use in games, prototypes, animation, and other creative projects. A basic Mixamo walk animation is included inside the Blender file as part of the rigged character.
+
+Included Files:
+
+DwarfMaleFemale.blend
+	- Male dwarf
+	- Female dwarf
+	- Mixamo Rigged versions with Walk animation
+
+DwarfMaleBody.fbx
+	- No rig, no animation
+
+DwarfFemaleBody.fbx
+	- No rig, no animation
+
+DwarfMaleTPose.fbx
+	- Mixamo Rigged T-Pose
+
+DwarfFemaleTPose.fbx
+	- Mixamo Rigged T-Pose
+
+
+
+License
+
+You are free to:
+
+	- Use these models in commercial and non‑commercial projects
+
+	- Modify, edit, or adapt the models
+
+	- Use the models in games, videos, artwork, and other creative works
+
+	- Integrate the included animations as part of your project
+
+You are not allowed to:
+
+	- Resell, redistribute, or repackage these models
+
+	- This includes selling them on asset stores, marketplaces, or bundling them into other asset packs
+
+	- Share or redistribute the models in a way that allows others to download them as standalone assets
+
+	- Redistribute Mixamo animations as raw files
+
+Credit:
+
+	- Attribution is appreciated but not required.  
+
+
+Contact
+If you have questions or want to show what you made, feel free to reach out on itch.io.

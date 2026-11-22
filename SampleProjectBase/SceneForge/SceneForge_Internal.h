@@ -27,10 +27,12 @@ void DrawOutlinedText(ImDrawList* dl, ImFont* font, float px, float x, float y, 
 // Layers inside the HUD follow call order (draw an underlay before its text). Defined in HUD.cpp.
 ImDrawList* HudDrawList();
 
-// Sample the shared 7-stop steel-heat gradient at h(0..1) -> r,g,b(0..1).
-// Both HeatRGB (3D weapon/bar) and the HUD's HeatColor use this one table.
-// Defined in SceneForge.cpp.
-void HeatSampleRGB(float h, float& r, float& g, float& b);
+// Steel heat color at h(0..1): hue r,g,b(0..1) + glow intensity. The bands follow the heat gauge lines
+// (COLD_LIMIT / IDEAL_MIN / IDEAL_MAX / OVERHEAT) with a steep change at each line.
+// HUD (hue only) and the 3D blade (hue x intensity) share this one table. Defined in SceneForge.cpp.
+void HeatSample(float h, float& r, float& g, float& b, float& intensity);
+void HeatSampleRGB(float h, float& r, float& g, float& b);	// hue only
+DirectX::XMFLOAT4 HeatGlowRGB(float h);						// glow of the hot blade = hue x intensity (0 when cold)
 
 // Steel color from temperature (0..1). dmg darkens it. Defined in SceneForge.cpp.
 DirectX::XMFLOAT4 HeatRGB(float h, float dmg);
